@@ -14,7 +14,7 @@ The local Linux music root is locked as:
 /mnt/sharedrive/John/Shared Music
 ```
 
-House playback should read those files directly from the local filesystem. The Pi should **not** connect back to its own Samba share for house playback.
+House playback reads those files directly from the local filesystem. The Pi does **not** connect back to its own Samba share for house playback.
 
 Samba remains in place for the existing Android/Windows standalone clients. Samba and the house-audio stack are parallel consumers of the same local files.
 
@@ -34,24 +34,75 @@ Samba remains in place for the existing Android/Windows standalone clients. Samb
                                ESP32      PC(s)      other
 ```
 
-## Planned permanent software stack
+## Permanent software stack
 
-The proof server should be the first usable version of the real server, not a disposable test harness.
-
-Current plan:
+The proof server is the first usable version of the real server, not a disposable test harness.
 
 - **MPD** — owns the one playback session: queue, current track, transport state, seek position, shuffle, and folder-derived playlist state.
 - **Snapserver** — distributes timestamped/buffered synchronized audio to renderers.
-- **house-audio-server** — thin custom control/discovery layer added around the permanent stack. It will expose HOUSE-mode state/control and LAN discovery without reimplementing decoding or synchronization.
+- **house-audio-server** — thin custom control/discovery layer to be added around the permanent stack. It will expose HOUSE-mode state/control and LAN discovery without reimplementing decoding or synchronization.
 - **Samba** — continues serving the same files to existing standalone clients and is not replaced by this project.
 
-The intended audio path is:
+The proven audio path is:
 
 ```text
-/mnt/sharedrive/John/Shared Music -> MPD -> PCM/FIFO -> Snapserver -> synchronized clients
+/mnt/sharedrive/John/Shared Music
+        -> MPD
+        -> /tmp/snapfifo (48000:16:2 PCM)
+        -> Snapserver
+        -> FLAC Snapcast stream
+        -> synchronized clients
 ```
 
-The exact MPD-to-Snapserver pipe/configuration will be locked only after it is tested on the Pi.
+### Verified MPD configuration
+
+MPD 0.24.4 is configured against the real library:
+
+```text
+music_directory "/mnt/sharedrive/John/Shared Music"
+```
+
+Its Snapcast output is:
+
+```text
+audio_output {
+        type            "fifo"
+        name            "Snapcast"
+        path            "/tmp/snapfifo"
+        format          "48000:16:2"
+        mixer_type      "software"
+}
+```
+
+The MPD user can read the real music root, the library has been indexed, and folder-first browsing is proven. Top-level folders observed through MPD include `CDs`, `Country`, `MP3s`, `Oldies`, and `Rap`.
+
+### Verified Snapserver path
+
+Snapserver 0.31.0 is running on Debian 13 (trixie), aarch64, and consumes `/tmp/snapfifo` as the `default` stream. Logs have confirmed:
+
+```text
+sampleFormat: 48000:16:2
+codec: flac
+state: idle => playing
+```
+
+A real MP3 from the library was decoded by MPD and carried through the FIFO into Snapserver.
+
+### Verified ESP32-S3 client proof
+
+The permanent Snapserver has also been proven with the real target renderer hardware: a Seeed Studio XIAO ESP32-S3 running an ESPHome/ESP-IDF Snapcast client.
+
+The client:
+
+- joined the home LAN
+- connected to Snapserver on TCP port 1704
+- completed the Snapcast hello/stream handshake
+- negotiated FLAC at `48000:16:2`
+- filled its 1000 ms timing buffer
+- changed mute state when playback started/stopped
+- continuously received and acknowledged the actual audio stream
+
+Server-side TCP counters proved sustained payload transfer to the XIAO. In one 59-second sample, `bytes_sent` increased by **6,292,952 bytes** and `data_segs_out` increased by **5,343**, approximately **0.85 Mbit/s** of sustained stream traffic. This closes the ambiguity between "connected to Snapserver" and "actually receiving the song."
 
 ## System role
 
@@ -87,7 +138,7 @@ GPS and SSID checks are not required for the normal decision. The useful questio
 
 ## Synchronized playback
 
-The intended direction is **Snapcast/Snapserver** timestamped/buffered distribution so renderers compensate for network jitter and clock drift instead of independently opening the same file and trying to stay aligned.
+The system uses **Snapcast/Snapserver** timestamped/buffered distribution so renderers compensate for network jitter and clock drift instead of independently opening the same file and trying to stay aligned.
 
 When an output powers up during an existing song, it should join the song at the **current house timestamp** after it connects and fills its synchronization buffer. It must not restart the track.
 
@@ -95,19 +146,20 @@ When an output powers up during an existing song, it should join the song at the
 
 Do not create a temporary proof server that is later abandoned. Build the permanent Pi stack incrementally:
 
-1. Configure MPD to use `/mnt/sharedrive/John/Shared Music` directly.
-2. Feed MPD audio into Snapserver.
-3. Prove a normal Snapcast client can receive the stream.
-4. Prove the first ESP32-S3 can connect as a serial-only Snapcast client before adding a DAC.
-5. Add the custom `house-audio-server` control/discovery service around the working stack.
-6. Integrate Android and Windows HOUSE-mode control.
-7. Add additional synchronized renderers.
+1. **DONE** — Configure MPD to use `/mnt/sharedrive/John/Shared Music` directly.
+2. **DONE** — Feed MPD audio into Snapserver through `/tmp/snapfifo`.
+3. **DONE** — Prove Snapserver exposes and carries the real audio stream.
+4. **DONE** — Prove the first ESP32-S3 can receive that stream without a DAC.
+5. **NEXT** — Add an I2S DAC to the ESP32 renderer and produce real audio.
+6. Add the custom `house-audio-server` control/discovery service around the working stack.
+7. Integrate Android and Windows HOUSE-mode control.
+8. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
 
-Every successful step should remain part of the final installation.
+Every successful step remains part of the final installation.
 
-## Initial ESP32 proof dependency
+## Remaining server-side Phase 1 check
 
-The first ESP32 test now depends on the Pi running the same Snapserver instance intended for production. No direct SMB-on-ESP32 test is required unless a future design change creates a reason for it.
+The working MPD -> FIFO -> Snapserver -> ESP32 path is proven live. A reboot/service-startup test is still needed before the server foundation issue is considered completely closed.
 
 ## Non-goals
 
@@ -126,4 +178,4 @@ The first ESP32 test now depends on the Pi running the same Snapserver instance 
 
 ## Status
 
-Architecture is now locked around the existing Raspberry Pi as the permanent host, local music root `/mnt/sharedrive/John/Shared Music`, MPD as the playback/session engine, and Snapserver as the synchronized distribution layer. MPD 0.24.4 and Snapserver 0.31.0 are installed on Debian 13 (trixie); Snapserver is active and MPD configuration is next.
+**MPD -> Snapserver -> ESP32-S3 network reception is proven on the permanent hardware and permanent Pi stack.** The next renderer step is an I2S line-level DAC and actual audio output. The remaining server-foundation check is service recovery after reboot.
