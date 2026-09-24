@@ -11,7 +11,7 @@ The permanent server is the existing **Raspberry Pi that already owns and serves
 The local Linux music root is locked as:
 
 ```text
-/mnt/sharedrive/Shared Music
+/mnt/sharedrive/John/Shared Music
 ```
 
 House playback should read those files directly from the local filesystem. The Pi should **not** connect back to its own Samba share for house playback.
@@ -21,7 +21,7 @@ Samba remains in place for the existing Android/Windows standalone clients. Samb
 ```text
                          Raspberry Pi
                               |
-                    /mnt/sharedrive/Shared Music
+                 /mnt/sharedrive/John/Shared Music
                          /                 \
                       Samba                MPD
                        |                    |
@@ -48,7 +48,7 @@ Current plan:
 The intended audio path is:
 
 ```text
-/mnt/sharedrive/Shared Music -> MPD -> PCM/FIFO -> Snapserver -> synchronized clients
+/mnt/sharedrive/John/Shared Music -> MPD -> PCM/FIFO -> Snapserver -> synchronized clients
 ```
 
 The exact MPD-to-Snapserver pipe/configuration will be locked only after it is tested on the Pi.
@@ -95,7 +95,7 @@ When an output powers up during an existing song, it should join the song at the
 
 Do not create a temporary proof server that is later abandoned. Build the permanent Pi stack incrementally:
 
-1. Configure MPD to use `/mnt/sharedrive/Shared Music` directly.
+1. Configure MPD to use `/mnt/sharedrive/John/Shared Music` directly.
 2. Feed MPD audio into Snapserver.
 3. Prove a normal Snapcast client can receive the stream.
 4. Prove the first ESP32-S3 can connect as a serial-only Snapcast client before adding a DAC.
@@ -126,4 +126,4 @@ The first ESP32 test now depends on the Pi running the same Snapserver instance 
 
 ## Status
 
-Architecture is now locked around the existing Raspberry Pi as the permanent host, local music root `/mnt/sharedrive/Shared Music`, MPD as the playback/session engine, and Snapserver as the synchronized distribution layer. Installation/configuration has not yet been performed.
+Architecture is now locked around the existing Raspberry Pi as the permanent host, local music root `/mnt/sharedrive/John/Shared Music`, MPD as the playback/session engine, and Snapserver as the synchronized distribution layer. MPD 0.24.4 and Snapserver 0.31.0 are installed on Debian 13 (trixie); Snapserver is active and MPD configuration is next.
