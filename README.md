@@ -94,7 +94,7 @@ The MPD user can read the real music root, the library has been indexed, and fol
 
 ### Verified Snapserver path
 
-Snapserver 0.31.0 is running on Debian 13 (trixie), aarch64, and consumes `/tmp/snapfifo` as the `default` stream. Logs have confirmed:
+Snapserver 0.31.0 was proven on Debian 13 (trixie), aarch64, consuming `/tmp/snapfifo` as the `default` stream. Logs confirmed:
 
 ```text
 sampleFormat: 48000:16:2
@@ -175,9 +175,30 @@ Every successful step remains part of the final installation.
 
 ## Remaining server-side Phase 1 check
 
-The working MPD -> FIFO -> Snapserver -> ESP32 network path is proven live. A reboot/service-startup test is still needed before the server foundation issue is considered completely closed.
+The MPD -> FIFO -> Snapserver -> ESP32 network path has been proven. A reboot/service-startup test is still needed before the server foundation issue is considered completely closed.
 
-The latest user-reported inspection showed `mpd` disabled for automatic service startup, `snapserver` enabled, and `state_file "/var/lib/mpd/state"` configured. These are observations, not changes made by this documentation update. The approved idle/no-node policy must be respected when implementing startup recovery; do not turn service startup into unconditional playback.
+### Current intentionally parked state
+
+After completing the network proof, the Pi test stack was deliberately shut down and cleaned up until testing resumes. Verified parked state:
+
+```text
+mpd:        inactive / disabled
+snapserver: inactive / disabled
+mpd process:        none
+snapserver process: none
+MPD/Snapcast listening ports: none
+/tmp/snapfifo: gone
+```
+
+The MPD/Snapserver packages and proven configuration remain installed. This is intentional: preserve the known-good stack without leaving unused audio services running in the background.
+
+The MPD state file remains configured at `/var/lib/mpd/state`. The approved idle/no-node policy must be respected when startup recovery is implemented; starting the service stack must not automatically mean starting music.
+
+### Operational lifecycle requirement
+
+Before this becomes an always-available appliance, add a clean **House Audio On / House Audio Off** lifecycle. One supported operation should start the required house-audio services in the correct order and verify health; another should stop playback/services cleanly and remove only transient house-audio runtime state where appropriate. It must leave Samba and unrelated Pi services alone, preserve configuration/library state, and require no package uninstall/reinstall cycle.
+
+This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Non-goals
 
@@ -197,4 +218,4 @@ The latest user-reported inspection showed `mpd` disabled for automatic service 
 
 ## Status
 
-**MPD -> Snapserver -> ESP32-S3 network reception is proven on the permanent hardware and permanent Pi stack.** The next renderer step is an I2S line-level DAC and actual audio output. Service recovery after reboot remains unverified. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are now recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements; the custom control service is not yet implemented.
+**MPD -> Snapserver -> ESP32-S3 network reception is proven on the permanent hardware and permanent Pi stack.** The Pi-side audio services are currently intentionally **inactive and disabled**, with no leftover processes, listening ports, or FIFO; packages and configuration are preserved for the next test phase. The next renderer step is an I2S line-level DAC and actual audio output. Reboot/service-startup recovery and the clean House Audio On/Off lifecycle remain unimplemented. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements; the custom control service is not yet implemented.
