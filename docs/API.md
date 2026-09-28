@@ -172,7 +172,7 @@ Implemented:
 
 - fresh idle + passive renderer present/arrives -> load the configured default folder (`MP3s`), enable Random + Repeat All, and start playback;
 - passive renderer joining active playback -> leave the existing queue untouched;
-- passive renderer joining a paused session -> do not auto-start over that pause;
+- **current v0.5.0 implementation:** passive renderer joining a paused session leaves it paused;
 - final passive renderer leaves during playback -> finish the current track, then stop;
 - renderer returns before track end -> cancel the pending stop and keep the session playing;
 - Snapserver outage -> never interpret it as all renderers leaving.
@@ -268,7 +268,9 @@ When effective renderer presence is already positive at service startup, or chan
 
 - if MPD is stopped, the service rebuilds the configured default folder queue, sets Repeat on, Single off, Consume off, enables Random, and starts playback;
 - if MPD is already playing, the renderer simply joins the existing session;
-- if MPD is paused, the service leaves it paused rather than treating renderer arrival as permission to override a deliberate/retained pause.
+- **current v0.5.0 implementation:** if MPD is paused, the service leaves it paused.
+
+Approved next behavior: passive-radio arrival should instead **resume the existing paused MPD session from its current position**, including a deliberate Pause. It must not replace that queue with the default `MP3s` queue. This override applies to passive-radio arrival, not to a phone/PC/browser controller merely connecting.
 
 The default folder is configurable with `PASSIVE_DEFAULT_FOLDER` and defaults to `MP3s`.
 
