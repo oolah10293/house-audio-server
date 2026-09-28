@@ -23,3 +23,6 @@ SNAPSERVER_STALE_AFTER_SECONDS=5.0
 # track and stop; cancel that pending stop if a renderer returns first.
 PASSIVE_SESSION_POLICY_ENABLED=true
 PASSIVE_SESSION_POLICY_POLL_SECONDS=0.5
+
+# Folder loaded automatically when the first passive renderer appears in fresh idle.
+PASSIVE_DEFAULT_FOLDER=MP3s
