@@ -298,7 +298,7 @@ The service now implements the basic appliance behavior for passive radios: **tu
 
 If a passive renderer is present while the house is fresh-idle, or renderer presence changes from zero to positive while MPD is stopped, the service loads the configured default folder (`MP3s` by default), enables Repeat and Random, disables Single/Consume, and starts playback. If music is already playing, the arriving radio simply joins that session without replacing the queue.
 
-**Approved behavior change, not yet implemented in v0.5.0:** if MPD already has a paused session, powering on a passive radio should resume that paused session from its current position. It must not remain silent and must not replace the paused queue with the default `MP3s` queue. Controller arrival alone still must not bulldoze through Pause.
+v0.5.1 now implements the approved pause override: if MPD already has a paused session, powering on a passive radio resumes that existing session from its current position. It does not replace the paused queue with default `MP3s`. Controller arrival alone still must not bulldoze through Pause.
 
 This also works when `house-audio-server` starts while a radio is already powered on; the initial presence baseline is treated as a real passive-node arrival when MPD is stopped.
 
@@ -380,3 +380,10 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 ## Status
 
 **MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** `house-audio-server` v0.2.0 is **runtime-proven** for the complete basic MPD browse/state/queue/transport API, and v0.3.1 renderer presence is also **runtime-proven** on the permanent Pi for both power-on and abrupt hard-power-off. The service correctly distinguishes Snapserver's stale raw `connected` state from effective `present` state using `lastSeen` freshness. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, and autonomous house-session policy logic remain unimplemented. The next server milestone is renderer-presence-driven autonomous MPD behavior. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
+
+
+### Leave-and-return pause edge — v0.5.1
+
+A real leave-the-house test found both renderers reconnecting correctly (`presentCount: 2`) while MPD was paused at 0.0 seconds on the queued track. Snapserver was healthy but idle, so the failure was not renderer connectivity: it was exactly the v0.5.0 policy branch that left paused sessions untouched.
+
+v0.5.1 changes passive-radio arrival to resume the existing paused session. This preserves the queue and avoids a fresh default `MP3s` rebuild while restoring the intended appliance behavior.
