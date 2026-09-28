@@ -1,0 +1,22 @@
+[Unit]
+Description=House Audio Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=houseaudio
+Group=houseaudio
+WorkingDirectory=/opt/house-audio-server
+EnvironmentFile=-/etc/default/house-audio-server
+ExecStart=/usr/bin/python3 /opt/house-audio-server/house_audio_server.py
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=house-audio-server
+
+[Install]
+WantedBy=multi-user.target
