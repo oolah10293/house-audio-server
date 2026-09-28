@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current service version: **0.5.1**
+Current service version: **0.6.0**
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -50,6 +50,28 @@ Returns the current autonomous passive-renderer policy state, including:
 - the most recent policy action.
 
 v0.4.0 intentionally reports that fresh-idle auto-start and controller presence are still unimplemented.
+
+### `GET /diagnostics?limit=<n>`
+
+Returns a small in-memory diagnostic history for renderer dropouts. The server records **events, not every sample**, so it can run unattended without producing a giant log.
+
+Tracked automatically:
+
+- Snapserver reachable/unreachable transitions;
+- Snapserver stream state changes such as `playing -> idle`;
+- per-renderer `connected`, effective `present`, and `audible` transitions;
+- Snapcast time-sync stalls when `lastSeenAgeSeconds` exceeds the configured warning threshold;
+- recovery from those stalls and approximate stall duration;
+- per-renderer counters plus the worst observed `lastSeenAgeSeconds` since service start.
+
+Example:
+
+```text
+/diagnostics
+/diagnostics?limit=50
+```
+
+The default warning threshold is 2.5 seconds. This endpoint is diagnostic only and does not change playback.
 
 ### `GET /queue`
 
@@ -282,3 +304,17 @@ The queue rebuild explicitly toggles Random off before loading and back on after
 Real-world leave-and-return testing exposed the expected v0.5.0 edge case: after both passive renderers had been unplugged long enough for the prior session to settle, powering them back on found MPD in `pause` at the start of a queued track. Both renderers were healthy/present, but the v0.5.0 policy intentionally left paused sessions alone, so no audio flowed.
 
 v0.5.1 implements the approved behavior: passive-radio arrival while MPD is paused sends `play` to resume the existing house queue and position. It does **not** rebuild the queue or load default `MP3s`. This preserves session continuity while satisfying the appliance rule that powering on a passive radio should produce music.
+
+
+## v0.6.0 unattended dropout diagnostics
+
+Occasional short silences were observed with two synchronized ESP32 renderers, sometimes affecting only one node. Rather than requiring simultaneous ping windows or manual timing, v0.6.0 adds an unattended event recorder around the Snapserver state already being polled.
+
+The recorder is intentionally lightweight and memory-only. After hearing a dropout, query `GET /diagnostics` later and compare the affected renderer's events with the other node and the global Snapserver stream.
+
+Interpretation:
+
+- `timesync_stall_started` on only one renderer strongly points toward that node's network/client path;
+- `client_present_changed` or `client_connected_changed` confirms a larger renderer connectivity interruption;
+- `stream_status_changed` affecting the global stream points upstream toward MPD/Snapserver rather than one renderer;
+- if audio drops while all of those remain clean, the next place to instrument is the ESP32 decoder/audio-buffer/I2S path rather than basic network presence.
