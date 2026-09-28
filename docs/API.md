@@ -37,7 +37,7 @@ The response includes:
 - each client's stable Snapcast id, configured/display name, host/IP/MAC, client version, mute/volume/latency, group, and stream;
 - current stream ids/status.
 
-The service keeps a long-lived Snapserver control connection, takes an initial `Server.GetStatus` snapshot, listens for connect/disconnect/volume/group/stream notifications, and refreshes the full authoritative snapshot after relevant changes.
+The service polls Snapserver's `Server.GetStatus` over the local JSON-RPC control socket (default TCP 1705). Polling is intentional because abrupt ESP32 power loss can leave Snapserver's raw TCP/audio connection looking established for a while; effective presence is derived from fresh Snapcast `lastSeen` activity rather than raw connection state alone.
 
 ### `GET /session`
 
@@ -49,7 +49,7 @@ Returns the current autonomous passive-renderer policy state, including:
 - the MPD song id being allowed to finish;
 - the most recent policy action.
 
-v0.4.0 intentionally reports that fresh-idle auto-start and controller presence are still unimplemented.
+Current session-policy output also reports whether fresh-idle passive auto-start, durable default-shuffle progress, and controller-presence handling are implemented.
 
 ### `GET /diagnostics?limit=<n>`
 
@@ -318,3 +318,37 @@ Interpretation:
 - `client_present_changed` or `client_connected_changed` confirms a larger renderer connectivity interruption;
 - `stream_status_changed` affecting the global stream points upstream toward MPD/Snapserver rather than one renderer;
 - if audio drops while all of those remain clean, the next place to instrument is the ESP32 decoder/audio-buffer/I2S path rather than basic network presence.
+
+
+## v0.5.1 runtime validation
+
+A real leave-and-return test reproduced the paused-session edge exactly:
+
+- both ESP32 renderers were powered off for an extended period;
+- both were powered back on later;
+- Snapserver reported both as connected/present/audible;
+- MPD was `pause` at 0.0 seconds on the retained queue;
+- v0.5.0 reported `renderer_joined_paused_session`, leaving the Snapserver stream idle and producing no audio.
+
+v0.5.1 changes passive-radio arrival on a paused session to `play`. After installing/restarting that version with both radios already present, **both outputs started immediately**, proving the behavior on the permanent Pi. The existing queue was resumed rather than rebuilt.
+
+## Two-renderer field result
+
+Two independent XIAO ESP32-S3 + PCM5102A renderers have now played the same house session simultaneously through different downstream analog systems with no objectionable echo or phasing during the sync acceptance test.
+
+A hard-powered renderer also rejoined an already-active song after more than ten seconds powered off. One observed plug-in-to-audible rejoin took about six seconds.
+
+This proves the synchronized distribution path beyond API/network state: multiple real analog outputs are audibly aligned.
+
+## Current reliability investigation
+
+Occasional few-second silences have been heard on one renderer or the other during otherwise synchronized two-node playback. Both nodes have their external antennas installed, and the root cause is currently unresolved.
+
+v0.6.0's `/diagnostics` endpoint is intended to separate:
+
+- one-client Snapcast timing/presence stalls;
+- client disconnect/reconnect behavior;
+- global Snapserver stream-state changes;
+- cases where all server-side indicators remain clean, which would push investigation toward the ESP32 decoder/audio-buffer/I2S path.
+
+The diagnostics feature is implemented and unit-tested. A real dropout capture is still pending.
