@@ -175,8 +175,8 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
 7. **DONE** — Track Snapserver renderer presence, including reliable hard-power-off detection via `lastSeen` freshness rather than Snapserver's raw connected flag.
-8. **IN PROGRESS** — Implement autonomous session rules driven by proven renderer presence. v0.4.0 now implements the first slice: final passive renderer leaves -> finish current track then stop; return before track end -> cancel the pending stop. Permanent-Pi runtime validation is next.
-9. Implement persistent default `MP3s` shuffle/bookmark state and fresh-idle passive-node auto-start.
+8. **IN PROGRESS** — Implement autonomous session rules driven by proven renderer presence. v0.5.0 now adds fresh-idle passive-node auto-start on top of the v0.4 final-track rule: power on a passive renderer -> default `MP3s` Random/Repeat playback starts automatically; joining active playback leaves the existing queue alone.
+9. Implement durable saved progress/order for the default `MP3s` shuffle rotation.
 10. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
 11. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
 
@@ -291,6 +291,16 @@ When the final effective passive renderer disappears while MPD is actively playi
 The policy deliberately ignores Snapserver outages rather than converting them into false departures, and its state is exposed at `GET /session`.
 
 This is **implemented and unit-tested but not yet runtime-validated on the permanent Pi**. Fresh-idle default `MP3s` startup and persistent shuffle progress remain the next chunk.
+
+### Passive radio power-on auto-start — v0.5.0
+
+The service now implements the basic appliance behavior for passive radios: **turn a radio on and music starts**.
+
+If a passive renderer is present while the house is fresh-idle, or renderer presence changes from zero to positive while MPD is stopped, the service loads the configured default folder (`MP3s` by default), enables Repeat and Random, disables Single/Consume, and starts playback. If music is already playing, the arriving radio simply joins that session without replacing the queue. A paused MPD session is left paused.
+
+This also works when `house-audio-server` starts while a radio is already powered on; the initial presence baseline is treated as a real passive-node arrival when MPD is stopped.
+
+The default folder is configurable with `PASSIVE_DEFAULT_FOLDER`. Durable cross-session preservation of the exact default shuffled order/progress is still pending; v0.5.0 creates a fresh MPD Random order for each fresh default session.
 
 ## MPD control-service boundary
 
