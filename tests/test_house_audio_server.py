@@ -154,5 +154,140 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(records[1]["title"], "B")
 
 
+class FakeMonitor:
+    def __init__(self, present=0, reachable=True):
+        self.present = present
+        self.reachable = reachable
+
+    def snapshot(self):
+        return {
+            "reachable": self.reachable,
+            "presentCount": self.present,
+        }
+
+
+class FakeMpd:
+    def __init__(self):
+        self.state_data = {
+            "transport": "play",
+            "repeat": True,
+            "single": False,
+            "singleMode": "0",
+            "songId": 42,
+        }
+        self.commands = []
+
+    def state(self):
+        return dict(self.state_data)
+
+    def run(self, *commands):
+        self.commands.extend(commands)
+        for command in commands:
+            if command.startswith("repeat "):
+                self.state_data["repeat"] = command.endswith("1")
+            elif command.startswith("single "):
+                mode = command.split(" ", 1)[1]
+                self.state_data["singleMode"] = mode
+                self.state_data["single"] = mode == "1"
+        return "0.24.4", []
+
+
+class SessionPolicyTests(unittest.TestCase):
+    def test_last_renderer_leaving_arms_finish_track_stop(self):
+        monitor = FakeMonitor(present=1)
+        mpd = FakeMpd()
+        policy = h.PassiveSessionPolicy(
+            monitor,
+            mpd_factory=lambda: mpd,
+            enabled=True,
+            poll_seconds=0.01,
+        )
+
+        policy._tick()  # establish baseline at one renderer
+        monitor.present = 0
+        policy._tick()
+
+        self.assertEqual(mpd.commands, ["repeat 0", "single oneshot"])
+        snapshot = policy.snapshot()
+        self.assertTrue(snapshot["pendingFinalStop"])
+        self.assertEqual(snapshot["pendingSongId"], 42)
+
+    def test_renderer_return_cancels_pending_stop_and_restores_options(self):
+        monitor = FakeMonitor(present=1)
+        mpd = FakeMpd()
+        policy = h.PassiveSessionPolicy(
+            monitor,
+            mpd_factory=lambda: mpd,
+            enabled=True,
+            poll_seconds=0.01,
+        )
+
+        policy._tick()
+        monitor.present = 0
+        policy._tick()
+        monitor.present = 1
+        policy._tick()
+
+        self.assertEqual(
+            mpd.commands,
+            ["repeat 0", "single oneshot", "single 0", "repeat 1"],
+        )
+        snapshot = policy.snapshot()
+        self.assertFalse(snapshot["pendingFinalStop"])
+        self.assertEqual(
+            snapshot["lastAction"],
+            "pending_stop_cancelled_renderer_returned",
+        )
+
+    def test_completed_final_track_restores_options_and_clears_pending(self):
+        monitor = FakeMonitor(present=1)
+        mpd = FakeMpd()
+        policy = h.PassiveSessionPolicy(
+            monitor,
+            mpd_factory=lambda: mpd,
+            enabled=True,
+            poll_seconds=0.01,
+        )
+
+        policy._tick()
+        monitor.present = 0
+        policy._tick()
+        mpd.state_data["transport"] = "stop"
+        mpd.state_data["singleMode"] = "0"
+        policy._tick()
+
+        self.assertEqual(
+            mpd.commands,
+            ["repeat 0", "single oneshot", "single 0", "repeat 1"],
+        )
+        snapshot = policy.snapshot()
+        self.assertFalse(snapshot["pendingFinalStop"])
+        self.assertEqual(
+            snapshot["lastAction"],
+            "final_track_completed_session_stopped",
+        )
+
+    def test_snapserver_outage_does_not_look_like_departure(self):
+        monitor = FakeMonitor(present=1)
+        mpd = FakeMpd()
+        policy = h.PassiveSessionPolicy(
+            monitor,
+            mpd_factory=lambda: mpd,
+            enabled=True,
+            poll_seconds=0.01,
+        )
+
+        policy._tick()
+        monitor.reachable = False
+        monitor.present = 0
+        policy._tick()
+        self.assertEqual(mpd.commands, [])
+
+        monitor.reachable = True
+        policy._tick()  # new baseline only
+        self.assertEqual(mpd.commands, [])
+
+
+
 if __name__ == "__main__":
     unittest.main()
