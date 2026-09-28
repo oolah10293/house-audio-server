@@ -5,7 +5,7 @@ Current scope:
 - read MPD health/state/queue/library
 - basic MPD transport and queue control over HTTP
 - live Snapserver renderer-presence tracking
-- no autonomous house-session policy yet
+- first autonomous session policy: finish-current-track when final passive renderer leaves
 
 The service intentionally uses only the Python standard library.
 """
@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.3.1"
+SERVICE_VERSION = "0.4.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -47,6 +47,13 @@ SNAPSERVER_POLL_SECONDS = float(
 )
 SNAPSERVER_STALE_AFTER_SECONDS = float(
     os.environ.get("SNAPSERVER_STALE_AFTER_SECONDS", "5.0")
+)
+
+PASSIVE_SESSION_POLICY_ENABLED = os.environ.get(
+    "PASSIVE_SESSION_POLICY_ENABLED", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+PASSIVE_SESSION_POLICY_POLL_SECONDS = float(
+    os.environ.get("PASSIVE_SESSION_POLICY_POLL_SECONDS", "0.5")
 )
 
 MAX_JSON_BODY = 2 * 1024 * 1024
@@ -163,6 +170,7 @@ class MpdClient:
             "repeat": status.get("repeat") == "1",
             "random": status.get("random") == "1",
             "single": status.get("single") == "1",
+            "singleMode": status.get("single", "0"),
             "consume": status.get("consume") == "1",
             "queueLength": to_int(status.get("playlistlength")) or 0,
             "queueVersion": to_int(status.get("playlist")),
@@ -510,6 +518,195 @@ class SnapcastMonitor:
 SNAPCAST_MONITOR = SnapcastMonitor()
 
 
+class PassiveSessionPolicy:
+    """Autonomous policy for the currently proven passive-renderer role.
+
+    This first policy slice deliberately does not implement fresh-idle default
+    startup yet. It only handles the already-approved final-node rule:
+
+    - when effective passive-renderer presence falls from >0 to 0 while MPD is
+      playing, allow the current song to finish and then stop;
+    - if a renderer returns before the track ends, cancel the pending stop.
+
+    MPD 0.24 supports `single oneshot`. Because normal Single + Repeat repeats
+    the current song, the policy temporarily disables Repeat while the oneshot
+    stop is armed, then restores the user's original Repeat/Single settings
+    when the stop is cancelled or completes.
+    """
+
+    def __init__(
+        self,
+        monitor: SnapcastMonitor,
+        mpd_factory=MpdClient,
+        enabled: bool = PASSIVE_SESSION_POLICY_ENABLED,
+        poll_seconds: float = PASSIVE_SESSION_POLICY_POLL_SECONDS,
+    ) -> None:
+        self.monitor = monitor
+        self.mpd_factory = mpd_factory
+        self.enabled = enabled
+        self.poll_seconds = poll_seconds
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._previous_present_count: Optional[int] = None
+        self._pending_final_stop = False
+        self._pending_song_id: Optional[int] = None
+        self._saved_repeat = False
+        self._saved_single_mode = "0"
+        self._last_action = "waiting_for_presence_baseline"
+        self._last_action_epoch = time.time()
+
+    def start(self) -> None:
+        if not self.enabled:
+            with self._lock:
+                self._last_action = "disabled"
+                self._last_action_epoch = time.time()
+            return
+
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(
+                target=self._run,
+                name="passive-session-policy",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            return {
+                "enabled": self.enabled,
+                "mode": "passive_renderers_only",
+                "presentCount": self._previous_present_count,
+                "pendingFinalStop": self._pending_final_stop,
+                "pendingSongId": self._pending_song_id,
+                "lastAction": self._last_action,
+                "lastActionEpoch": self._last_action_epoch,
+                "freshIdleAutoStartImplemented": False,
+                "controllerPresenceImplemented": False,
+            }
+
+    def _record(self, action: str) -> None:
+        with self._lock:
+            self._last_action = action
+            self._last_action_epoch = time.time()
+
+    @staticmethod
+    def _safe_single_mode(state: Dict[str, object]) -> str:
+        value = state.get("singleMode")
+        if value in ("0", "1", "oneshot"):
+            return str(value)
+        return "1" if state.get("single") is True else "0"
+
+    def _begin_final_stop(self, mpd: MpdClient, state: Dict[str, object]) -> None:
+        saved_repeat = bool(state.get("repeat", False))
+        saved_single = self._safe_single_mode(state)
+        commands: List[str] = []
+
+        # Repeat + Single repeats the same song, so Repeat must be temporarily
+        # disabled for "finish this song, then stop".
+        if saved_repeat:
+            commands.append("repeat 0")
+        commands.append("single oneshot")
+
+        with MPD_WRITE_LOCK:
+            mpd.run(*commands)
+
+        with self._lock:
+            self._saved_repeat = saved_repeat
+            self._saved_single_mode = saved_single
+            self._pending_final_stop = True
+            song_id = state.get("songId")
+            self._pending_song_id = song_id if isinstance(song_id, int) else None
+        self._record("armed_finish_current_track")
+
+    def _restore_options(self, mpd: MpdClient, action: str) -> None:
+        with self._lock:
+            saved_repeat = self._saved_repeat
+            saved_single = self._saved_single_mode
+
+        commands = [
+            f"single {saved_single}",
+            f"repeat {1 if saved_repeat else 0}",
+        ]
+        with MPD_WRITE_LOCK:
+            mpd.run(*commands)
+
+        with self._lock:
+            self._pending_final_stop = False
+            self._pending_song_id = None
+        self._record(action)
+
+    def _tick(self) -> None:
+        if not self.enabled:
+            return
+
+        snap = self.monitor.snapshot()
+        if not bool(snap.get("reachable", False)):
+            # Never convert a Snapserver outage into "all radios left".
+            with self._lock:
+                self._previous_present_count = None
+            self._record("waiting_for_snapserver")
+            return
+
+        raw_present = snap.get("presentCount", 0)
+        present_count = int(raw_present) if isinstance(raw_present, int) else 0
+
+        with self._lock:
+            previous = self._previous_present_count
+            pending = self._pending_final_stop
+
+        # First good sample after startup/reconnect establishes a baseline only.
+        if previous is None:
+            with self._lock:
+                self._previous_present_count = present_count
+            self._record("presence_baseline_established")
+            return
+
+        mpd = self.mpd_factory()
+
+        if pending:
+            try:
+                state = mpd.state()
+            except (OSError, MpdError):
+                self._record("pending_stop_waiting_for_mpd")
+                with self._lock:
+                    self._previous_present_count = present_count
+                return
+
+            if present_count > 0:
+                self._restore_options(mpd, "pending_stop_cancelled_renderer_returned")
+            elif state.get("transport") == "stop":
+                self._restore_options(mpd, "final_track_completed_session_stopped")
+
+            with self._lock:
+                self._previous_present_count = present_count
+            return
+
+        # Only the last passive renderer leaving is actionable in this phase.
+        if previous > 0 and present_count == 0:
+            try:
+                state = mpd.state()
+                if state.get("transport") == "play":
+                    self._begin_final_stop(mpd, state)
+                else:
+                    self._record("last_renderer_left_transport_not_playing")
+            except (OSError, MpdError) as exc:
+                self._record(f"last_renderer_left_mpd_error: {exc}")
+
+        with self._lock:
+            self._previous_present_count = present_count
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._tick()
+            self._stop.wait(self.poll_seconds)
+
+
+PASSIVE_SESSION_POLICY = PassiveSessionPolicy(SNAPCAST_MONITOR)
+
+
 def parse_mpd_fields(lines: List[str]) -> Dict[str, str]:
     result: Dict[str, str] = {}
     for line in lines:
@@ -633,7 +830,7 @@ def bool_field(payload: Dict[str, object], key: str) -> bool:
 
 
 class ApiHandler(BaseHTTPRequestHandler):
-    server_version = "HouseAudioServer/0.3.1"
+    server_version = "HouseAudioServer/0.4"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} - {fmt % args}")
@@ -689,6 +886,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "presentCount": snap.get("presentCount", 0),
                     "audibleCount": snap.get("audibleCount", 0),
                 },
+                "sessionPolicy": PASSIVE_SESSION_POLICY.snapshot(),
             },
         )
 
@@ -738,6 +936,17 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "service": SERVICE_NAME,
                         "version": SERVICE_VERSION,
                         "snapserver": snap,
+                    },
+                )
+                return
+
+            if path == "/session":
+                self._json(
+                    200,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "sessionPolicy": PASSIVE_SESSION_POLICY.snapshot(),
                     },
                 )
                 return
@@ -942,6 +1151,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     SNAPCAST_MONITOR.start()
+    PASSIVE_SESSION_POLICY.start()
     server = ThreadingHTTPServer((HTTP_BIND, HTTP_PORT), ApiHandler)
     print(
         f"{SERVICE_NAME} {SERVICE_VERSION} listening on "
