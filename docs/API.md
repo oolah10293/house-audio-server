@@ -153,3 +153,23 @@ Not implemented yet:
 - push state feed
 
 For now, controllers can poll `/state`; the Android design intentionally does not require WebSockets for the first integration.
+
+
+## Runtime validation
+
+The v0.2.0 API has been exercised against the real MPD instance on the permanent Raspberry Pi.
+
+Confirmed in real use:
+
+- `/health`, `/state`, `/queue`, and `/browse`;
+- ordered queue replacement with a requested start index;
+- Play, Pause, Stop, Previous, and Next;
+- absolute seek while paused, followed by resume from the exact requested position;
+- Random/Shuffle and Repeat toggles;
+- Stop preserving the queue and selected item;
+- state reads reflecting the actual MPD session after every command;
+- transport-only operations leaving the MPD queue version unchanged.
+
+One browse test returned the real large `Rap` folder, confirming that library-relative identities and folder-first browsing work through the HTTP layer. One queue test also confirmed that duplicate MPD queue entries are preserved and reported exactly rather than deduplicated by the service.
+
+The next API work is not more basic MPD transport. It is renderer/controller presence and house-session policy.
