@@ -19,6 +19,90 @@ class ParsingTests(unittest.TestCase):
         with self.assertRaises(h.ApiError):
             h.validate_relative_path("/etc/passwd")
 
+    def test_snapcast_status_normalization(self):
+        monitor = h.SnapcastMonitor()
+        monitor._apply_status(
+            {
+                "groups": [
+                    {
+                        "id": "g1",
+                        "name": "Room",
+                        "muted": False,
+                        "stream_id": "default",
+                        "clients": [
+                            {
+                                "id": "node-1",
+                                "connected": True,
+                                "config": {
+                                    "name": "Kitchen",
+                                    "latency": 10,
+                                    "volume": {"muted": False, "percent": 80},
+                                },
+                                "host": {
+                                    "name": "esp32",
+                                    "ip": "192.0.2.10",
+                                    "mac": "00:11:22:33:44:55",
+                                    "os": "ESPHome",
+                                    "arch": "esp32",
+                                },
+                                "snapclient": {
+                                    "name": "Snapclient",
+                                    "version": "test",
+                                    "protocolVersion": 2,
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "server": {
+                    "snapserver": {
+                        "version": "0.31.0",
+                        "controlProtocolVersion": 2,
+                    }
+                },
+                "streams": [
+                    {
+                        "id": "default",
+                        "status": "playing",
+                        "uri": {"raw": "pipe:///tmp/snapfifo"},
+                    }
+                ],
+            }
+        )
+        snap = monitor.snapshot()
+        self.assertTrue(snap["reachable"])
+        self.assertEqual(snap["connectedCount"], 1)
+        self.assertEqual(snap["audibleCount"], 1)
+        self.assertEqual(snap["clients"][0]["name"], "Kitchen")
+        self.assertEqual(snap["clients"][0]["streamId"], "default")
+        self.assertEqual(snap["serverVersion"], "0.31.0")
+
+    def test_snapcast_group_mute_makes_client_inaudible(self):
+        monitor = h.SnapcastMonitor()
+        monitor._apply_status(
+            {
+                "groups": [
+                    {
+                        "id": "g1",
+                        "muted": True,
+                        "stream_id": "default",
+                        "clients": [
+                            {
+                                "id": "node-1",
+                                "connected": True,
+                                "config": {"volume": {"muted": False, "percent": 100}},
+                            }
+                        ],
+                    }
+                ],
+                "server": {"snapserver": {}},
+                "streams": [],
+            }
+        )
+        snap = monitor.snapshot()
+        self.assertEqual(snap["connectedCount"], 1)
+        self.assertEqual(snap["audibleCount"], 0)
+
     def test_parse_records(self):
         lines = [
             "file: Rap/A.mp3",
