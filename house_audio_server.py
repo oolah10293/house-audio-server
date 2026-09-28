@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.4.0"
+SERVICE_VERSION = "0.5.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -55,6 +55,7 @@ PASSIVE_SESSION_POLICY_ENABLED = os.environ.get(
 PASSIVE_SESSION_POLICY_POLL_SECONDS = float(
     os.environ.get("PASSIVE_SESSION_POLICY_POLL_SECONDS", "0.5")
 )
+PASSIVE_DEFAULT_FOLDER = os.environ.get("PASSIVE_DEFAULT_FOLDER", "MP3s")
 
 MAX_JSON_BODY = 2 * 1024 * 1024
 MPD_WRITE_LOCK = threading.RLock()
@@ -519,19 +520,18 @@ SNAPCAST_MONITOR = SnapcastMonitor()
 
 
 class PassiveSessionPolicy:
-    """Autonomous policy for the currently proven passive-renderer role.
+    """Autonomous policy for passive renderer nodes.
 
-    This first policy slice deliberately does not implement fresh-idle default
-    startup yet. It only handles the already-approved final-node rule:
+    Current behavior:
+    - fresh idle + passive renderer present/arrives -> start the default folder;
+    - renderer joining active playback -> leave the existing queue untouched;
+    - final passive renderer leaves during playback -> finish current track,
+      then stop;
+    - renderer returns before that track ends -> cancel the pending stop.
 
-    - when effective passive-renderer presence falls from >0 to 0 while MPD is
-      playing, allow the current song to finish and then stop;
-    - if a renderer returns before the track ends, cancel the pending stop.
-
-    MPD 0.24 supports `single oneshot`. Because normal Single + Repeat repeats
-    the current song, the policy temporarily disables Repeat while the oneshot
-    stop is armed, then restores the user's original Repeat/Single settings
-    when the stop is cancelled or completes.
+    Persistent default-shuffle progress is still a later step. For now each
+    fresh default session rebuilds the configured default folder and asks MPD
+    to create a fresh Random order.
     """
 
     def __init__(
@@ -540,11 +540,15 @@ class PassiveSessionPolicy:
         mpd_factory=MpdClient,
         enabled: bool = PASSIVE_SESSION_POLICY_ENABLED,
         poll_seconds: float = PASSIVE_SESSION_POLICY_POLL_SECONDS,
+        default_folder: str = PASSIVE_DEFAULT_FOLDER,
     ) -> None:
         self.monitor = monitor
         self.mpd_factory = mpd_factory
         self.enabled = enabled
         self.poll_seconds = poll_seconds
+        self.default_folder = validate_relative_path(default_folder)
+        if not self.default_folder:
+            raise ValueError("PASSIVE_DEFAULT_FOLDER must not be empty")
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -578,12 +582,14 @@ class PassiveSessionPolicy:
             return {
                 "enabled": self.enabled,
                 "mode": "passive_renderers_only",
+                "defaultFolder": self.default_folder,
                 "presentCount": self._previous_present_count,
                 "pendingFinalStop": self._pending_final_stop,
                 "pendingSongId": self._pending_song_id,
                 "lastAction": self._last_action,
                 "lastActionEpoch": self._last_action_epoch,
-                "freshIdleAutoStartImplemented": False,
+                "freshIdleAutoStartImplemented": True,
+                "persistentDefaultShuffleImplemented": False,
                 "controllerPresenceImplemented": False,
             }
 
@@ -598,6 +604,56 @@ class PassiveSessionPolicy:
         if value in ("0", "1", "oneshot"):
             return str(value)
         return "1" if state.get("single") is True else "0"
+
+    def _start_default_session(self, mpd: MpdClient) -> None:
+        # Force Random off before rebuilding so turning it back on creates a
+        # fresh shuffled order over the complete folder.
+        commands = [
+            "random 0",
+            "clear",
+            f"add {mpd_quote(self.default_folder)}",
+            "repeat 1",
+            "single 0",
+            "consume 0",
+            "random 1",
+            "play",
+        ]
+        with MPD_WRITE_LOCK:
+            mpd.run(*commands)
+
+        state = mpd.state()
+        if state.get("queueLength", 0) == 0:
+            raise MpdError(
+                f"Default folder {self.default_folder!r} produced an empty queue"
+            )
+        if state.get("transport") != "play":
+            raise MpdError(
+                f"MPD did not start default folder {self.default_folder!r}"
+            )
+        self._record("started_default_session")
+
+    def _handle_renderer_arrival(self, mpd: MpdClient, baseline: bool = False) -> None:
+        state = mpd.state()
+        transport = state.get("transport")
+
+        if transport == "stop":
+            self._start_default_session(mpd)
+        elif transport == "play":
+            self._record(
+                "presence_baseline_active_session"
+                if baseline
+                else "renderer_joined_existing_session"
+            )
+        elif transport == "pause":
+            # A deliberate/retained Pause is not permission to start a new
+            # default session just because a renderer appeared.
+            self._record(
+                "presence_baseline_paused_session"
+                if baseline
+                else "renderer_joined_paused_session"
+            )
+        else:
+            self._record("renderer_arrival_unknown_mpd_state")
 
     def _begin_final_stop(self, mpd: MpdClient, state: Dict[str, object]) -> None:
         saved_repeat = bool(state.get("repeat", False))
@@ -657,14 +713,23 @@ class PassiveSessionPolicy:
             previous = self._previous_present_count
             pending = self._pending_final_stop
 
-        # First good sample after startup/reconnect establishes a baseline only.
+        mpd = self.mpd_factory()
+
+        # First good sample after service startup/reconnect is an authoritative
+        # baseline. If a passive renderer is already present and MPD is stopped,
+        # that is the same product state as plugging a radio into a fresh idle
+        # house: start music.
         if previous is None:
             with self._lock:
                 self._previous_present_count = present_count
-            self._record("presence_baseline_established")
+            if present_count > 0:
+                try:
+                    self._handle_renderer_arrival(mpd, baseline=True)
+                except (OSError, MpdError) as exc:
+                    self._record(f"baseline_renderer_start_error: {exc}")
+            else:
+                self._record("presence_baseline_established")
             return
-
-        mpd = self.mpd_factory()
 
         if pending:
             try:
@@ -684,7 +749,12 @@ class PassiveSessionPolicy:
                 self._previous_present_count = present_count
             return
 
-        # Only the last passive renderer leaving is actionable in this phase.
+        if previous == 0 and present_count > 0:
+            try:
+                self._handle_renderer_arrival(mpd)
+            except (OSError, MpdError) as exc:
+                self._record(f"renderer_start_error: {exc}")
+
         if previous > 0 and present_count == 0:
             try:
                 state = mpd.state()
@@ -830,7 +900,7 @@ def bool_field(payload: Dict[str, object], key: str) -> bool:
 
 
 class ApiHandler(BaseHTTPRequestHandler):
-    server_version = "HouseAudioServer/0.4"
+    server_version = "HouseAudioServer/0.5"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} - {fmt % args}")
