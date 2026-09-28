@@ -296,7 +296,9 @@ This is **implemented and unit-tested but not yet runtime-validated on the perma
 
 The service now implements the basic appliance behavior for passive radios: **turn a radio on and music starts**.
 
-If a passive renderer is present while the house is fresh-idle, or renderer presence changes from zero to positive while MPD is stopped, the service loads the configured default folder (`MP3s` by default), enables Repeat and Random, disables Single/Consume, and starts playback. If music is already playing, the arriving radio simply joins that session without replacing the queue. A paused MPD session is left paused.
+If a passive renderer is present while the house is fresh-idle, or renderer presence changes from zero to positive while MPD is stopped, the service loads the configured default folder (`MP3s` by default), enables Repeat and Random, disables Single/Consume, and starts playback. If music is already playing, the arriving radio simply joins that session without replacing the queue.
+
+**Approved behavior change, not yet implemented in v0.5.0:** if MPD already has a paused session, powering on a passive radio should resume that paused session from its current position. It must not remain silent and must not replace the paused queue with the default `MP3s` queue. Controller arrival alone still must not bulldoze through Pause.
 
 This also works when `house-audio-server` starts while a radio is already powered on; the initial presence baseline is treated as a real passive-node arrival when MPD is stopped.
 
