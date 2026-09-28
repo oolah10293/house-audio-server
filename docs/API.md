@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current service version: **0.3.0**
+Current service version: **0.3.1**
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -188,3 +188,17 @@ Confirmed in real use:
 One browse test returned the real large `Rap` folder, confirming that library-relative identities and folder-first browsing work through the HTTP layer. One queue test also confirmed that duplicate MPD queue entries are preserved and reported exactly rather than deduplicated by the service.
 
 The next API work is no longer basic MPD transport. v0.3.0 adds live Snapserver renderer presence; after that is runtime-validated, the next step is autonomous house-session policy using that presence.
+
+
+### Abrupt power-off presence rule
+
+A hard-powered-off ESP32 can leave Snapserver's TCP stream socket temporarily in `ESTABLISHED`, so Snapserver may continue reporting the remembered client with `connected: true` for a while even though the renderer is physically gone.
+
+v0.3.1 therefore distinguishes:
+
+- `connected` — Snapserver's raw client flag;
+- `present` — raw connected **and** a fresh Snapcast `lastSeen` timestamp;
+- `presentCount` — clients considered physically present by that freshness rule;
+- `audibleCount` — fresh/present clients that are not client- or group-muted.
+
+The monitor polls `Server.GetStatus` once per second by default and treats a client as stale after five seconds without fresh Snapcast activity. Both values are configurable. Autonomous house-session policy must use `present`/`presentCount`, not the raw `connected` flag.
