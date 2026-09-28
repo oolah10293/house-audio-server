@@ -174,6 +174,9 @@ class FakeMpd:
             "single": False,
             "singleMode": "0",
             "songId": 42,
+            "queueLength": 3,
+            "random": True,
+            "consume": False,
         }
         self.commands = []
 
@@ -183,8 +186,19 @@ class FakeMpd:
     def run(self, *commands):
         self.commands.extend(commands)
         for command in commands:
-            if command.startswith("repeat "):
+            if command == "clear":
+                self.state_data["queueLength"] = 0
+            elif command.startswith("add "):
+                self.state_data["queueLength"] = 3
+            elif command == "play":
+                if self.state_data.get("queueLength", 0) > 0:
+                    self.state_data["transport"] = "play"
+            elif command.startswith("repeat "):
                 self.state_data["repeat"] = command.endswith("1")
+            elif command.startswith("random "):
+                self.state_data["random"] = command.endswith("1")
+            elif command.startswith("consume "):
+                self.state_data["consume"] = command.endswith("1")
             elif command.startswith("single "):
                 mode = command.split(" ", 1)[1]
                 self.state_data["singleMode"] = mode
@@ -193,6 +207,80 @@ class FakeMpd:
 
 
 class SessionPolicyTests(unittest.TestCase):
+    def test_present_renderer_at_fresh_idle_starts_default_folder(self):
+        monitor = FakeMonitor(present=1)
+        mpd = FakeMpd()
+        mpd.state_data["transport"] = "stop"
+        policy = h.PassiveSessionPolicy(
+            monitor,
+            mpd_factory=lambda: mpd,
+            enabled=True,
+            poll_seconds=0.01,
+            default_folder="MP3s",
+        )
+
+        policy._tick()
+
+        self.assertEqual(
+            mpd.commands,
+            [
+                "random 0",
+                "clear",
+                'add "MP3s"',
+                "repeat 1",
+                "single 0",
+                "consume 0",
+                "random 1",
+                "play",
+            ],
+        )
+        self.assertEqual(mpd.state_data["transport"], "play")
+        self.assertEqual(policy.snapshot()["lastAction"], "started_default_session")
+
+    def test_renderer_arrival_from_zero_starts_default_folder(self):
+        monitor = FakeMonitor(present=0)
+        mpd = FakeMpd()
+        mpd.state_data["transport"] = "stop"
+        policy = h.PassiveSessionPolicy(
+            monitor,
+            mpd_factory=lambda: mpd,
+            enabled=True,
+            poll_seconds=0.01,
+            default_folder="MP3s",
+        )
+
+        policy._tick()
+        self.assertEqual(mpd.commands, [])
+
+        monitor.present = 1
+        policy._tick()
+
+        self.assertEqual(mpd.state_data["transport"], "play")
+        self.assertIn('add "MP3s"', mpd.commands)
+        self.assertEqual(policy.snapshot()["lastAction"], "started_default_session")
+
+    def test_renderer_arrival_does_not_restart_paused_session(self):
+        monitor = FakeMonitor(present=0)
+        mpd = FakeMpd()
+        mpd.state_data["transport"] = "pause"
+        policy = h.PassiveSessionPolicy(
+            monitor,
+            mpd_factory=lambda: mpd,
+            enabled=True,
+            poll_seconds=0.01,
+            default_folder="MP3s",
+        )
+
+        policy._tick()
+        monitor.present = 1
+        policy._tick()
+
+        self.assertEqual(mpd.commands, [])
+        self.assertEqual(
+            policy.snapshot()["lastAction"],
+            "renderer_joined_paused_session",
+        )
+
     def test_last_renderer_leaving_arms_finish_track_stop(self):
         monitor = FakeMonitor(present=1)
         mpd = FakeMpd()
