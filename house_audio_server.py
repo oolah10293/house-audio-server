@@ -17,6 +17,7 @@ import json
 import os
 import socket
 import threading
+import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import PurePosixPath
@@ -24,7 +25,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.3.0"
+SERVICE_VERSION = "0.3.1"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -40,6 +41,12 @@ SNAPSERVER_CONNECT_TIMEOUT = float(
 )
 SNAPSERVER_RETRY_SECONDS = float(
     os.environ.get("SNAPSERVER_RETRY_SECONDS", "2.0")
+)
+SNAPSERVER_POLL_SECONDS = float(
+    os.environ.get("SNAPSERVER_POLL_SECONDS", "1.0")
+)
+SNAPSERVER_STALE_AFTER_SECONDS = float(
+    os.environ.get("SNAPSERVER_STALE_AFTER_SECONDS", "5.0")
 )
 
 MAX_JSON_BODY = 2 * 1024 * 1024
@@ -212,27 +219,18 @@ class SnapcastError(RuntimeError):
 
 
 class SnapcastMonitor:
-    """Maintain an authoritative live snapshot of Snapserver clients.
+    """Poll Snapserver status and derive effective renderer presence.
 
-    Snapserver exposes JSON-RPC 2.0 over newline-delimited JSON on its raw
-    control socket (normally TCP 1705). The monitor keeps one long-lived
-    connection, gets an initial Server.GetStatus snapshot, then listens for
-    notifications. Relevant notifications trigger another full status request
-    so group/client/stream relationships stay authoritative.
+    Snapserver can temporarily keep a hard-powered-off client marked
+    connected while the underlying TCP stream socket is still ESTABLISHED.
+    Snapcast clients also carry a lastSeen timestamp that is updated by their
+    periodic time-sync traffic. Policy should therefore use `present`, not
+    Snapserver's raw `connected` flag alone.
+
+    A short local Server.GetStatus poll keeps lastSeen fresh for healthy
+    clients and lets the service age out abruptly powered-off renderers even
+    before the kernel/Snapserver finally tears down the stale TCP socket.
     """
-
-    REFRESH_METHODS = {
-        "Client.OnConnect",
-        "Client.OnDisconnect",
-        "Client.OnVolumeChanged",
-        "Client.OnLatencyChanged",
-        "Client.OnNameChanged",
-        "Group.OnMute",
-        "Group.OnStreamChanged",
-        "Group.OnNameChanged",
-        "Server.OnUpdate",
-        "Stream.OnUpdate",
-    }
 
     def __init__(
         self,
@@ -240,11 +238,15 @@ class SnapcastMonitor:
         port: int = SNAPSERVER_CONTROL_PORT,
         connect_timeout: float = SNAPSERVER_CONNECT_TIMEOUT,
         retry_seconds: float = SNAPSERVER_RETRY_SECONDS,
+        poll_seconds: float = SNAPSERVER_POLL_SECONDS,
+        stale_after_seconds: float = SNAPSERVER_STALE_AFTER_SECONDS,
     ) -> None:
         self.host = host
         self.port = port
         self.connect_timeout = connect_timeout
         self.retry_seconds = retry_seconds
+        self.poll_seconds = poll_seconds
+        self.stale_after_seconds = stale_after_seconds
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -254,9 +256,11 @@ class SnapcastMonitor:
             "host": self.host,
             "controlPort": self.port,
             "connectedCount": 0,
+            "presentCount": 0,
             "audibleCount": 0,
             "clients": [],
             "streams": [],
+            "staleAfterSeconds": self.stale_after_seconds,
             "error": "not connected yet",
         }
 
@@ -279,16 +283,48 @@ class SnapcastMonitor:
         self._request_id += 1
         return self._request_id
 
-    def _send_status_request(self, stream) -> int:
+    def _fetch_status(self) -> Dict[str, object]:
         request_id = self._next_id()
         request = {
             "id": request_id,
             "jsonrpc": "2.0",
             "method": "Server.GetStatus",
         }
-        stream.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
-        stream.flush()
-        return request_id
+
+        with socket.create_connection(
+            (self.host, self.port), timeout=self.connect_timeout
+        ) as sock:
+            sock.settimeout(self.connect_timeout)
+            stream = sock.makefile("rwb", buffering=0)
+            stream.write(
+                (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
+            )
+            stream.flush()
+
+            while True:
+                raw = stream.readline()
+                if not raw:
+                    raise SnapcastError("Snapserver closed the control connection")
+
+                try:
+                    message = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+
+                if not isinstance(message, dict) or message.get("id") != request_id:
+                    continue
+
+                if "error" in message:
+                    raise SnapcastError(str(message["error"]))
+
+                result = message.get("result")
+                if not isinstance(result, dict):
+                    raise SnapcastError("Invalid Server.GetStatus response")
+
+                status = result.get("server")
+                if not isinstance(status, dict):
+                    raise SnapcastError("Server.GetStatus omitted server data")
+                return status
 
     def _set_disconnected(self, error: str) -> None:
         with self._lock:
@@ -298,13 +334,28 @@ class SnapcastMonitor:
                 "host": self.host,
                 "controlPort": self.port,
                 "connectedCount": 0,
+                "presentCount": 0,
                 "audibleCount": 0,
                 "clients": [],
                 "streams": [],
                 "serverVersion": previous.get("serverVersion"),
                 "controlProtocolVersion": previous.get("controlProtocolVersion"),
+                "staleAfterSeconds": self.stale_after_seconds,
                 "error": error,
             }
+
+    @staticmethod
+    def _last_seen_epoch(client: Dict[str, object]) -> Optional[float]:
+        last_seen = client.get("lastSeen")
+        if not isinstance(last_seen, dict):
+            return None
+        sec = last_seen.get("sec")
+        usec = last_seen.get("usec", 0)
+        if not isinstance(sec, (int, float)) or isinstance(sec, bool):
+            return None
+        if not isinstance(usec, (int, float)) or isinstance(usec, bool):
+            usec = 0
+        return float(sec) + float(usec) / 1_000_000.0
 
     def _apply_status(self, status: Dict[str, object]) -> None:
         groups = status.get("groups")
@@ -322,6 +373,7 @@ class SnapcastMonitor:
         if not isinstance(snapserver_info, dict):
             snapserver_info = {}
 
+        now = time.time()
         clients: List[Dict[str, object]] = []
         for group in groups:
             if not isinstance(group, dict):
@@ -352,8 +404,20 @@ class SnapcastMonitor:
                     volume = {}
 
                 connected = bool(client.get("connected", False))
+                last_seen_epoch = self._last_seen_epoch(client)
+                last_seen_age = (
+                    max(0.0, now - last_seen_epoch)
+                    if last_seen_epoch is not None
+                    else None
+                )
+                fresh = (
+                    last_seen_age is not None
+                    and last_seen_age <= self.stale_after_seconds
+                )
+                present = connected and fresh
+
                 client_muted = bool(volume.get("muted", False))
-                audible = connected and not client_muted and not group_muted
+                audible = present and not client_muted and not group_muted
 
                 client_id = client.get("id")
                 configured_name = config.get("name")
@@ -365,10 +429,17 @@ class SnapcastMonitor:
                         "id": client_id,
                         "name": display_name,
                         "connected": connected,
+                        "present": present,
                         "audible": audible,
                         "muted": client_muted,
                         "volumePercent": volume.get("percent"),
                         "latencyMs": config.get("latency"),
+                        "lastSeenEpoch": last_seen_epoch,
+                        "lastSeenAgeSeconds": (
+                            round(last_seen_age, 3)
+                            if last_seen_age is not None
+                            else None
+                        ),
                         "groupId": group_id,
                         "groupName": group_name,
                         "groupMuted": group_muted,
@@ -389,6 +460,7 @@ class SnapcastMonitor:
                 )
 
         connected_count = sum(1 for client in clients if client["connected"])
+        present_count = sum(1 for client in clients if client["present"])
         audible_count = sum(1 for client in clients if client["audible"])
 
         normalized_streams: List[Dict[str, object]] = []
@@ -416,60 +488,23 @@ class SnapcastMonitor:
                     "controlProtocolVersion"
                 ),
                 "connectedCount": connected_count,
+                "presentCount": present_count,
                 "audibleCount": audible_count,
                 "clients": clients,
                 "streams": normalized_streams,
+                "staleAfterSeconds": self.stale_after_seconds,
             }
 
     def _run(self) -> None:
+        wait_seconds = self.poll_seconds
         while not self._stop.is_set():
             try:
-                with socket.create_connection(
-                    (self.host, self.port), timeout=self.connect_timeout
-                ) as sock:
-                    # After the connection succeeds, wait indefinitely for
-                    # notifications. A Snapserver restart/close wakes us up.
-                    sock.settimeout(None)
-                    stream = sock.makefile("rwb", buffering=0)
-                    pending_status_id = self._send_status_request(stream)
-
-                    while not self._stop.is_set():
-                        raw = stream.readline()
-                        if not raw:
-                            raise SnapcastError("Snapserver closed the control connection")
-
-                        try:
-                            message = json.loads(raw.decode("utf-8"))
-                        except (UnicodeDecodeError, json.JSONDecodeError):
-                            continue
-
-                        if not isinstance(message, dict):
-                            continue
-
-                        if message.get("id") == pending_status_id:
-                            if "error" in message:
-                                raise SnapcastError(str(message["error"]))
-                            result = message.get("result")
-                            if not isinstance(result, dict):
-                                raise SnapcastError("Invalid Server.GetStatus response")
-                            status = result.get("server")
-                            if not isinstance(status, dict):
-                                raise SnapcastError("Server.GetStatus omitted server data")
-                            self._apply_status(status)
-                            pending_status_id = None
-                            continue
-
-                        method = message.get("method")
-                        if (
-                            isinstance(method, str)
-                            and method in self.REFRESH_METHODS
-                            and pending_status_id is None
-                        ):
-                            pending_status_id = self._send_status_request(stream)
-
+                self._apply_status(self._fetch_status())
+                wait_seconds = self.poll_seconds
             except (OSError, SnapcastError) as exc:
                 self._set_disconnected(str(exc))
-                self._stop.wait(self.retry_seconds)
+                wait_seconds = self.retry_seconds
+            self._stop.wait(wait_seconds)
 
 
 SNAPCAST_MONITOR = SnapcastMonitor()
@@ -598,7 +633,7 @@ def bool_field(payload: Dict[str, object], key: str) -> bool:
 
 
 class ApiHandler(BaseHTTPRequestHandler):
-    server_version = "HouseAudioServer/0.3"
+    server_version = "HouseAudioServer/0.3.1"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} - {fmt % args}")
@@ -651,6 +686,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "renderers": {
                     "snapserverReachable": snap.get("reachable", False),
                     "connectedCount": snap.get("connectedCount", 0),
+                    "presentCount": snap.get("presentCount", 0),
                     "audibleCount": snap.get("audibleCount", 0),
                 },
             },
