@@ -174,9 +174,10 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 4. **DONE** — Prove the first ESP32-S3 can receive that stream without a DAC.
 5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
-7. **IN PROGRESS** — Track Snapserver renderer presence and implement the autonomous session rules needed when no phone/PC/browser is connected. The live presence monitor is now implemented in v0.3.0 source and awaits runtime validation.
-8. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
-9. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
+7. **DONE** — Track Snapserver renderer presence, including reliable hard-power-off detection via `lastSeen` freshness rather than Snapserver's raw connected flag.
+8. **NEXT server milestone** — Implement the autonomous session rules driven by proven renderer presence when no phone/PC/browser is connected.
+9. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
+10. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
 
 Every successful step remains part of the final installation.
 
@@ -270,7 +271,15 @@ Testing also exposed an important real-world behavior: when the ESP32 is hard-po
 
 v0.3.1 fixes the presence definition without changing Snapserver: the service polls `Server.GetStatus`, reads each client's Snapcast `lastSeen` timestamp, and exposes `present`/`presentCount` separately from Snapserver's raw `connected` flag. A client defaults to stale after five seconds without fresh Snapcast activity. `audibleCount` now depends on fresh presence as well as mute state.
 
-Autonomous session policy must use `presentCount`, not raw `connectedCount`. This behavior is implemented in source and is the next permanent-Pi validation step.
+Autonomous session policy must use `presentCount`, not raw `connectedCount`.
+
+This behavior is now **runtime-proven on the permanent Pi in both directions**:
+
+- with the ESP32 powered on and allowed to settle, the service reported `present: true`, `presentCount: 1`, `audibleCount: 1`, with a fresh `lastSeenAgeSeconds`;
+- after hard power-off and a short wait, Snapserver and Linux could still retain the raw stream connection as `connected: true` / TCP `ESTABLISHED`, but the service correctly changed to `present: false`, `presentCount: 0`, `audibleCount: 0` using stale `lastSeen` age;
+- powering the renderer back on returned the same remembered client to fresh/present/audible state without restarting Snapserver or `house-audio-server`.
+
+Renderer presence is therefore considered **runtime-validated**, including the actual hard power-switch behavior required by the vintage-radio installations. The next server step is to feed `presentCount` transitions into the agreed autonomous MPD session policy.
 
 ## MPD control-service boundary
 
@@ -334,4 +343,4 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** `house-audio-server` v0.2.0 is **runtime-proven on the permanent Pi** for the complete basic MPD browse/state/queue/transport API. v0.3.0 now implements live Snapserver renderer-presence tracking and awaits runtime validation. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, and autonomous house-session policy logic remain unimplemented. The next server step is to prove renderer connect/disconnect tracking with the real ESP32, then use that proven presence to drive the agreed autonomous session rules. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
+**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** `house-audio-server` v0.2.0 is **runtime-proven** for the complete basic MPD browse/state/queue/transport API, and v0.3.1 renderer presence is also **runtime-proven** on the permanent Pi for both power-on and abrupt hard-power-off. The service correctly distinguishes Snapserver's stale raw `connected` state from effective `present` state using `lastSeen` freshness. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, and autonomous house-session policy logic remain unimplemented. The next server milestone is renderer-presence-driven autonomous MPD behavior. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
