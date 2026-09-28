@@ -1,6 +1,6 @@
 # Agreed house-audio behavior
 
-**Status: approved product behavior, not implemented or runtime-tested control-service functionality.** This record captures the decisions agreed in the project conversation. It is the authoritative behavior reference for the Pi service, Android SMB Music Player, SMB Player PC, the browser controller, and passive audio nodes.
+**Status: authoritative product behavior.** Some rules below are now implemented and runtime-proven while others remain future work. This document defines the intended behavior; implementation/validation status is tracked in the repository README, API docs, and issues.
 
 These rules supersede earlier suggestions of an always-playing private radio station, starting music whenever any controller opens, and treating every failed server request as permission to switch to standalone playback.
 
@@ -149,3 +149,17 @@ Still to settle before coding the affected edges:
 - How additions/removals in `MP3s` are reconciled with a saved shuffle cycle, and exact recovery behavior after a Pi restart.
 
 These gaps do not cancel the confirmed rules. They are intentionally not filled with invented decisions. No runtime code or Pi configuration is changed by recording this document.
+
+
+## 10. Current proven passive-renderer behavior
+
+The following implementation facts are now proven on the permanent Pi and real hardware; they do not replace the normative rules above:
+
+- a passive ESP32 radio powering on into fresh idle automatically starts the default house music with no phone/controller required;
+- a passive radio joining an already-playing session joins the same song rather than rebuilding/restarting the queue;
+- after a hard power-off lasting more than ten seconds, a renderer can power back on and rejoin the still-active song; one observed return to audible output took about six seconds;
+- two independent XIAO ESP32-S3 + PCM5102A renderers have produced audibly synchronized output through different downstream amplifier/speaker systems;
+- passive-radio arrival now resumes an existing paused MPD session. This was field-proven after a leave-and-return case where both radios were present but v0.5.0 had left MPD paused and silent;
+- effective renderer presence uses Snapcast `lastSeen` freshness, not the raw Snapserver `connected` flag, because a hard-powered-off node can leave a stale TCP connection looking established.
+
+An unresolved reliability issue remains: occasional few-second silence has been heard on one renderer or the other during two-node playback. Both nodes have external antennas installed. The cause is not yet known; v0.6.0 adds unattended diagnostics so the next occurrence can be correlated with Snapcast timing/presence and global stream state.
