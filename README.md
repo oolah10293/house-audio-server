@@ -354,6 +354,8 @@ Known facts:
 
 v0.6.0 adds bounded in-memory diagnostics at `GET /diagnostics` to record per-client Snapcast time-sync stalls/recovery, connected/present/audible changes, Snapserver reachability, and stream-state changes. The next useful evidence is a field capture after an audible dropout. If server-side timing/presence remains clean, instrumentation should move into the ESP32 decoder/buffer/I2S path.
 
+Renderer-side tracking: [house-audio-esp32 Issue #3](https://github.com/oolah10293/house-audio-esp32/issues/3).
+
 ## MPD control-service boundary
 
 The remaining controller problem is **not figuring out how to operate MPD**. The required MPD operations are understood: folder/library browsing, queue inspection/replacement/reordering, current-song and position state, Play/Pause/Stop, Seek, Previous/Next, Shuffle/Random, Repeat, and change notifications.
