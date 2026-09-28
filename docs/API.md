@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current service version: **0.2.0**
+Current service version: **0.3.0**
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -23,6 +23,21 @@ Returns the current MPD transport/session snapshot:
 - queue length and version
 - selected queue position/id
 - current file identity and available metadata
+
+### `GET /renderers`
+
+Returns the live Snapserver renderer snapshot from the JSON-RPC control connection on port 1705.
+
+The response includes:
+
+- whether Snapserver is reachable;
+- Snapserver version/control-protocol information when available;
+- connected renderer count;
+- currently audible renderer count;
+- each client's stable Snapcast id, configured/display name, host/IP/MAC, client version, mute/volume/latency, group, and stream;
+- current stream ids/status.
+
+The service keeps a long-lived Snapserver control connection, takes an initial `Server.GetStatus` snapshot, listens for connect/disconnect/volume/group/stream notifications, and refreshes the full authoritative snapshot after relevant changes.
 
 ### `GET /queue`
 
@@ -133,6 +148,7 @@ This endpoint is the intended primitive for Android/Windows `PLAY LIST`, search-
 Implemented now:
 
 - health/state
+- live Snapserver renderer presence
 - queue inspection
 - folder/library browsing
 - basic transport
@@ -142,7 +158,6 @@ Implemented now:
 
 Not implemented yet:
 
-- Snapserver client presence
 - passive-node auto-start
 - final-node finish-current-track logic
 - muted-controller pause/retain behavior
@@ -172,4 +187,4 @@ Confirmed in real use:
 
 One browse test returned the real large `Rap` folder, confirming that library-relative identities and folder-first browsing work through the HTTP layer. One queue test also confirmed that duplicate MPD queue entries are preserved and reported exactly rather than deduplicated by the service.
 
-The next API work is not more basic MPD transport. It is renderer/controller presence and house-session policy.
+The next API work is no longer basic MPD transport. v0.3.0 adds live Snapserver renderer presence; after that is runtime-validated, the next step is autonomous house-session policy using that presence.
