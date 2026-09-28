@@ -26,7 +26,7 @@ With no nodes connected and no final track still finishing, nothing is playing. 
 
 A phone, PC player, or browser connecting first does **not** automatically start a track, even when its output is unmuted. It waits for an explicit Play action. Do not restore a controller's former private queue into MPD merely because the controller connected.
 
-This fresh-session rule is different from resuming a retained session that was automatically paused because only a muted controller remained.
+This fresh-session rule is different from a paused retained/active session. **A passive radio arriving while MPD is paused should resume that existing paused session rather than leave it paused or replace it with the default MP3s queue.** Passive-node arrival is therefore allowed to override Pause; controller arrival alone is not.
 
 ## 3. Joining and controlling an existing session
 
@@ -55,7 +55,7 @@ The agreed case is:
 1. Music is playing and a phone remains connected with its output muted.
 2. The last unmuted node disconnects.
 3. MPD **pauses and retains the playlist, current track, and exact position**. It does not finish the track and discard the session as though all nodes had gone away.
-4. An unmuted node reconnecting, or the phone being unmuted, resumes that retained session from the paused position.
+4. An unmuted node reconnecting, the phone being unmuted, **or a passive radio being powered on** resumes that retained session from the paused position.
 
 Muting the phone while other audible nodes remain must not pause those nodes. An existing retained session is not a fresh idle session, so resuming it is not permission for a controller connecting to an otherwise idle house to start a new track.
 
@@ -139,7 +139,7 @@ The rules above describe the desired product, not a completed implementation. Pr
 
 The Pi service will need to track controller presence and renderer presence/output state separately, retain the active queue, preserve default shuffle progress durably, and distinguish a pending finish-track stop from a paused retained session. A stale TCP socket alone must not be treated as proof that a powered-off node is still present. Heartbeats, disconnect grace periods, and storage format have not been chosen.
 
-Distinguish an automatic pause due to no audible outputs from a deliberate user Pause; do not use arrival handling as a blanket override of explicit transport commands.
+Controller arrival must not be used as a blanket override of explicit transport commands. **Passive-radio arrival is the deliberate exception:** powering on a passive radio should resume an existing paused MPD session, including a deliberate Pause, rather than remaining silent or replacing the queue.
 
 Still to settle before coding the affected edges:
 
