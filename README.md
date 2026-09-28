@@ -118,7 +118,9 @@ The client:
 - logged mute/unmute activity during the test
 - continuously received and acknowledged the actual audio stream
 
-Server-side TCP counters showed sustained payload transfer to the XIAO. In one 59-second sample, `bytes_sent` increased by **6,292,952 bytes** and `data_segs_out` increased by **5,343**, approximately **0.85 Mbit/s** of sustained stream traffic, with acknowledgements tracking transmission. `bytes_sent` alone is not reception proof; follow `bytes_acked` on the current client connection as well. This is a network-reception milestone, not yet proof of audible DAC output or two-room synchronization.
+Server-side TCP counters showed sustained payload transfer to the XIAO. In one 59-second sample, `bytes_sent` increased by **6,292,952 bytes** and `data_segs_out` increased by **5,343**, approximately **0.85 Mbit/s** of sustained stream traffic, with acknowledgements tracking transmission. `bytes_sent` alone is not reception proof; follow `bytes_acked` on the current client connection as well.
+
+The renderer has since advanced beyond the network-only proof: a PCM5102A is connected and **real audible analog playback is proven** through the permanent FLAC Snapcast path. The proven XIAO mapping is `LCK -> D3 (GPIO4)`, `BCK -> D4 (GPIO5)`, and `DIN -> D5 (GPIO6)`. Two-room audible synchronization is still untested.
 
 ## System role
 
@@ -166,12 +168,29 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 2. **DONE** — Feed MPD audio into Snapserver through `/tmp/snapfifo`.
 3. **DONE** — Prove Snapserver exposes and carries the real audio stream.
 4. **DONE** — Prove the first ESP32-S3 can receive that stream without a DAC.
-5. **NEXT renderer milestone** — Add an I2S DAC to the ESP32 renderer and produce real audio.
-6. Add the custom `house-audio-server` control/discovery service around the working stack, implementing the agreed session rules.
+5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
+6. **NEXT server/control milestone** — Add the custom `house-audio-server` control/discovery service around the working stack, implementing the agreed session rules.
 7. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
 8. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
 
 Every successful step remains part of the final installation.
+
+## MPD control-service boundary
+
+The remaining controller problem is **not figuring out how to operate MPD**. The required MPD operations are understood: folder/library browsing, queue inspection/replacement/reordering, current-song and position state, Play/Pause/Stop, Seek, Previous/Next, Shuffle/Random, Repeat, and change notifications.
+
+The custom `house-audio-server` should be the single client-facing bridge to those MPD operations. Android, Windows, and the browser controller should not each connect directly to MPD's native control port. The bridge exists so one place can enforce:
+
+- the approved one-house-session lifecycle;
+- controller vs renderer presence;
+- muted-output behavior;
+- fresh-idle vs retained-session rules;
+- finish-current-track behavior when all nodes leave;
+- persistent default `MP3s` shuffle progress;
+- HOUSE discovery/verification and protocol/version identity;
+- command acknowledgement, stale-state protection, and shared state updates.
+
+The exact network API/schema is still to be implemented. The architecture is settled enough to proceed with the bridge without further MPD research.
 
 ## Remaining server-side Phase 1 check
 
@@ -218,4 +237,4 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**MPD -> Snapserver -> ESP32-S3 network reception is proven on the permanent hardware and permanent Pi stack.** The Pi-side audio services are currently intentionally **inactive and disabled**, with no leftover processes, listening ports, or FIFO; packages and configuration are preserved for the next test phase. The next renderer step is an I2S line-level DAC and actual audio output. Reboot/service-startup recovery and the clean House Audio On/Off lifecycle remain unimplemented. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements; the custom control service is not yet implemented.
+**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** The Pi-side audio services are currently intentionally **inactive and disabled**, with no leftover processes, listening ports, or FIFO; packages and configuration are preserved for the next test phase. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, and the custom control/discovery bridge remain unimplemented. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
