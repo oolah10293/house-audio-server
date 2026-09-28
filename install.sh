@@ -23,10 +23,11 @@ if [ ! -f "$DEFAULT_FILE" ]; then
 fi
 
 systemctl daemon-reload
-systemctl enable --now house-audio-server.service
+systemctl enable house-audio-server.service
+systemctl restart house-audio-server.service
 
 echo
-echo "Installed and started house-audio-server."
+echo "Installed and restarted house-audio-server."
 echo "Local health check:"
 echo "  curl http://127.0.0.1:8787/health"
 echo
