@@ -26,3 +26,10 @@ PASSIVE_SESSION_POLICY_POLL_SECONDS=0.5
 
 # Folder loaded automatically when the first passive renderer appears in fresh idle.
 PASSIVE_DEFAULT_FOLDER=MP3s
+
+# Lightweight in-memory renderer diagnostics. Records only state changes and
+# stalls, not every sample.
+DIAGNOSTICS_ENABLED=true
+DIAGNOSTICS_POLL_SECONDS=1.0
+DIAGNOSTICS_STALL_WARN_SECONDS=2.5
+DIAGNOSTICS_HISTORY_LIMIT=200
