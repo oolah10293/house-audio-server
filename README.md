@@ -56,7 +56,7 @@ The proof server is the first usable version of the real server, not a disposabl
 
 - **MPD** — owns the one playback session: queue, current track, transport state, seek position, shuffle, and folder-derived playlist state.
 - **Snapserver** — distributes timestamped/buffered synchronized audio to renderers.
-- **house-audio-server** — thin custom control/discovery layer to be added around the permanent stack. It will expose HOUSE-mode state/control and LAN discovery without reimplementing decoding or synchronization.
+- **house-audio-server** — thin custom control/session layer to be added around the permanent stack. It will expose HOUSE-mode state/control and enforce shared session policy without reimplementing decoding or synchronization. Home presence does not require a separate discovery protocol; clients can identify the LAN by a bound MPD probe.
 - **Samba** — continues serving the same files to existing standalone clients and is not replaced by this project.
 
 The proven audio path is:
@@ -141,18 +141,22 @@ Controllers are optional. An Android phone or Windows player can select music an
 
 Android and Windows clients should select behavior automatically. This integration is planned, not implemented.
 
-**HOUSE** means the client discovers and verifies this service directly on the physical home LAN. Wi-Fi and Ethernet both count. Temporary loss while at home stays HOUSE/reconnecting rather than starting a competing independent queue.
+**HOUSE** means the client verifies the Pi directly through the physical home LAN. Wi-Fi and Ethernet both count. Temporary loss while at home stays HOUSE/reconnecting rather than starting a competing independent queue.
 
 **STANDALONE** is the away-from-home independent playback mode. A failed discovery request alone must not be treated as proof of departure. The phone's agreed same-song departure handoff and mute behavior are documented in [Session behavior](docs/SESSION_BEHAVIOR.md#8-automatic-homeaway-selection-and-phone-handoff).
 
-Preferred discovery direction:
+Home detection is intentionally minimal:
 
-1. Advertise a local service with mDNS / DNS-SD, provisionally `_houseaudio._tcp.local`.
-2. Client performs a short handshake with the discovered service before entering HOUSE mode.
-3. A fixed/reserved LAN address may be used as a fallback, but the client must verify that the route is through a normal LAN interface rather than a VPN/tunnel.
-4. **Tailscale/VPN reachability alone must never trigger HOUSE mode.** A phone or laptop away from home remains STANDALONE even if it can reach the house through Tailscale.
+1. Client chooses a non-VPN Wi-Fi/Ethernet network/interface.
+2. Through that specific LAN path, it opens a short TCP connection to its locally configured/reserved house LAN address on MPD port `6600`.
+3. It requires MPD's normal greeting beginning `OK MPD `; an optional `ping` / `OK` is enough for an additional liveness check.
+4. A valid MPD response on that bound LAN path means HOUSE.
 
-GPS and SSID checks are not required for the normal decision. The useful question is not "am I geographically near home?" but "am I directly attached to the LAN that contains the house-audio service?" Network-transition grace periods and ambiguous cases still need implementation definition.
+This probe is only for home presence and service identity. It is **not** the controller API: normal queue/state/transport/presence behavior still goes through `house-audio-server`.
+
+Do not add mDNS/DNS-SD, SSID matching, GPS, a separate discovery daemon, or a custom handshake unless later testing demonstrates a real need. **Tailscale/VPN reachability alone must never trigger HOUSE mode.** A phone or laptop away from home remains STANDALONE even if it can reach the Pi through Tailscale. The configured LAN address belongs in client-local configuration rather than being hard-coded into application source.
+
+Network-transition grace periods and ambiguous cases still need implementation definition.
 
 ## Synchronized playback
 
@@ -187,7 +191,7 @@ The custom `house-audio-server` should be the single client-facing bridge to tho
 - fresh-idle vs retained-session rules;
 - finish-current-track behavior when all nodes leave;
 - persistent default `MP3s` shuffle progress;
-- HOUSE discovery/verification and protocol/version identity;
+- HOUSE session/control protocol/version identity; home presence itself is established by the direct MPD LAN probe;
 - command acknowledgement, stale-state protection, and shared state updates.
 
 The exact network API/schema is still to be implemented. The architecture is settled enough to proceed with the bridge without further MPD research.
