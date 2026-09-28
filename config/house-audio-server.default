@@ -17,3 +17,9 @@ SNAPSERVER_RETRY_SECONDS=2.0
 # Effective renderer presence: poll lastSeen and age out abrupt power loss
 SNAPSERVER_POLL_SECONDS=1.0
 SNAPSERVER_STALE_AFTER_SECONDS=5.0
+
+# First autonomous session-policy slice:
+# when the final passive renderer leaves during playback, finish the current
+# track and stop; cancel that pending stop if a renderer returns first.
+PASSIVE_SESSION_POLICY_ENABLED=true
+PASSIVE_SESSION_POLICY_POLL_SECONDS=0.5
