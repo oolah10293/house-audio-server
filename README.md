@@ -174,7 +174,7 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 4. **DONE** — Prove the first ESP32-S3 can receive that stream without a DAC.
 5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
-7. **NEXT server milestone** — Track Snapserver renderer presence and implement the autonomous session rules needed when no phone/PC/browser is connected.
+7. **IN PROGRESS** — Track Snapserver renderer presence and implement the autonomous session rules needed when no phone/PC/browser is connected. The live presence monitor is now implemented in v0.3.0 source and awaits runtime validation.
 8. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
 9. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
 
@@ -254,7 +254,15 @@ The complete v0.2.0 basic MPD API is now runtime-proven on the permanent Pi:
 - `GET /state` accurately reflected the resulting transport, queue position/id, elapsed time, Random/Repeat state, and current file;
 - transport-only operations left the MPD queue version unchanged, confirming they did not unnecessarily rebuild the queue.
 
-The basic MPD control layer is therefore considered **runtime-validated**. The next server milestone is Snapserver client-presence tracking and the autonomous house-session behavior that lets passive radios drive MPD without a phone or PC connected.
+The basic MPD control layer is therefore considered **runtime-validated**.
+
+### Snapserver renderer presence — v0.3.0
+
+v0.3.0 adds a persistent raw-TCP JSON-RPC connection to Snapserver's control port (default 1705). The service takes an initial `Server.GetStatus` snapshot, listens for client/group/stream notifications, and refreshes the full status after relevant events.
+
+New `GET /renderers` output includes connected/audible counts plus per-client Snapcast id, name, network identity, mute/volume/latency, group, stream, and client-version information. `GET /health` now reports both MPD and Snapserver reachability, and normal state responses include a compact renderer summary.
+
+This presence layer is implemented in source but **not yet runtime-validated on the permanent Pi**. It deliberately does not make autonomous MPD decisions yet; presence must be proven first so the later session policy is built on observed Snapserver behavior rather than assumptions.
 
 ## MPD control-service boundary
 
@@ -318,4 +326,4 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** `house-audio-server` v0.2.0 is also **runtime-proven on the permanent Pi** for systemd operation, MPD health/state reads, LAN access, full queue inspection, folder browsing, ordered queue replacement with selected start index, Play/Pause/Stop, Seek, Previous/Next, Random/Shuffle, and Repeat. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, Snapserver presence tracking, and autonomous house-session policy logic remain unimplemented. The next server milestone is renderer-presence-driven autonomous behavior. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
+**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** `house-audio-server` v0.2.0 is **runtime-proven on the permanent Pi** for the complete basic MPD browse/state/queue/transport API. v0.3.0 now implements live Snapserver renderer-presence tracking and awaits runtime validation. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, and autonomous house-session policy logic remain unimplemented. The next server step is to prove renderer connect/disconnect tracking with the real ESP32, then use that proven presence to drive the agreed autonomous session rules. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
