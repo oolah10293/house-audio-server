@@ -92,9 +92,18 @@ Deliberate HOUSE Play/Pause/Next/Seek commands control MPD. Local output muting 
 
 ### Home detection
 
-Detect the verified house service **directly on the home LAN**, not just by whether its address is reachable. Both Ethernet and Wi-Fi count. The planned mechanism is mDNS/DNS-SD plus a server verification handshake, with a configured local address as a fallback and explicit interface/route checking.
+Detect home by testing the actual condition that matters: the client must reach the house MPD instance **through a real non-VPN home-LAN path**. Both Ethernet and Wi-Fi count.
 
-Tailscale/VPN-only reachability must never classify a remote phone or laptop as home. GPS and an SSID string alone are not the authority.
+The approved simple mechanism is:
+
+1. choose a non-VPN Wi-Fi/Ethernet network/interface;
+2. through that specific network, connect to the client's configured/reserved house LAN address on MPD port `6600`;
+3. require MPD's normal greeting beginning `OK MPD ` (optionally followed by `ping` / `OK`);
+4. only then classify the client as HOUSE.
+
+This MPD connection is only a small LAN-presence/identity probe. It does not replace the shared `house-audio-server` control layer used for session policy and normal controller commands.
+
+Do not add mDNS/DNS-SD, SSID matching, GPS, a separate discovery daemon, or a custom handshake unless later testing demonstrates a real need. Tailscale/VPN-only reachability must never classify a remote phone or laptop as home because the probe is explicitly bound to the non-VPN LAN path.
 
 A temporary failure while at home is **HOUSE reconnecting**, not an instruction to start a competing local playlist. Leaving the home LAN transitions to STANDALONE after the transition policy distinguishes departure from a brief interruption. Exact grace periods and ambiguous-network handling remain to be specified.
 
