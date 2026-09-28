@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current service version: **0.4.0**
+Current service version: **0.5.0**
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -168,15 +168,18 @@ Implemented now:
 - Shuffle/Repeat
 - queue clear/replace
 
-Implemented in v0.4.0 and awaiting permanent-Pi runtime validation:
+Implemented:
 
+- fresh idle + passive renderer present/arrives -> load the configured default folder (`MP3s`), enable Random + Repeat All, and start playback;
+- passive renderer joining active playback -> leave the existing queue untouched;
+- passive renderer joining a paused session -> do not auto-start over that pause;
 - final passive renderer leaves during playback -> finish the current track, then stop;
 - renderer returns before track end -> cancel the pending stop and keep the session playing;
 - Snapserver outage -> never interpret it as all renderers leaving.
 
-Not implemented yet:
+Still not implemented:
 
-- passive-node fresh-idle auto-start
+- durable saved progress/order for the default `MP3s` shuffle rotation
 - muted-controller pause/retain behavior
 - persistent default `MP3s` shuffle rotation
 - controller attach/heartbeat/detach
@@ -253,3 +256,20 @@ If effective renderer presence returns before the song ends, the service immedia
 A Snapserver/control outage clears the policy's presence baseline instead of manufacturing a false "all renderers left" transition.
 
 This phase deliberately does **not** auto-start the default `MP3s` rotation yet. Persistent default shuffle/bookmark state is the next autonomous-session chunk.
+
+
+## v0.5.0 passive-node auto-start
+
+This version implements the appliance behavior the passive radios need:
+
+**power on a passive renderer in a fresh-idle house -> music starts automatically.**
+
+When effective renderer presence is already positive at service startup, or changes from zero to positive, the policy checks MPD:
+
+- if MPD is stopped, the service rebuilds the configured default folder queue, sets Repeat on, Single off, Consume off, enables Random, and starts playback;
+- if MPD is already playing, the renderer simply joins the existing session;
+- if MPD is paused, the service leaves it paused rather than treating renderer arrival as permission to override a deliberate/retained pause.
+
+The default folder is configurable with `PASSIVE_DEFAULT_FOLDER` and defaults to `MP3s`.
+
+The queue rebuild explicitly toggles Random off before loading and back on afterward so MPD creates a fresh randomized play order over the complete default queue. Durable cross-session shuffle progress is still a later milestone.
