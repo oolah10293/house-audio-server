@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current service version: **0.3.1**
+Current service version: **0.4.0**
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -38,6 +38,18 @@ The response includes:
 - current stream ids/status.
 
 The service keeps a long-lived Snapserver control connection, takes an initial `Server.GetStatus` snapshot, listens for connect/disconnect/volume/group/stream notifications, and refreshes the full authoritative snapshot after relevant changes.
+
+### `GET /session`
+
+Returns the current autonomous passive-renderer policy state, including:
+
+- whether the policy is enabled;
+- the last effective passive-renderer count seen by policy;
+- whether a final-track stop is armed;
+- the MPD song id being allowed to finish;
+- the most recent policy action.
+
+v0.4.0 intentionally reports that fresh-idle auto-start and controller presence are still unimplemented.
 
 ### `GET /queue`
 
@@ -156,10 +168,15 @@ Implemented now:
 - Shuffle/Repeat
 - queue clear/replace
 
+Implemented in v0.4.0 and awaiting permanent-Pi runtime validation:
+
+- final passive renderer leaves during playback -> finish the current track, then stop;
+- renderer returns before track end -> cancel the pending stop and keep the session playing;
+- Snapserver outage -> never interpret it as all renderers leaving.
+
 Not implemented yet:
 
-- passive-node auto-start
-- final-node finish-current-track logic
+- passive-node fresh-idle auto-start
 - muted-controller pause/retain behavior
 - persistent default `MP3s` shuffle rotation
 - controller attach/heartbeat/detach
@@ -217,3 +234,22 @@ Confirmed:
 - powering the same renderer on again returns it to fresh/present state without restarting Snapserver or the control service.
 
 Therefore all future autonomous house-session policy must use `present` / `presentCount` as renderer-presence authority. Raw `connected` remains diagnostic only.
+
+
+## v0.4.0 final-track policy
+
+This is the first autonomous house-session behavior wired to proven renderer presence.
+
+When effective `presentCount` transitions from a positive value to zero while MPD is playing, the service arms a one-song boundary stop. MPD's normal Single mode cannot be used blindly with Repeat enabled because Single + Repeat repeats the current song. On the installed MPD 0.24.x stack, the service therefore:
+
+1. saves the current Repeat and Single settings;
+2. temporarily disables Repeat if necessary;
+3. sets `single oneshot`;
+4. allows the current song to finish naturally;
+5. after MPD stops at the boundary, restores the saved Repeat/Single settings.
+
+If effective renderer presence returns before the song ends, the service immediately restores the saved options and cancels the pending stop, so the current house session continues without restarting the track or replacing the queue.
+
+A Snapserver/control outage clears the policy's presence baseline instead of manufacturing a false "all renderers left" transition.
+
+This phase deliberately does **not** auto-start the default `MP3s` rotation yet. Persistent default shuffle/bookmark state is the next autonomous-session chunk.
