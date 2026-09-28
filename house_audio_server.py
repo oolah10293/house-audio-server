@@ -4,13 +4,15 @@
 Current scope:
 - read MPD health/state/queue/library
 - basic MPD transport and queue control over HTTP
-- no Snapserver presence or autonomous house-session policy yet
+- live Snapserver renderer-presence tracking
+- no autonomous house-session policy yet
 
 The service intentionally uses only the Python standard library.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import socket
@@ -22,7 +24,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.2.0"
+SERVICE_VERSION = "0.3.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -30,6 +32,15 @@ HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
 MPD_HOST = os.environ.get("MPD_HOST", "127.0.0.1")
 MPD_PORT = int(os.environ.get("MPD_PORT", "6600"))
 MPD_TIMEOUT = float(os.environ.get("MPD_TIMEOUT", "2.0"))
+
+SNAPSERVER_HOST = os.environ.get("SNAPSERVER_HOST", "127.0.0.1")
+SNAPSERVER_CONTROL_PORT = int(os.environ.get("SNAPSERVER_CONTROL_PORT", "1705"))
+SNAPSERVER_CONNECT_TIMEOUT = float(
+    os.environ.get("SNAPSERVER_CONNECT_TIMEOUT", "2.0")
+)
+SNAPSERVER_RETRY_SECONDS = float(
+    os.environ.get("SNAPSERVER_RETRY_SECONDS", "2.0")
+)
 
 MAX_JSON_BODY = 2 * 1024 * 1024
 MPD_WRITE_LOCK = threading.RLock()
@@ -195,6 +206,275 @@ class MpdClient:
             return self.state()
 
 
+
+class SnapcastError(RuntimeError):
+    pass
+
+
+class SnapcastMonitor:
+    """Maintain an authoritative live snapshot of Snapserver clients.
+
+    Snapserver exposes JSON-RPC 2.0 over newline-delimited JSON on its raw
+    control socket (normally TCP 1705). The monitor keeps one long-lived
+    connection, gets an initial Server.GetStatus snapshot, then listens for
+    notifications. Relevant notifications trigger another full status request
+    so group/client/stream relationships stay authoritative.
+    """
+
+    REFRESH_METHODS = {
+        "Client.OnConnect",
+        "Client.OnDisconnect",
+        "Client.OnVolumeChanged",
+        "Client.OnLatencyChanged",
+        "Client.OnNameChanged",
+        "Group.OnMute",
+        "Group.OnStreamChanged",
+        "Group.OnNameChanged",
+        "Server.OnUpdate",
+        "Stream.OnUpdate",
+    }
+
+    def __init__(
+        self,
+        host: str = SNAPSERVER_HOST,
+        port: int = SNAPSERVER_CONTROL_PORT,
+        connect_timeout: float = SNAPSERVER_CONNECT_TIMEOUT,
+        retry_seconds: float = SNAPSERVER_RETRY_SECONDS,
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.connect_timeout = connect_timeout
+        self.retry_seconds = retry_seconds
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._request_id = 0
+        self._snapshot: Dict[str, object] = {
+            "reachable": False,
+            "host": self.host,
+            "controlPort": self.port,
+            "connectedCount": 0,
+            "audibleCount": 0,
+            "clients": [],
+            "streams": [],
+            "error": "not connected yet",
+        }
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(
+                target=self._run,
+                name="snapcast-monitor",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            return copy.deepcopy(self._snapshot)
+
+    def _next_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
+
+    def _send_status_request(self, stream) -> int:
+        request_id = self._next_id()
+        request = {
+            "id": request_id,
+            "jsonrpc": "2.0",
+            "method": "Server.GetStatus",
+        }
+        stream.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+        stream.flush()
+        return request_id
+
+    def _set_disconnected(self, error: str) -> None:
+        with self._lock:
+            previous = self._snapshot
+            self._snapshot = {
+                "reachable": False,
+                "host": self.host,
+                "controlPort": self.port,
+                "connectedCount": 0,
+                "audibleCount": 0,
+                "clients": [],
+                "streams": [],
+                "serverVersion": previous.get("serverVersion"),
+                "controlProtocolVersion": previous.get("controlProtocolVersion"),
+                "error": error,
+            }
+
+    def _apply_status(self, status: Dict[str, object]) -> None:
+        groups = status.get("groups")
+        streams = status.get("streams")
+        server_info = status.get("server")
+
+        if not isinstance(groups, list):
+            groups = []
+        if not isinstance(streams, list):
+            streams = []
+        if not isinstance(server_info, dict):
+            server_info = {}
+
+        snapserver_info = server_info.get("snapserver")
+        if not isinstance(snapserver_info, dict):
+            snapserver_info = {}
+
+        clients: List[Dict[str, object]] = []
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = group.get("id")
+            group_name = group.get("name")
+            group_muted = bool(group.get("muted", False))
+            stream_id = group.get("stream_id")
+
+            raw_clients = group.get("clients")
+            if not isinstance(raw_clients, list):
+                continue
+
+            for client in raw_clients:
+                if not isinstance(client, dict):
+                    continue
+                config = client.get("config")
+                host = client.get("host")
+                snapclient = client.get("snapclient")
+                if not isinstance(config, dict):
+                    config = {}
+                if not isinstance(host, dict):
+                    host = {}
+                if not isinstance(snapclient, dict):
+                    snapclient = {}
+                volume = config.get("volume")
+                if not isinstance(volume, dict):
+                    volume = {}
+
+                connected = bool(client.get("connected", False))
+                client_muted = bool(volume.get("muted", False))
+                audible = connected and not client_muted and not group_muted
+
+                client_id = client.get("id")
+                configured_name = config.get("name")
+                host_name = host.get("name")
+                display_name = configured_name or host_name or client_id
+
+                clients.append(
+                    {
+                        "id": client_id,
+                        "name": display_name,
+                        "connected": connected,
+                        "audible": audible,
+                        "muted": client_muted,
+                        "volumePercent": volume.get("percent"),
+                        "latencyMs": config.get("latency"),
+                        "groupId": group_id,
+                        "groupName": group_name,
+                        "groupMuted": group_muted,
+                        "streamId": stream_id,
+                        "host": {
+                            "name": host_name,
+                            "ip": host.get("ip"),
+                            "mac": host.get("mac"),
+                            "os": host.get("os"),
+                            "arch": host.get("arch"),
+                        },
+                        "snapclient": {
+                            "name": snapclient.get("name"),
+                            "version": snapclient.get("version"),
+                            "protocolVersion": snapclient.get("protocolVersion"),
+                        },
+                    }
+                )
+
+        connected_count = sum(1 for client in clients if client["connected"])
+        audible_count = sum(1 for client in clients if client["audible"])
+
+        normalized_streams: List[Dict[str, object]] = []
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            uri = stream.get("uri")
+            if not isinstance(uri, dict):
+                uri = {}
+            normalized_streams.append(
+                {
+                    "id": stream.get("id"),
+                    "status": stream.get("status"),
+                    "uri": uri.get("raw"),
+                }
+            )
+
+        with self._lock:
+            self._snapshot = {
+                "reachable": True,
+                "host": self.host,
+                "controlPort": self.port,
+                "serverVersion": snapserver_info.get("version"),
+                "controlProtocolVersion": snapserver_info.get(
+                    "controlProtocolVersion"
+                ),
+                "connectedCount": connected_count,
+                "audibleCount": audible_count,
+                "clients": clients,
+                "streams": normalized_streams,
+            }
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                with socket.create_connection(
+                    (self.host, self.port), timeout=self.connect_timeout
+                ) as sock:
+                    # After the connection succeeds, wait indefinitely for
+                    # notifications. A Snapserver restart/close wakes us up.
+                    sock.settimeout(None)
+                    stream = sock.makefile("rwb", buffering=0)
+                    pending_status_id = self._send_status_request(stream)
+
+                    while not self._stop.is_set():
+                        raw = stream.readline()
+                        if not raw:
+                            raise SnapcastError("Snapserver closed the control connection")
+
+                        try:
+                            message = json.loads(raw.decode("utf-8"))
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            continue
+
+                        if not isinstance(message, dict):
+                            continue
+
+                        if message.get("id") == pending_status_id:
+                            if "error" in message:
+                                raise SnapcastError(str(message["error"]))
+                            result = message.get("result")
+                            if not isinstance(result, dict):
+                                raise SnapcastError("Invalid Server.GetStatus response")
+                            status = result.get("server")
+                            if not isinstance(status, dict):
+                                raise SnapcastError("Server.GetStatus omitted server data")
+                            self._apply_status(status)
+                            pending_status_id = None
+                            continue
+
+                        method = message.get("method")
+                        if (
+                            isinstance(method, str)
+                            and method in self.REFRESH_METHODS
+                            and pending_status_id is None
+                        ):
+                            pending_status_id = self._send_status_request(stream)
+
+            except (OSError, SnapcastError) as exc:
+                self._set_disconnected(str(exc))
+                self._stop.wait(self.retry_seconds)
+
+
+SNAPCAST_MONITOR = SnapcastMonitor()
+
+
 def parse_mpd_fields(lines: List[str]) -> Dict[str, str]:
     result: Dict[str, str] = {}
     for line in lines:
@@ -318,7 +598,7 @@ def bool_field(payload: Dict[str, object], key: str) -> bool:
 
 
 class ApiHandler(BaseHTTPRequestHandler):
-    server_version = "HouseAudioServer/0.2"
+    server_version = "HouseAudioServer/0.3"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} - {fmt % args}")
@@ -361,12 +641,18 @@ class ApiHandler(BaseHTTPRequestHandler):
         return payload
 
     def _mpd_state_response(self) -> None:
+        snap = SNAPCAST_MONITOR.snapshot()
         self._json(
             200,
             {
                 "service": SERVICE_NAME,
                 "version": SERVICE_VERSION,
                 "mpd": MpdClient().state(),
+                "renderers": {
+                    "snapserverReachable": snap.get("reachable", False),
+                    "connectedCount": snap.get("connectedCount", 0),
+                    "audibleCount": snap.get("audibleCount", 0),
+                },
             },
         )
 
@@ -376,37 +662,48 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         try:
             if path == "/health":
+                snap = SNAPCAST_MONITOR.snapshot()
                 try:
                     protocol_version = MpdClient().ping()
-                    self._json(
-                        200,
-                        {
-                            "service": SERVICE_NAME,
-                            "version": SERVICE_VERSION,
-                            "status": "ok",
-                            "mpd": {
-                                "reachable": True,
-                                "protocolVersion": protocol_version,
-                            },
-                        },
-                    )
+                    mpd_status = {
+                        "reachable": True,
+                        "protocolVersion": protocol_version,
+                    }
                 except (OSError, MpdError) as exc:
-                    self._json(
-                        200,
-                        {
-                            "service": SERVICE_NAME,
-                            "version": SERVICE_VERSION,
-                            "status": "degraded",
-                            "mpd": {
-                                "reachable": False,
-                                "error": str(exc),
-                            },
-                        },
-                    )
+                    mpd_status = {
+                        "reachable": False,
+                        "error": str(exc),
+                    }
+
+                healthy = bool(mpd_status["reachable"]) and bool(
+                    snap.get("reachable", False)
+                )
+                self._json(
+                    200,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "status": "ok" if healthy else "degraded",
+                        "mpd": mpd_status,
+                        "snapserver": snap,
+                    },
+                )
                 return
 
             if path == "/state":
                 self._mpd_state_response()
+                return
+
+            if path == "/renderers":
+                snap = SNAPCAST_MONITOR.snapshot()
+                self._json(
+                    200,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "snapserver": snap,
+                    },
+                )
                 return
 
             if path == "/queue":
@@ -608,10 +905,12 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    SNAPCAST_MONITOR.start()
     server = ThreadingHTTPServer((HTTP_BIND, HTTP_PORT), ApiHandler)
     print(
         f"{SERVICE_NAME} {SERVICE_VERSION} listening on "
-        f"{HTTP_BIND}:{HTTP_PORT}; MPD={MPD_HOST}:{MPD_PORT}"
+        f"{HTTP_BIND}:{HTTP_PORT}; MPD={MPD_HOST}:{MPD_PORT}; "
+        f"Snapserver={SNAPSERVER_HOST}:{SNAPSERVER_CONTROL_PORT}"
     )
     try:
         server.serve_forever()
