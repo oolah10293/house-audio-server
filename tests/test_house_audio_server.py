@@ -1,3 +1,4 @@
+import copy
 import unittest
 
 import house_audio_server as h
@@ -380,6 +381,129 @@ class SessionPolicyTests(unittest.TestCase):
         monitor.reachable = True
         policy._tick()  # new baseline only
         self.assertEqual(mpd.commands, [])
+
+
+
+class FakeClock:
+    def __init__(self, value=1000.0):
+        self.value = value
+
+    def __call__(self):
+        return self.value
+
+    def advance(self, seconds):
+        self.value += seconds
+
+
+class DiagnosticsTests(unittest.TestCase):
+    def test_timesync_stall_and_recovery_are_recorded(self):
+        clock = FakeClock()
+        monitor = FakeMonitor()
+        recorder = h.DiagnosticsRecorder(
+            monitor,
+            enabled=True,
+            poll_seconds=1.0,
+            stall_warn_seconds=2.5,
+            history_limit=20,
+            clock=clock,
+        )
+
+        baseline = {
+            "reachable": True,
+            "clients": [
+                {
+                    "id": "node-1",
+                    "name": "Radio 1",
+                    "connected": True,
+                    "present": True,
+                    "audible": True,
+                    "lastSeenAgeSeconds": 0.4,
+                    "host": {"ip": "192.0.2.10"},
+                }
+            ],
+            "streams": [{"id": "default", "status": "playing"}],
+        }
+        recorder._process_snapshot(baseline)
+
+        clock.advance(3)
+        stalled = copy.deepcopy(baseline)
+        stalled["clients"][0]["lastSeenAgeSeconds"] = 3.2
+        recorder._process_snapshot(stalled)
+
+        clock.advance(1)
+        recovered = copy.deepcopy(baseline)
+        recovered["clients"][0]["lastSeenAgeSeconds"] = 0.3
+        recorder._process_snapshot(recovered)
+
+        diag = recorder.snapshot()
+        types = [event["type"] for event in diag["events"]]
+        self.assertEqual(
+            types,
+            ["timesync_stall_started", "timesync_stall_recovered"],
+        )
+        self.assertEqual(diag["clients"][0]["timesyncStallCount"], 1)
+        self.assertEqual(diag["clients"][0]["maxLastSeenAgeSeconds"], 3.2)
+
+    def test_presence_and_stream_state_changes_are_recorded(self):
+        clock = FakeClock()
+        monitor = FakeMonitor()
+        recorder = h.DiagnosticsRecorder(
+            monitor,
+            enabled=True,
+            history_limit=20,
+            clock=clock,
+        )
+
+        baseline = {
+            "reachable": True,
+            "clients": [
+                {
+                    "id": "node-1",
+                    "name": "Radio 1",
+                    "connected": True,
+                    "present": True,
+                    "audible": True,
+                    "lastSeenAgeSeconds": 0.2,
+                    "host": {"ip": "192.0.2.10"},
+                }
+            ],
+            "streams": [{"id": "default", "status": "playing"}],
+        }
+        recorder._process_snapshot(baseline)
+
+        changed = copy.deepcopy(baseline)
+        changed["clients"][0]["present"] = False
+        changed["clients"][0]["audible"] = False
+        changed["clients"][0]["lastSeenAgeSeconds"] = 6.0
+        changed["streams"][0]["status"] = "idle"
+        clock.advance(6)
+        recorder._process_snapshot(changed)
+
+        diag = recorder.snapshot()
+        types = [event["type"] for event in diag["events"]]
+        self.assertIn("client_present_changed", types)
+        self.assertIn("client_audible_changed", types)
+        self.assertIn("stream_status_changed", types)
+        self.assertIn("timesync_stall_started", types)
+        self.assertEqual(diag["clients"][0]["presentDropCount"], 1)
+
+    def test_first_snapshot_is_baseline_not_noise(self):
+        clock = FakeClock()
+        monitor = FakeMonitor()
+        recorder = h.DiagnosticsRecorder(
+            monitor,
+            enabled=True,
+            history_limit=20,
+            clock=clock,
+        )
+        recorder._process_snapshot(
+            {
+                "reachable": True,
+                "clients": [],
+                "streams": [{"id": "default", "status": "idle"}],
+            }
+        )
+        self.assertEqual(recorder.snapshot()["eventCount"], 0)
 
 
 
