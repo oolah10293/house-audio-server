@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Minimal house-audio-server service.
+"""house-audio-server.
 
-Phase 1 skeleton:
-- GET /health
-- GET /state
-- local MPD status/current-song access
+Current scope:
+- read MPD health/state/queue/library
+- basic MPD transport and queue control over HTTP
+- no Snapserver presence or autonomous house-session policy yet
 
-No playback-changing endpoints are implemented yet.
+The service intentionally uses only the Python standard library.
 """
 
 from __future__ import annotations
@@ -14,12 +14,15 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import PurePosixPath
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.1.0"
+SERVICE_VERSION = "0.2.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -28,14 +31,50 @@ MPD_HOST = os.environ.get("MPD_HOST", "127.0.0.1")
 MPD_PORT = int(os.environ.get("MPD_PORT", "6600"))
 MPD_TIMEOUT = float(os.environ.get("MPD_TIMEOUT", "2.0"))
 
+MAX_JSON_BODY = 2 * 1024 * 1024
+MPD_WRITE_LOCK = threading.RLock()
+
 
 class MpdError(RuntimeError):
     pass
 
 
+class ApiError(RuntimeError):
+    def __init__(self, status: int, code: str, detail: str):
+        super().__init__(detail)
+        self.status = status
+        self.code = code
+        self.detail = detail
+
+
 @dataclass
 class MpdResponse:
     lines: List[str]
+
+
+def mpd_quote(value: str) -> str:
+    """Quote one MPD protocol argument."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def validate_relative_path(value: str) -> str:
+    if not isinstance(value, str):
+        raise ApiError(400, "invalid_path", "Path must be a string")
+
+    value = value.strip()
+    if value in ("", "."):
+        return ""
+
+    if "\\" in value:
+        raise ApiError(400, "invalid_path", "Use forward slashes in library paths")
+
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise ApiError(400, "invalid_path", "Path must stay inside the MPD library")
+
+    normalized = str(path)
+    return "" if normalized == "." else normalized
 
 
 class MpdClient:
@@ -85,6 +124,9 @@ class MpdClient:
             ]
             return greeting.removeprefix("OK MPD ").strip(), responses
 
+    def command(self, command: str) -> None:
+        self.run(command)
+
     def ping(self) -> str:
         protocol_version, _ = self.run("ping")
         return protocol_version
@@ -111,6 +153,47 @@ class MpdClient:
             "song": normalize_song(song),
         }
 
+    def queue(self) -> List[Dict[str, object]]:
+        _, responses = self.run("playlistinfo")
+        records = parse_mpd_records(responses[0].lines, {"file"})
+        return [normalize_song(record) for record in records if record.get("file")]
+
+    def browse(self, path: str) -> List[Dict[str, object]]:
+        command = "lsinfo" if not path else f"lsinfo {mpd_quote(path)}"
+        _, responses = self.run(command)
+        records = parse_mpd_records(
+            responses[0].lines, {"file", "directory", "playlist"}
+        )
+        return [normalize_library_entry(record) for record in records]
+
+    def replace_queue(
+        self,
+        tracks: List[str],
+        start_index: int = 0,
+        play: bool = True,
+        position_seconds: float = 0.0,
+    ) -> Dict[str, object]:
+        if not tracks:
+            raise ApiError(400, "empty_queue", "tracks must contain at least one item")
+        if start_index < 0 or start_index >= len(tracks):
+            raise ApiError(400, "invalid_start_index", "startIndex is outside tracks")
+        if position_seconds < 0:
+            raise ApiError(400, "invalid_position", "positionSeconds cannot be negative")
+
+        safe_tracks = [validate_relative_path(item) for item in tracks]
+        if any(not item for item in safe_tracks):
+            raise ApiError(400, "invalid_track", "Track paths cannot be empty")
+
+        with MPD_WRITE_LOCK:
+            commands = ["clear"]
+            commands.extend(f"add {mpd_quote(track)}" for track in safe_tracks)
+            if play:
+                commands.append(f"play {start_index}")
+                if position_seconds > 0:
+                    commands.append(f"seekcur {position_seconds:.3f}")
+            self.run(*commands)
+            return self.state()
+
 
 def parse_mpd_fields(lines: List[str]) -> Dict[str, str]:
     result: Dict[str, str] = {}
@@ -119,6 +202,30 @@ def parse_mpd_fields(lines: List[str]) -> Dict[str, str]:
         if sep:
             result[key.lower()] = value
     return result
+
+
+def parse_mpd_records(
+    lines: List[str], record_start_keys: set[str]
+) -> List[Dict[str, str]]:
+    records: List[Dict[str, str]] = []
+    current: Dict[str, str] = {}
+
+    for line in lines:
+        key, sep, value = line.partition(": ")
+        if not sep:
+            continue
+        lower_key = key.lower()
+
+        if lower_key in record_start_keys and current:
+            records.append(current)
+            current = {}
+
+        current[lower_key] = value
+
+    if current:
+        records.append(current)
+
+    return records
 
 
 def normalize_song(fields: Dict[str, str]) -> Optional[Dict[str, object]]:
@@ -133,10 +240,56 @@ def normalize_song(fields: Dict[str, str]) -> Optional[Dict[str, object]]:
         "album": fields.get("album"),
         "track": fields.get("track"),
         "date": fields.get("date"),
-        "durationSeconds": to_float(fields.get("time")),
+        "lastModified": fields.get("last-modified"),
+        "durationSeconds": (
+            to_float(fields.get("duration"))
+            if fields.get("duration") is not None
+            else to_float(fields.get("time"))
+        ),
         "pos": to_int(fields.get("pos")),
         "id": to_int(fields.get("id")),
     }
+
+
+def normalize_library_entry(fields: Dict[str, str]) -> Dict[str, object]:
+    if "directory" in fields:
+        kind = "directory"
+        path = fields["directory"]
+    elif "file" in fields:
+        kind = "file"
+        path = fields["file"]
+    elif "playlist" in fields:
+        kind = "playlist"
+        path = fields["playlist"]
+    else:
+        kind = "unknown"
+        path = ""
+
+    entry: Dict[str, object] = {
+        "type": kind,
+        "path": path,
+        "name": path.rsplit("/", 1)[-1] if path else "",
+        "lastModified": fields.get("last-modified"),
+    }
+
+    if kind == "file":
+        entry.update(
+            {
+                "title": fields.get("title"),
+                "artist": fields.get("artist"),
+                "albumArtist": fields.get("albumartist"),
+                "album": fields.get("album"),
+                "track": fields.get("track"),
+                "date": fields.get("date"),
+                "durationSeconds": (
+                    to_float(fields.get("duration"))
+                    if fields.get("duration") is not None
+                    else to_float(fields.get("time"))
+                ),
+            }
+        )
+
+    return entry
 
 
 def to_int(value: Optional[str]) -> Optional[int]:
@@ -157,8 +310,15 @@ def to_float(value: Optional[str]) -> Optional[float]:
         return None
 
 
+def bool_field(payload: Dict[str, object], key: str) -> bool:
+    value = payload.get(key)
+    if not isinstance(value, bool):
+        raise ApiError(400, "invalid_request", f"{key} must be true or false")
+    return value
+
+
 class ApiHandler(BaseHTTPRequestHandler):
-    server_version = "HouseAudioServer/0.1"
+    server_version = "HouseAudioServer/0.2"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} - {fmt % args}")
@@ -174,42 +334,239 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_json(self) -> Dict[str, object]:
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None:
+            return {}
+
+        try:
+            length = int(raw_length)
+        except ValueError as exc:
+            raise ApiError(400, "invalid_content_length", "Invalid Content-Length") from exc
+
+        if length < 0 or length > MAX_JSON_BODY:
+            raise ApiError(413, "request_too_large", "JSON request body is too large")
+
+        raw = self.rfile.read(length)
+        if not raw:
+            return {}
+
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ApiError(400, "invalid_json", "Request body must be valid UTF-8 JSON") from exc
+
+        if not isinstance(payload, dict):
+            raise ApiError(400, "invalid_json", "JSON body must be an object")
+        return payload
+
+    def _mpd_state_response(self) -> None:
+        self._json(
+            200,
+            {
+                "service": SERVICE_NAME,
+                "version": SERVICE_VERSION,
+                "mpd": MpdClient().state(),
+            },
+        )
+
     def do_GET(self) -> None:
-        path = self.path.split("?", 1)[0]
+        parsed = urlsplit(self.path)
+        path = parsed.path
 
-        if path == "/health":
-            try:
-                protocol_version = MpdClient().ping()
+        try:
+            if path == "/health":
+                try:
+                    protocol_version = MpdClient().ping()
+                    self._json(
+                        200,
+                        {
+                            "service": SERVICE_NAME,
+                            "version": SERVICE_VERSION,
+                            "status": "ok",
+                            "mpd": {
+                                "reachable": True,
+                                "protocolVersion": protocol_version,
+                            },
+                        },
+                    )
+                except (OSError, MpdError) as exc:
+                    self._json(
+                        200,
+                        {
+                            "service": SERVICE_NAME,
+                            "version": SERVICE_VERSION,
+                            "status": "degraded",
+                            "mpd": {
+                                "reachable": False,
+                                "error": str(exc),
+                            },
+                        },
+                    )
+                return
+
+            if path == "/state":
+                self._mpd_state_response()
+                return
+
+            if path == "/queue":
+                queue = MpdClient().queue()
                 self._json(
                     200,
                     {
                         "service": SERVICE_NAME,
                         "version": SERVICE_VERSION,
-                        "status": "ok",
-                        "mpd": {
-                            "reachable": True,
-                            "protocolVersion": protocol_version,
-                        },
+                        "count": len(queue),
+                        "queue": queue,
                     },
                 )
-            except (OSError, MpdError) as exc:
+                return
+
+            if path == "/browse":
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                browse_path = validate_relative_path(query.get("path", [""])[0])
+                entries = MpdClient().browse(browse_path)
                 self._json(
                     200,
                     {
                         "service": SERVICE_NAME,
                         "version": SERVICE_VERSION,
-                        "status": "degraded",
-                        "mpd": {
-                            "reachable": False,
-                            "error": str(exc),
-                        },
+                        "path": browse_path,
+                        "count": len(entries),
+                        "entries": entries,
                     },
                 )
-            return
+                return
 
-        if path == "/state":
-            try:
-                state = MpdClient().state()
+            self._json(
+                404,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": "not_found",
+                },
+            )
+        except ApiError as exc:
+            self._json(
+                exc.status,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": exc.code,
+                    "detail": exc.detail,
+                },
+            )
+        except (OSError, MpdError) as exc:
+            self._json(
+                503,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": "mpd_unavailable",
+                    "detail": str(exc),
+                },
+            )
+
+    def do_POST(self) -> None:
+        parsed = urlsplit(self.path)
+        path = parsed.path
+
+        try:
+            payload = self._read_json()
+            mpd = MpdClient()
+
+            if path == "/play":
+                with MPD_WRITE_LOCK:
+                    mpd.command("play")
+                self._mpd_state_response()
+                return
+
+            if path == "/pause":
+                with MPD_WRITE_LOCK:
+                    mpd.command("pause 1")
+                self._mpd_state_response()
+                return
+
+            if path == "/stop":
+                with MPD_WRITE_LOCK:
+                    mpd.command("stop")
+                self._mpd_state_response()
+                return
+
+            if path == "/next":
+                with MPD_WRITE_LOCK:
+                    mpd.command("next")
+                self._mpd_state_response()
+                return
+
+            if path == "/previous":
+                with MPD_WRITE_LOCK:
+                    mpd.command("previous")
+                self._mpd_state_response()
+                return
+
+            if path == "/seek":
+                seconds = payload.get("seconds")
+                if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+                    raise ApiError(400, "invalid_request", "seconds must be a number")
+                if seconds < 0:
+                    raise ApiError(400, "invalid_request", "seconds cannot be negative")
+                with MPD_WRITE_LOCK:
+                    mpd.command(f"seekcur {float(seconds):.3f}")
+                self._mpd_state_response()
+                return
+
+            if path == "/shuffle":
+                enabled = bool_field(payload, "enabled")
+                with MPD_WRITE_LOCK:
+                    mpd.command(f"random {1 if enabled else 0}")
+                self._mpd_state_response()
+                return
+
+            if path == "/repeat":
+                enabled = bool_field(payload, "enabled")
+                with MPD_WRITE_LOCK:
+                    mpd.command(f"repeat {1 if enabled else 0}")
+                self._mpd_state_response()
+                return
+
+            if path == "/queue/clear":
+                with MPD_WRITE_LOCK:
+                    mpd.command("clear")
+                self._mpd_state_response()
+                return
+
+            if path == "/queue/replace":
+                tracks = payload.get("tracks")
+                if not isinstance(tracks, list) or not all(
+                    isinstance(item, str) for item in tracks
+                ):
+                    raise ApiError(
+                        400, "invalid_request", "tracks must be an array of strings"
+                    )
+
+                start_index = payload.get("startIndex", 0)
+                if not isinstance(start_index, int) or isinstance(start_index, bool):
+                    raise ApiError(400, "invalid_request", "startIndex must be an integer")
+
+                play = payload.get("play", True)
+                if not isinstance(play, bool):
+                    raise ApiError(400, "invalid_request", "play must be true or false")
+
+                position_seconds = payload.get("positionSeconds", 0.0)
+                if not isinstance(position_seconds, (int, float)) or isinstance(
+                    position_seconds, bool
+                ):
+                    raise ApiError(
+                        400, "invalid_request", "positionSeconds must be a number"
+                    )
+
+                state = mpd.replace_queue(
+                    tracks=tracks,
+                    start_index=start_index,
+                    play=play,
+                    position_seconds=float(position_seconds),
+                )
                 self._json(
                     200,
                     {
@@ -218,26 +575,36 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "mpd": state,
                     },
                 )
-            except (OSError, MpdError) as exc:
-                self._json(
-                    503,
-                    {
-                        "service": SERVICE_NAME,
-                        "version": SERVICE_VERSION,
-                        "error": "mpd_unavailable",
-                        "detail": str(exc),
-                    },
-                )
-            return
+                return
 
-        self._json(
-            404,
-            {
-                "service": SERVICE_NAME,
-                "version": SERVICE_VERSION,
-                "error": "not_found",
-            },
-        )
+            self._json(
+                404,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": "not_found",
+                },
+            )
+        except ApiError as exc:
+            self._json(
+                exc.status,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": exc.code,
+                    "detail": exc.detail,
+                },
+            )
+        except (OSError, MpdError) as exc:
+            self._json(
+                503,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": "mpd_unavailable",
+                    "detail": str(exc),
+                },
+            )
 
 
 def main() -> None:
