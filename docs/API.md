@@ -202,3 +202,18 @@ v0.3.1 therefore distinguishes:
 - `audibleCount` — fresh/present clients that are not client- or group-muted.
 
 The monitor polls `Server.GetStatus` once per second by default and treats a client as stale after five seconds without fresh Snapcast activity. Both values are configurable. Autonomous house-session policy must use `present`/`presentCount`, not the raw `connected` flag.
+
+
+## Renderer presence runtime validation
+
+The v0.3.1 presence model has been exercised on the permanent Raspberry Pi with the real XIAO ESP32-S3 renderer.
+
+Confirmed:
+
+- known-but-powered-off clients remain listed by Snapserver but are not treated as present;
+- power-on changes the client to `present: true`, `presentCount: 1`, and `audibleCount: 1` with a fresh `lastSeen`;
+- abrupt hard power-off can leave Snapserver's raw `connected: true` and the Linux TCP 1704 socket in `ESTABLISHED`;
+- despite that stale raw connection, after the freshness timeout the API correctly reports `present: false`, `presentCount: 0`, and `audibleCount: 0`;
+- powering the same renderer on again returns it to fresh/present state without restarting Snapserver or the control service.
+
+Therefore all future autonomous house-session policy must use `present` / `presentCount` as renderer-presence authority. Raw `connected` remains diagnostic only.
