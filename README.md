@@ -206,7 +206,21 @@ sudo sh install.sh
 curl http://127.0.0.1:8787/health
 ```
 
-This is **read-only Phase 1 functionality**. No endpoint can yet change MPD playback or queue state, and Snapserver presence/session-policy logic is not implemented yet. Runtime validation on the permanent Pi is still required.
+This is **read-only Phase 1 functionality**. No endpoint can yet change MPD playback or queue state, and Snapserver presence/session-policy logic is not implemented yet.
+
+### Runtime validation on the permanent Pi
+
+The skeleton has now been installed and exercised on the permanent Raspberry Pi.
+
+Confirmed:
+
+- systemd successfully starts `house-audio-server`;
+- with MPD intentionally stopped, `GET /health` remains available and reports `status: degraded` with MPD unreachable rather than crashing;
+- after starting MPD, `GET /health` changes to `status: ok` and reports the MPD protocol greeting/version;
+- `GET /state` successfully reads real MPD state, including stopped/playing state, queue length/version, current queue position/id, Shuffle/Repeat flags, current file identity, available metadata, and duration;
+- the observed stopped MPD session retained a five-item queue and selected item, demonstrating that the service reads the real existing MPD session rather than constructing its own queue.
+
+This completes the initial read-only service-skeleton milestone. LAN-client access and mutating MPD control are the next steps.
 
 ## MPD control-service boundary
 
@@ -270,4 +284,4 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** The first read-only `house-audio-server` HTTP/MPD service skeleton is now implemented in source but still needs runtime validation on the permanent Pi. MPD/Snapserver remain intentionally parked until testing resumes. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, mutating control endpoints, Snapserver presence tracking, and house-session policy logic remain unimplemented. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
+**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** The first read-only `house-audio-server` HTTP/MPD service skeleton is now also **runtime-proven on the permanent Pi**: systemd startup, degraded-with-MPD-off health reporting, healthy MPD connection, and real `/state` reads all work. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, mutating control endpoints, Snapserver presence tracking, and house-session policy logic remain unimplemented. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
