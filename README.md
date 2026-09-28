@@ -175,9 +175,10 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
 7. **DONE** — Track Snapserver renderer presence, including reliable hard-power-off detection via `lastSeen` freshness rather than Snapserver's raw connected flag.
-8. **NEXT server milestone** — Implement the autonomous session rules driven by proven renderer presence when no phone/PC/browser is connected.
-9. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
-10. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
+8. **IN PROGRESS** — Implement autonomous session rules driven by proven renderer presence. v0.4.0 now implements the first slice: final passive renderer leaves -> finish current track then stop; return before track end -> cancel the pending stop. Permanent-Pi runtime validation is next.
+9. Implement persistent default `MP3s` shuffle/bookmark state and fresh-idle passive-node auto-start.
+10. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
+11. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
 
 Every successful step remains part of the final installation.
 
@@ -280,6 +281,16 @@ This behavior is now **runtime-proven on the permanent Pi in both directions**:
 - powering the renderer back on returned the same remembered client to fresh/present/audible state without restarting Snapserver or `house-audio-server`.
 
 Renderer presence is therefore considered **runtime-validated**, including the actual hard power-switch behavior required by the vintage-radio installations. The next server step is to feed `presentCount` transitions into the agreed autonomous MPD session policy.
+
+### Autonomous final-track policy — v0.4.0
+
+The first renderer-driven session rule is now implemented in source.
+
+When the final effective passive renderer disappears while MPD is actively playing, `house-audio-server` arms a finish-current-track stop. Because MPD Single + Repeat would repeat the same song, the service temporarily disables Repeat, uses MPD 0.24's `single oneshot` boundary stop, and remembers the prior Repeat/Single settings. If a renderer returns before the song ends, those settings are restored immediately and the pending stop is cancelled. If the song reaches its end with nobody back, MPD stops at the boundary and the original options are restored while stopped.
+
+The policy deliberately ignores Snapserver outages rather than converting them into false departures, and its state is exposed at `GET /session`.
+
+This is **implemented and unit-tested but not yet runtime-validated on the permanent Pi**. Fresh-idle default `MP3s` startup and persistent shuffle progress remain the next chunk.
 
 ## MPD control-service boundary
 
