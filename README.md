@@ -262,7 +262,15 @@ v0.3.0 adds a persistent raw-TCP JSON-RPC connection to Snapserver's control por
 
 New `GET /renderers` output includes connected/audible counts plus per-client Snapcast id, name, network identity, mute/volume/latency, group, stream, and client-version information. `GET /health` now reports both MPD and Snapserver reachability, and normal state responses include a compact renderer summary.
 
-This presence layer is implemented in source but **not yet runtime-validated on the permanent Pi**. It deliberately does not make autonomous MPD decisions yet; presence must be proven first so the later session policy is built on observed Snapserver behavior rather than assumptions.
+The presence layer was partially runtime-validated on the permanent Pi: powering the ESP32 on correctly changed the known client from disconnected to connected/audible without restarting either service.
+
+### Hard-power renderer detection
+
+Testing also exposed an important real-world behavior: when the ESP32 is hard-powered off while the Snapcast stream is idle, the Pi can retain the TCP 1704 socket in `ESTABLISHED` state for a while and Snapserver can continue reporting the client as `connected: true`. That raw flag is therefore not sufficient for the radio power-switch use case.
+
+v0.3.1 fixes the presence definition without changing Snapserver: the service polls `Server.GetStatus`, reads each client's Snapcast `lastSeen` timestamp, and exposes `present`/`presentCount` separately from Snapserver's raw `connected` flag. A client defaults to stale after five seconds without fresh Snapcast activity. `audibleCount` now depends on fresh presence as well as mute state.
+
+Autonomous session policy must use `presentCount`, not raw `connectedCount`. This behavior is implemented in source and is the next permanent-Pi validation step.
 
 ## MPD control-service boundary
 
