@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.5.0"
+SERVICE_VERSION = "0.5.1"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -645,12 +645,15 @@ class PassiveSessionPolicy:
                 else "renderer_joined_existing_session"
             )
         elif transport == "pause":
-            # A deliberate/retained Pause is not permission to start a new
-            # default session just because a renderer appeared.
+            # Passive-radio arrival is an explicit request for audible music.
+            # Resume the existing paused house queue/position; do not replace
+            # it with the default MP3s queue.
+            with MPD_WRITE_LOCK:
+                mpd.command("play")
             self._record(
-                "presence_baseline_paused_session"
+                "presence_baseline_resumed_paused_session"
                 if baseline
-                else "renderer_joined_paused_session"
+                else "renderer_resumed_paused_session"
             )
         else:
             self._record("renderer_arrival_unknown_mpd_state")
@@ -900,7 +903,7 @@ def bool_field(payload: Dict[str, object], key: str) -> bool:
 
 
 class ApiHandler(BaseHTTPRequestHandler):
-    server_version = "HouseAudioServer/0.5"
+    server_version = "HouseAudioServer/0.5.1"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} - {fmt % args}")
