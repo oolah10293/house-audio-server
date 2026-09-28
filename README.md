@@ -304,6 +304,19 @@ This also works when `house-audio-server` starts while a radio is already powere
 
 The default folder is configurable with `PASSIVE_DEFAULT_FOLDER`. Durable cross-session preservation of the exact default shuffled order/progress is still pending; v0.5.0 creates a fresh MPD Random order for each fresh default session.
 
+### Passive radio auto-start runtime validation
+
+v0.5.0 is now **runtime-proven on the permanent Pi and real ESP32 radio hardware**.
+
+Observed:
+
+- with MPD stopped and the radio powered on, the server automatically loaded the default `MP3s` session and started playback with no phone or manual MPD command;
+- the first observed random selections included Cake — *War Pigs* and Weezer — *Island in the Sun*;
+- after hard-powering the radio off for more than ten seconds and powering it back on while the house session was still active, the renderer rejoined the **same song** rather than rebuilding/restarting the queue;
+- audible playback returned about **six seconds after power-on**, which is the current observed end-to-end boot/connect/buffer time for this hardware.
+
+That proves the core appliance behavior: **turn the radio on and music comes out; power-cycle it during an active session and it rejoins the existing house playback.**
+
 ## MPD control-service boundary
 
 The remaining controller problem is **not figuring out how to operate MPD**. The required MPD operations are understood: folder/library browsing, queue inspection/replacement/reordering, current-song and position state, Play/Pause/Stop, Seek, Previous/Next, Shuffle/Random, Repeat, and change notifications.
