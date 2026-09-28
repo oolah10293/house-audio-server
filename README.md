@@ -387,3 +387,18 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 A real leave-the-house test found both renderers reconnecting correctly (`presentCount: 2`) while MPD was paused at 0.0 seconds on the queued track. Snapserver was healthy but idle, so the failure was not renderer connectivity: it was exactly the v0.5.0 policy branch that left paused sessions untouched.
 
 v0.5.1 changes passive-radio arrival to resume the existing paused session. This preserves the queue and avoids a fresh default `MP3s` rebuild while restoring the intended appliance behavior.
+
+
+### Automatic dropout diagnostics — v0.6.0
+
+With two synchronized renderers running, occasional few-second silences were reported on one node or the other. v0.6.0 adds unattended diagnostics so reproducing the problem does not require watching multiple terminals.
+
+The service now keeps a bounded in-memory event history of Snapserver reachability, stream-state transitions, each client's connected/present/audible transitions, Snapcast `lastSeen` stalls/recovery, stall counts, and worst observed last-seen age.
+
+After a dropout, inspect:
+
+```bash
+curl -s http://127.0.0.1:8787/diagnostics
+```
+
+If one renderer shows a time-sync/presence anomaly while the other stays clean, investigate that renderer's Wi-Fi/client path. If the Snapserver stream changes state, investigate upstream. If neither happens during the audible dropout, instrument the ESP32 decoder/buffer/I2S path next.
