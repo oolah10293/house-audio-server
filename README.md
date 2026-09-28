@@ -173,9 +173,10 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 3. **DONE** — Prove Snapserver exposes and carries the real audio stream.
 4. **DONE** — Prove the first ESP32-S3 can receive that stream without a DAC.
 5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
-6. **NEXT server/control milestone** — Add the custom `house-audio-server` control/discovery service around the working stack, implementing the agreed session rules.
-7. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
-8. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
+6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
+7. **NEXT server milestone** — Track Snapserver renderer presence and implement the autonomous session rules needed when no phone/PC/browser is connected.
+8. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
+9. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
 
 Every successful step remains part of the final installation.
 
@@ -239,7 +240,21 @@ Confirmed:
 - LAN access to the HTTP service was confirmed from another PC on the home network;
 - updating the installed service exposed that `systemctl enable --now` does not restart an already-running process; `install.sh` now explicitly restarts the service after copying new code.
 
-The basic read side is therefore proven through real MPD state, queue inspection, and LAN access. The remaining v0.2.0 runtime tests are folder browsing and the mutating transport/queue endpoints.
+The complete v0.2.0 basic MPD API is now runtime-proven on the permanent Pi:
+
+- `GET /browse` successfully returned the real folder-first MPD library, including the large `Rap` folder and relative file identities;
+- `POST /queue/replace` replaced the old duplicate test queue with three distinct ordered tracks, preserved the requested order, and started at an arbitrary requested index;
+- `POST /pause` retained the current track and exact playback position;
+- `POST /seek` moved the paused track to an exact requested elapsed position without forcing playback;
+- `POST /play` resumed from that position;
+- `POST /next` and `POST /previous` moved to the correct adjacent queue entries;
+- `POST /shuffle` mapped correctly to MPD Random;
+- `POST /repeat` mapped correctly to MPD Repeat;
+- `POST /stop` stopped transport without clearing the queue or changing the selected item;
+- `GET /state` accurately reflected the resulting transport, queue position/id, elapsed time, Random/Repeat state, and current file;
+- transport-only operations left the MPD queue version unchanged, confirming they did not unnecessarily rebuild the queue.
+
+The basic MPD control layer is therefore considered **runtime-validated**. The next server milestone is Snapserver client-presence tracking and the autonomous house-session behavior that lets passive radios drive MPD without a phone or PC connected.
 
 ## MPD control-service boundary
 
@@ -303,4 +318,4 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** `house-audio-server` is also **runtime-proven on the permanent Pi** for systemd operation, MPD health/state reads, LAN access from another PC, and full queue inspection through v0.2.0. The retained five-item MPD test queue was read exactly as stored, including duplicate entries. MPD-library browsing and the mutating transport/seek/Shuffle/Repeat/queue endpoints are implemented next and still need runtime validation. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, Snapserver presence tracking, and autonomous house-session policy logic remain unimplemented. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
+**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** `house-audio-server` v0.2.0 is also **runtime-proven on the permanent Pi** for systemd operation, MPD health/state reads, LAN access, full queue inspection, folder browsing, ordered queue replacement with selected start index, Play/Pause/Stop, Seek, Previous/Next, Random/Shuffle, and Repeat. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, Snapserver presence tracking, and autonomous house-session policy logic remain unimplemented. The next server milestone is renderer-presence-driven autonomous behavior. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
