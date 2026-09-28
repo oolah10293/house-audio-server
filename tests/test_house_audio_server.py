@@ -183,6 +183,9 @@ class FakeMpd:
     def state(self):
         return dict(self.state_data)
 
+    def command(self, command):
+        self.run(command)
+
     def run(self, *commands):
         self.commands.extend(commands)
         for command in commands:
@@ -259,10 +262,11 @@ class SessionPolicyTests(unittest.TestCase):
         self.assertIn('add "MP3s"', mpd.commands)
         self.assertEqual(policy.snapshot()["lastAction"], "started_default_session")
 
-    def test_renderer_arrival_does_not_restart_paused_session(self):
+    def test_renderer_arrival_resumes_paused_session_without_replacing_queue(self):
         monitor = FakeMonitor(present=0)
         mpd = FakeMpd()
         mpd.state_data["transport"] = "pause"
+        mpd.state_data["queueLength"] = 3
         policy = h.PassiveSessionPolicy(
             monitor,
             mpd_factory=lambda: mpd,
@@ -275,10 +279,12 @@ class SessionPolicyTests(unittest.TestCase):
         monitor.present = 1
         policy._tick()
 
-        self.assertEqual(mpd.commands, [])
+        self.assertEqual(mpd.commands, ["play"])
+        self.assertEqual(mpd.state_data["transport"], "play")
+        self.assertEqual(mpd.state_data["queueLength"], 3)
         self.assertEqual(
             policy.snapshot()["lastAction"],
-            "renderer_joined_paused_session",
+            "renderer_resumed_paused_session",
         )
 
     def test_last_renderer_leaving_arms_finish_track_stop(self):
