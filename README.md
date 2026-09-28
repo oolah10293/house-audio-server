@@ -218,7 +218,9 @@ sudo sh install.sh
 curl http://127.0.0.1:8787/health
 ```
 
-The original read-only skeleton has already been runtime-proven on the permanent Pi. The new v0.2.0 browse/queue/write endpoints are implemented in source and are the next runtime-validation target. Snapserver presence and autonomous session-policy logic are intentionally still separate work.
+The original read-only skeleton has already been runtime-proven on the permanent Pi. The v0.2.0 service has now also been installed and restarted successfully on that Pi. `GET /queue` is runtime-proven against the real retained MPD queue; it returned all five queue entries in order, including position/id, relative file path, modified time, duration, and available metadata. The retained test queue happened to contain five duplicate copies of the same track, which the endpoint reported correctly rather than collapsing or rewriting them.
+
+The installer was also corrected so an update restarts an already-running `house-audio-server` process instead of merely enabling the existing service. Snapserver presence and autonomous session-policy logic remain separate work.
 
 A GitHub Actions workflow compiles the service and runs the standard-library unit tests on pushes and pull requests.
 
@@ -232,9 +234,12 @@ Confirmed:
 - with MPD intentionally stopped, `GET /health` remains available and reports `status: degraded` with MPD unreachable rather than crashing;
 - after starting MPD, `GET /health` changes to `status: ok` and reports the MPD protocol greeting/version;
 - `GET /state` successfully reads real MPD state, including stopped/playing state, queue length/version, current queue position/id, Shuffle/Repeat flags, current file identity, available metadata, and duration;
-- the observed stopped MPD session retained a five-item queue and selected item, demonstrating that the service reads the real existing MPD session rather than constructing its own queue.
+- the observed stopped MPD session retained a five-item queue and selected item, demonstrating that the service reads the real existing MPD session rather than constructing its own queue;
+- `GET /queue` is now runtime-proven and returned the exact five retained MPD entries in order, including duplicate entries, queue position/id, relative file identity, modified time, duration, and available metadata;
+- LAN access to the HTTP service was confirmed from another PC on the home network;
+- updating the installed service exposed that `systemctl enable --now` does not restart an already-running process; `install.sh` now explicitly restarts the service after copying new code.
 
-This completed the initial read-only service-skeleton milestone. LAN-client access was also confirmed from another PC. The v0.2.0 queue, browse, and mutating control endpoints are now implemented and awaiting Pi-side runtime testing.
+The basic read side is therefore proven through real MPD state, queue inspection, and LAN access. The remaining v0.2.0 runtime tests are folder browsing and the mutating transport/queue endpoints.
 
 ## MPD control-service boundary
 
@@ -298,4 +303,4 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** The original read-only `house-audio-server` skeleton is **runtime-proven on the permanent Pi**, including LAN access from another PC. Basic queue inspection, MPD-library browsing, transport, seek, Shuffle/Repeat, and queue replacement/clear are now implemented in v0.2.0 source and awaiting runtime validation. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, Snapserver presence tracking, and autonomous house-session policy logic remain unimplemented. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
+**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** `house-audio-server` is also **runtime-proven on the permanent Pi** for systemd operation, MPD health/state reads, LAN access from another PC, and full queue inspection through v0.2.0. The retained five-item MPD test queue was read exactly as stored, including duplicate entries. MPD-library browsing and the mutating transport/seek/Shuffle/Repeat/queue endpoints are implemented next and still need runtime validation. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, Snapserver presence tracking, and autonomous house-session policy logic remain unimplemented. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
