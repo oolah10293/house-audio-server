@@ -33,6 +33,7 @@ class ParsingTests(unittest.TestCase):
                             {
                                 "id": "node-1",
                                 "connected": True,
+                                "lastSeen": {"sec": int(h.time.time()), "usec": 0},
                                 "config": {
                                     "name": "Kitchen",
                                     "latency": 10,
@@ -77,6 +78,38 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(snap["clients"][0]["streamId"], "default")
         self.assertEqual(snap["serverVersion"], "0.31.0")
 
+    def test_stale_snapcast_client_is_not_present(self):
+        monitor = h.SnapcastMonitor(stale_after_seconds=5.0)
+        old = h.time.time() - 30.0
+        sec = int(old)
+        usec = int((old - sec) * 1_000_000)
+        monitor._apply_status(
+            {
+                "groups": [
+                    {
+                        "id": "g1",
+                        "muted": False,
+                        "stream_id": "default",
+                        "clients": [
+                            {
+                                "id": "node-1",
+                                "connected": True,
+                                "lastSeen": {"sec": sec, "usec": usec},
+                                "config": {"volume": {"muted": False, "percent": 100}},
+                            }
+                        ],
+                    }
+                ],
+                "server": {"snapserver": {}},
+                "streams": [],
+            }
+        )
+        snap = monitor.snapshot()
+        self.assertEqual(snap["connectedCount"], 1)
+        self.assertEqual(snap["presentCount"], 0)
+        self.assertEqual(snap["audibleCount"], 0)
+        self.assertFalse(snap["clients"][0]["present"])
+
     def test_snapcast_group_mute_makes_client_inaudible(self):
         monitor = h.SnapcastMonitor()
         monitor._apply_status(
@@ -90,6 +123,7 @@ class ParsingTests(unittest.TestCase):
                             {
                                 "id": "node-1",
                                 "connected": True,
+                                "lastSeen": {"sec": int(h.time.time()), "usec": 0},
                                 "config": {"volume": {"muted": False, "percent": 100}},
                             }
                         ],
