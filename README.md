@@ -56,7 +56,7 @@ The proof server is the first usable version of the real server, not a disposabl
 
 - **MPD** — owns the one playback session: queue, current track, transport state, seek position, shuffle, and folder-derived playlist state.
 - **Snapserver** — distributes timestamped/buffered synchronized audio to renderers.
-- **house-audio-server** — thin custom control/session layer to be added around the permanent stack. It will expose HOUSE-mode state/control and enforce shared session policy without reimplementing decoding or synchronization. Home presence does not require a separate discovery protocol; clients can identify the LAN by a bound MPD probe.
+- **house-audio-server** — implemented thin control/session layer around the permanent stack. It exposes HOUSE-mode state/control, renderer presence, passive-radio session policy, and diagnostics without reimplementing decoding or synchronization. Home presence does not require a separate discovery protocol; clients can identify the LAN by a bound MPD probe.
 - **Samba** — continues serving the same files to existing standalone clients and is not replaced by this project.
 
 The proven audio path is:
@@ -120,7 +120,9 @@ The client:
 
 Server-side TCP counters showed sustained payload transfer to the XIAO. In one 59-second sample, `bytes_sent` increased by **6,292,952 bytes** and `data_segs_out` increased by **5,343**, approximately **0.85 Mbit/s** of sustained stream traffic, with acknowledgements tracking transmission. `bytes_sent` alone is not reception proof; follow `bytes_acked` on the current client connection as well.
 
-The renderer has since advanced beyond the network-only proof: a PCM5102A is connected and **real audible analog playback is proven** through the permanent FLAC Snapcast path. The proven XIAO mapping is `LCK -> D3 (GPIO4)`, `BCK -> D4 (GPIO5)`, and `DIN -> D5 (GPIO6)`. Two-room audible synchronization is still untested.
+The renderer has since advanced beyond the network-only proof: PCM5102A-based nodes produce **real audible analog playback** through the permanent FLAC Snapcast path. The proven XIAO mapping is `LCK -> D3 (GPIO4)`, `BCK -> D4 (GPIO5)`, and `DIN -> D5 (GPIO6)`.
+
+**Two independent XIAO ESP32-S3 + PCM5102A renderers have now been proven audibly synchronized.** They were feeding very different downstream analog systems/speakers, yet played as one coherent source with no obvious echo or phasing during the acceptance test.
 
 ## System role
 
@@ -162,7 +164,7 @@ Network-transition grace periods and ambiguous cases still need implementation d
 
 The system uses **Snapcast/Snapserver** timestamped/buffered distribution so renderers compensate for network jitter and clock drift instead of independently opening the same file and trying to stay aligned.
 
-When an output powers up during an existing song, it should join the song at the **current house timestamp** after it connects and fills its synchronization buffer. It must not restart the track. This describes the target audible behavior; two-output synchronization remains to be tested.
+When an output powers up during an existing song, it joins the song at the **current house timestamp** after it connects and fills its synchronization buffer. It does not restart the track. This behavior is now proven with two real ESP32/PCM5102A renderers playing audibly in sync.
 
 ## Build strategy: proof becomes production
 
@@ -175,10 +177,11 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
 7. **DONE** — Track Snapserver renderer presence, including reliable hard-power-off detection via `lastSeen` freshness rather than Snapserver's raw connected flag.
-8. **IN PROGRESS** — Implement autonomous session rules driven by proven renderer presence. v0.5.0 now adds fresh-idle passive-node auto-start on top of the v0.4 final-track rule: power on a passive renderer -> default `MP3s` Random/Repeat playback starts automatically; joining active playback leaves the existing queue alone.
-9. Implement durable saved progress/order for the default `MP3s` shuffle rotation.
+8. **DONE for passive-radio basics** — renderer-driven session behavior is working: fresh-idle radio power-on starts default `MP3s` Random/Repeat playback; joining active playback preserves the queue; v0.5.1 also resumes an existing paused session when a passive radio appears.
+9. **NEXT session milestone** — implement durable saved progress/order for the default `MP3s` shuffle rotation, then controller-presence/output-state policy.
 10. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
-11. Add additional synchronized renderers and perform the audible room-to-room synchronization test.
+11. **DONE** — two independent ESP32/PCM5102A renderers have passed the real audible synchronization test.
+12. **IN PROGRESS reliability work** — diagnose occasional few-second single-node audio dropouts using the v0.6.0 unattended diagnostics recorder.
 
 Every successful step remains part of the final installation.
 
@@ -317,6 +320,40 @@ Observed:
 
 That proves the core appliance behavior: **turn the radio on and music comes out; power-cycle it during an active session and it rejoins the existing house playback.**
 
+### Two-renderer synchronization proof
+
+The second physical XIAO ESP32-S3 + PCM5102A node was built as a clone of the first working renderer and joined the same Snapserver stream.
+
+Runtime result:
+
+- two independent ESP32 renderers connected at the same time;
+- both produced real analog audio through different downstream amplifier/speaker systems;
+- the two outputs were **audibly synchronized**, with no objectionable echo or phasing during the acceptance test;
+- hard power-cycling a node for more than ten seconds and powering it back on rejoined the still-active house session on the same song;
+- one measured power-on/rejoin took about **six seconds** from plug-in to audible output.
+
+This closes the original Phase 3 question: the architecture is not merely capable of multiple clients; it produces real synchronized audio across independent hardware.
+
+### Leave-and-return pause edge — runtime proven fix
+
+A longer real-world test exposed a policy mismatch rather than a renderer fault. Both nodes were unplugged, the user left the house, and both were powered again later. Snapserver saw both renderers as healthy/present, but MPD was paused at 0.0 seconds, so v0.5.0 intentionally left the session silent.
+
+v0.5.1 changed passive-radio arrival to **resume the existing paused queue/position** instead of remaining silent or replacing the queue with default `MP3s`. Installing/restarting v0.5.1 with both radios already present caused both outputs to start immediately, providing direct runtime proof of the fix.
+
+The product rule is now explicit: **powering on a passive radio is a Play intent signal**. Controller attachment alone still does not override Pause.
+
+### Current intermittent-dropout investigation
+
+With two nodes playing synchronously, occasional short silences of a few seconds have been heard on one renderer or the other. They are not necessarily frequent and have not been reported as simultaneous on both nodes.
+
+Known facts:
+
+- both XIAO S3 nodes have their external 2.4 GHz antennas installed;
+- the system otherwise stays synchronized and recovers automatically;
+- the cause is not yet established, so this is **not** being labeled a Wi-Fi problem, Snapserver problem, or decoder problem prematurely.
+
+v0.6.0 adds bounded in-memory diagnostics at `GET /diagnostics` to record per-client Snapcast time-sync stalls/recovery, connected/present/audible changes, Snapserver reachability, and stream-state changes. The next useful evidence is a field capture after an audible dropout. If server-side timing/presence remains clean, instrumentation should move into the ESP32 decoder/buffer/I2S path.
+
 ## MPD control-service boundary
 
 The remaining controller problem is **not figuring out how to operate MPD**. The required MPD operations are understood: folder/library browsing, queue inspection/replacement/reordering, current-song and position state, Play/Pause/Stop, Seek, Previous/Next, Shuffle/Random, Repeat, and change notifications.
@@ -338,9 +375,9 @@ The exact network API/schema is still to be implemented. The architecture is set
 
 The MPD -> FIFO -> Snapserver -> ESP32 network path has been proven. A reboot/service-startup test is still needed before the server foundation issue is considered completely closed.
 
-### Current intentionally parked state
+### Historical parked state
 
-After completing the network proof, the Pi test stack was deliberately shut down and cleaned up until testing resumes. Verified parked state:
+Earlier in the project, after the first network proof, the Pi test stack was deliberately shut down and cleaned up. That state is retained here only as history; it is **not the current test state**. At that earlier point:
 
 ```text
 mpd:        inactive / disabled
@@ -351,7 +388,7 @@ MPD/Snapcast listening ports: none
 /tmp/snapfifo: gone
 ```
 
-The MPD/Snapserver packages and proven configuration remain installed. This is intentional: preserve the known-good stack without leaving unused audio services running in the background.
+Since then the stack has been brought back up repeatedly for permanent-Pi runtime testing, including autonomous radio startup, two-renderer synchronization, and diagnostics work. Reboot/service-startup suitability still needs its own unattended test.
 
 The MPD state file remains configured at `/var/lib/mpd/state`. The approved idle/no-node policy must be respected when startup recovery is implemented; starting the service stack must not automatically mean starting music.
 
@@ -379,7 +416,7 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**MPD -> Snapserver -> ESP32-S3 -> PCM5102A audible playback is proven on the permanent hardware and permanent Pi stack.** `house-audio-server` v0.2.0 is **runtime-proven** for the complete basic MPD browse/state/queue/transport API, and v0.3.1 renderer presence is also **runtime-proven** on the permanent Pi for both power-on and abrupt hard-power-off. The service correctly distinguishes Snapserver's stale raw `connected` state from effective `present` state using `lastSeen` freshness. Reboot/service-startup recovery, the clean House Audio On/Off lifecycle, and autonomous house-session policy logic remain unimplemented. The next server milestone is renderer-presence-driven autonomous MPD behavior. Session lifecycle, controller/output behavior, phone handoff, and persistent default shuffle are recorded in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) as approved requirements.
+**The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is durable default-`MP3s` shuffle progress, controller/output presence policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. v0.6.0 provides the first unattended diagnostics capture for that investigation.
 
 
 ### Leave-and-return pause edge — v0.5.1
