@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections import deque
 import os
 import socket
 import threading
@@ -25,7 +26,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.5.1"
+SERVICE_VERSION = "0.6.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -56,6 +57,19 @@ PASSIVE_SESSION_POLICY_POLL_SECONDS = float(
     os.environ.get("PASSIVE_SESSION_POLICY_POLL_SECONDS", "0.5")
 )
 PASSIVE_DEFAULT_FOLDER = os.environ.get("PASSIVE_DEFAULT_FOLDER", "MP3s")
+
+DIAGNOSTICS_ENABLED = os.environ.get(
+    "DIAGNOSTICS_ENABLED", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+DIAGNOSTICS_POLL_SECONDS = float(
+    os.environ.get("DIAGNOSTICS_POLL_SECONDS", "1.0")
+)
+DIAGNOSTICS_STALL_WARN_SECONDS = float(
+    os.environ.get("DIAGNOSTICS_STALL_WARN_SECONDS", "2.5")
+)
+DIAGNOSTICS_HISTORY_LIMIT = int(
+    os.environ.get("DIAGNOSTICS_HISTORY_LIMIT", "200")
+)
 
 MAX_JSON_BODY = 2 * 1024 * 1024
 MPD_WRITE_LOCK = threading.RLock()
@@ -519,6 +533,295 @@ class SnapcastMonitor:
 SNAPCAST_MONITOR = SnapcastMonitor()
 
 
+class DiagnosticsRecorder:
+    """Keep a small in-memory history of renderer/Snapserver anomalies.
+
+    This is intentionally event-driven rather than a giant sample log. It lets
+    the system run unattended; after an audible dropout, /diagnostics shows
+    whether the affected renderer stopped refreshing Snapcast time-sync state,
+    changed effective presence/audibility, disconnected/reconnected, or
+    whether the Snapserver stream itself changed state.
+    """
+
+    def __init__(
+        self,
+        monitor: SnapcastMonitor,
+        enabled: bool = DIAGNOSTICS_ENABLED,
+        poll_seconds: float = DIAGNOSTICS_POLL_SECONDS,
+        stall_warn_seconds: float = DIAGNOSTICS_STALL_WARN_SECONDS,
+        history_limit: int = DIAGNOSTICS_HISTORY_LIMIT,
+        clock=time.time,
+    ) -> None:
+        self.monitor = monitor
+        self.enabled = enabled
+        self.poll_seconds = poll_seconds
+        self.stall_warn_seconds = stall_warn_seconds
+        self.history_limit = max(10, history_limit)
+        self.clock = clock
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._started_epoch = self.clock()
+        self._initialized = False
+        self._sequence = 0
+        self._events = deque(maxlen=self.history_limit)
+        self._previous_reachable: Optional[bool] = None
+        self._previous_clients: Dict[str, Dict[str, object]] = {}
+        self._previous_streams: Dict[str, str] = {}
+        self._active_stalls: Dict[str, float] = {}
+        self._client_stats: Dict[str, Dict[str, object]] = {}
+
+    def start(self) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(
+                target=self._run,
+                name="renderer-diagnostics",
+                daemon=True,
+            )
+            self._thread.start()
+
+    @staticmethod
+    def _client_ip(client: Dict[str, object]) -> Optional[str]:
+        host = client.get("host")
+        if isinstance(host, dict):
+            value = host.get("ip")
+            return str(value) if value is not None else None
+        return None
+
+    def _record(
+        self,
+        event_type: str,
+        *,
+        client: Optional[Dict[str, object]] = None,
+        details: Optional[Dict[str, object]] = None,
+    ) -> None:
+        now = self.clock()
+        self._sequence += 1
+        event: Dict[str, object] = {
+            "seq": self._sequence,
+            "epoch": round(now, 3),
+            "type": event_type,
+        }
+        if client is not None:
+            event["clientId"] = client.get("id")
+            event["name"] = client.get("name")
+            event["ip"] = self._client_ip(client)
+        if details:
+            event.update(details)
+        self._events.append(event)
+
+    def _update_client_stats(
+        self,
+        client: Dict[str, object],
+        *,
+        present_dropped: bool = False,
+        reconnected: bool = False,
+        stall_started: bool = False,
+    ) -> None:
+        client_id = client.get("id")
+        if not isinstance(client_id, str) or not client_id:
+            return
+
+        age = client.get("lastSeenAgeSeconds")
+        age_float = (
+            float(age)
+            if isinstance(age, (int, float)) and not isinstance(age, bool)
+            else None
+        )
+
+        stats = self._client_stats.setdefault(
+            client_id,
+            {
+                "id": client_id,
+                "name": client.get("name"),
+                "ip": self._client_ip(client),
+                "samples": 0,
+                "maxLastSeenAgeSeconds": 0.0,
+                "timesyncStallCount": 0,
+                "presentDropCount": 0,
+                "reconnectCount": 0,
+            },
+        )
+        stats["name"] = client.get("name")
+        stats["ip"] = self._client_ip(client)
+        stats["samples"] = int(stats.get("samples", 0)) + 1
+        stats["connected"] = bool(client.get("connected", False))
+        stats["present"] = bool(client.get("present", False))
+        stats["audible"] = bool(client.get("audible", False))
+        stats["lastSeenAgeSeconds"] = age_float
+        if age_float is not None:
+            stats["maxLastSeenAgeSeconds"] = round(
+                max(float(stats.get("maxLastSeenAgeSeconds", 0.0)), age_float),
+                3,
+            )
+        if present_dropped:
+            stats["presentDropCount"] = int(stats.get("presentDropCount", 0)) + 1
+        if reconnected:
+            stats["reconnectCount"] = int(stats.get("reconnectCount", 0)) + 1
+        if stall_started:
+            stats["timesyncStallCount"] = int(stats.get("timesyncStallCount", 0)) + 1
+
+    def _process_snapshot(self, snap: Dict[str, object]) -> None:
+        reachable = bool(snap.get("reachable", False))
+        raw_clients = snap.get("clients")
+        clients = [
+            client for client in raw_clients
+            if isinstance(raw_clients, list) and isinstance(client, dict)
+        ] if isinstance(raw_clients, list) else []
+        current_clients = {
+            str(client.get("id")): client
+            for client in clients
+            if client.get("id") is not None
+        }
+
+        raw_streams = snap.get("streams")
+        current_streams: Dict[str, str] = {}
+        if isinstance(raw_streams, list):
+            for stream in raw_streams:
+                if not isinstance(stream, dict):
+                    continue
+                stream_id = stream.get("id")
+                if stream_id is None:
+                    continue
+                current_streams[str(stream_id)] = str(stream.get("status", "unknown"))
+
+        with self._lock:
+            if not self._initialized:
+                self._previous_reachable = reachable
+                self._previous_clients = copy.deepcopy(current_clients)
+                self._previous_streams = dict(current_streams)
+                for client in current_clients.values():
+                    self._update_client_stats(client)
+                self._initialized = True
+                return
+
+            if reachable != self._previous_reachable:
+                self._record(
+                    "snapserver_reachability_changed",
+                    details={
+                        "from": self._previous_reachable,
+                        "to": reachable,
+                    },
+                )
+
+            for stream_id, status in current_streams.items():
+                previous_status = self._previous_streams.get(stream_id)
+                if previous_status is not None and status != previous_status:
+                    self._record(
+                        "stream_status_changed",
+                        details={
+                            "streamId": stream_id,
+                            "from": previous_status,
+                            "to": status,
+                        },
+                    )
+
+            for client_id, client in current_clients.items():
+                previous = self._previous_clients.get(client_id)
+                present_dropped = False
+                reconnected = False
+                stall_started = False
+
+                if previous is not None:
+                    for field in ("connected", "present", "audible"):
+                        old = bool(previous.get(field, False))
+                        new = bool(client.get(field, False))
+                        if old != new:
+                            self._record(
+                                f"client_{field}_changed",
+                                client=client,
+                                details={"from": old, "to": new},
+                            )
+                            if field == "present" and old and not new:
+                                present_dropped = True
+                            if field == "connected" and not old and new:
+                                reconnected = True
+
+                age = client.get("lastSeenAgeSeconds")
+                age_float = (
+                    float(age)
+                    if isinstance(age, (int, float)) and not isinstance(age, bool)
+                    else None
+                )
+                is_stalled = (
+                    bool(client.get("connected", False))
+                    and age_float is not None
+                    and age_float >= self.stall_warn_seconds
+                )
+                was_stalled = client_id in self._active_stalls
+
+                if is_stalled and not was_stalled:
+                    self._active_stalls[client_id] = self.clock()
+                    stall_started = True
+                    self._record(
+                        "timesync_stall_started",
+                        client=client,
+                        details={
+                            "lastSeenAgeSeconds": round(age_float, 3),
+                            "warnAfterSeconds": self.stall_warn_seconds,
+                        },
+                    )
+                elif not is_stalled and was_stalled:
+                    started = self._active_stalls.pop(client_id)
+                    self._record(
+                        "timesync_stall_recovered",
+                        client=client,
+                        details={
+                            "durationSeconds": round(max(0.0, self.clock() - started), 3),
+                            "lastSeenAgeSeconds": (
+                                round(age_float, 3) if age_float is not None else None
+                            ),
+                        },
+                    )
+
+                self._update_client_stats(
+                    client,
+                    present_dropped=present_dropped,
+                    reconnected=reconnected,
+                    stall_started=stall_started,
+                )
+
+            for client_id, previous in self._previous_clients.items():
+                if client_id not in current_clients:
+                    self._record("client_disappeared_from_status", client=previous)
+                    self._active_stalls.pop(client_id, None)
+
+            self._previous_reachable = reachable
+            self._previous_clients = copy.deepcopy(current_clients)
+            self._previous_streams = dict(current_streams)
+
+    def snapshot(self, limit: int = 100) -> Dict[str, object]:
+        limit = max(1, min(int(limit), self.history_limit))
+        with self._lock:
+            events = list(self._events)[-limit:]
+            clients = sorted(
+                (copy.deepcopy(item) for item in self._client_stats.values()),
+                key=lambda item: str(item.get("id", "")),
+            )
+            return {
+                "enabled": self.enabled,
+                "startedEpoch": round(self._started_epoch, 3),
+                "pollSeconds": self.poll_seconds,
+                "stallWarnSeconds": self.stall_warn_seconds,
+                "historyLimit": self.history_limit,
+                "eventCount": len(self._events),
+                "clients": clients,
+                "events": events,
+            }
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._process_snapshot(self.monitor.snapshot())
+            self._stop.wait(self.poll_seconds)
+
+
+DIAGNOSTICS = DiagnosticsRecorder(SNAPCAST_MONITOR)
+
+
 class PassiveSessionPolicy:
     """Autonomous policy for passive renderer nodes.
 
@@ -903,7 +1206,7 @@ def bool_field(payload: Dict[str, object], key: str) -> bool:
 
 
 class ApiHandler(BaseHTTPRequestHandler):
-    server_version = "HouseAudioServer/0.5.1"
+    server_version = "HouseAudioServer/0.6"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} - {fmt % args}")
@@ -1020,6 +1323,25 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "service": SERVICE_NAME,
                         "version": SERVICE_VERSION,
                         "sessionPolicy": PASSIVE_SESSION_POLICY.snapshot(),
+                    },
+                )
+                return
+
+            if path == "/diagnostics":
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                raw_limit = query.get("limit", ["100"])[0]
+                try:
+                    limit = int(raw_limit)
+                except ValueError as exc:
+                    raise ApiError(
+                        400, "invalid_request", "limit must be an integer"
+                    ) from exc
+                self._json(
+                    200,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "diagnostics": DIAGNOSTICS.snapshot(limit=limit),
                     },
                 )
                 return
@@ -1224,6 +1546,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     SNAPCAST_MONITOR.start()
+    DIAGNOSTICS.start()
     PASSIVE_SESSION_POLICY.start()
     server = ThreadingHTTPServer((HTTP_BIND, HTTP_PORT), ApiHandler)
     print(
