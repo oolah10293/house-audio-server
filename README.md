@@ -2,7 +2,7 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source version: **0.6.2**. The completed-drain/fresh-shuffle correction is unit-tested; installation and field validation on the permanent Pi are pending.
+Current source and deployed Pi version: **0.6.2**. All 27 local tests and GitHub CI passed. Initial radio power-cycle results were recorded on 2026-09-29: short absence returned to the same song; longer absence returned with a different song. See the scoped results below.
 
 The core rule is simple: **there is one house playback session**. Devices on the home network do not start separate competing music sessions. A room may be the only active output, or several rooms may be active, but every participating output follows the same queue, track, playback position, shuffle state, and transport state.
 
@@ -179,8 +179,8 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
 7. **DONE** — Track Snapserver renderer presence, including reliable hard-power-off detection via `lastSeen` freshness rather than Snapserver's raw connected flag.
-8. **DONE for passive-radio basics** — renderer-driven session behavior is working: fresh-idle radio power-on starts default `MP3s` Random/Repeat playback; joining active playback preserves the queue; v0.5.1 resumes an ordinary paused session; v0.6.1 discovered MPD's `pause @ 0.0` boundary artifact. Its old-queue resume behavior is superseded by v0.6.2 fresh-idle handling, which still needs Pi field validation.
-9. **NEXT session milestone** — field-validate v0.6.2 completed-drain/fresh-shuffle behavior, then implement persisted runtime default-folder selection and controller-presence/output-state policy. Cross-session shuffle persistence is no longer desired.
+8. **DONE for passive-radio basics** — renderer-driven session behavior is working: fresh-idle radio power-on starts default `MP3s` Random/Repeat playback; joining active playback preserves the queue; v0.5.1 resumes an ordinary paused session; v0.6.1 discovered MPD's `pause @ 0.0` boundary artifact. Its old-queue resume behavior is superseded by v0.6.2 fresh-idle handling. v0.6.2 is installed, with initial short/long power-cycle results recorded below.
+9. **NEXT session milestone** — implement persisted runtime default-folder selection and controller-presence/output-state policy. v0.6.2 is deployed with initial radio tests recorded; the specific manually selected CD/Rap queue-to-default drain check remains open. Cross-session shuffle persistence is no longer desired.
 10. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
 11. **DONE** — two independent ESP32/PCM5102A renderers have passed the real audible synchronization test.
 12. **IN PROGRESS reliability work** — diagnose occasional few-second single-node audio dropouts using the v0.6.0 unattended diagnostics recorder.
@@ -474,7 +474,7 @@ v0.6.1 recognized that boundary and resumed the old queue. The observation remai
 
 Runtime result after installing v0.6.1 with the S3 still powered: **music resumed automatically.** No ESP32 firmware or wiring change was required.
 
-This proved the MPD boundary artifact and restored sound in v0.6.1. It did not validate the corrected fresh-session queue behavior; v0.6.2 requires its own field test.
+This proved the MPD boundary artifact and restored sound in v0.6.1. It did not validate the corrected fresh-session queue behavior; v0.6.2 has its own initial radio-test results recorded below.
 
 
 ### Runtime-selectable passive default folder — planned
@@ -492,6 +492,39 @@ The Android HOUSE Browser will reuse the button position that is SMB in STANDALO
 - Ordinary unfinished paused sessions still resume. Pending drains remain distinguishable through Snapserver monitor outages; failed completion writes are retried.
 - The environment `PASSIVE_DEFAULT_FOLDER` remains the current configuration source. The persisted runtime MP3s/Rap selector is still pending HOUSE contract work.
 
-Local regression tests cover early/late returns, pause/stop boundaries, completion-and-arrival in one poll, both default folders, processed-drain service restart, monitor outages, write failure, fresh shuffles, and permitted chance repeats. **Pi deployment/field validation is pending.**
+Local regression tests cover early/late returns, pause/stop boundaries, completion-and-arrival in one poll, both default folders, processed-drain service restart, monitor outages, write failure, fresh shuffles, and permitted chance repeats. **v0.6.2 is now deployed; initial Pi/radio results are recorded below.**
 
-Field acceptance: select a CD/Rap queue, switch the last radio off, let the track end, and verify `/state` is stopped and `/session` has no pending stop. Power a radio on and verify the configured default starts. Repeat with return before track end (same session), ordinary Pause (resume), and several completed sessions (fresh randomness; occasional repeat first songs are valid).
+Remaining targeted field check: select a CD/Rap queue, switch the last radio off, let the track end, and verify `/state` is stopped and `/session` has no pending stop. Power a radio on and verify the configured default starts. Repeat with return before track end (same session), ordinary Pause (resume), and several completed sessions (fresh randomness; occasional repeat first songs are valid).
+
+## v0.6.2 initial Pi/radio results — 2026-09-29
+
+The service is installed and running on the permanent Pi. The supplied `/session` response identifies version **0.6.2** and the current passive default **MP3s**.
+
+User-reported audible tests:
+
+- After about **10 seconds unplugged**, the radio returned to the **same song**.
+- After about **five minutes unplugged**, powering the radio back on started a **different new song**.
+
+The supplied snapshot reports:
+
+```json
+{
+  "version": "0.6.2",
+  "sessionPolicy": {
+    "mode": "passive_renderers_only",
+    "defaultFolder": "MP3s",
+    "presentCount": 1,
+    "pendingFinalStop": false,
+    "pendingSongId": null,
+    "lastAction": "pending_stop_cancelled_renderer_returned",
+    "freshIdleAutoStartImplemented": true,
+    "freshSessionShuffleImplemented": true,
+    "defaultShufflePolicy": "new_each_fresh_session",
+    "controllerPresenceImplemented": false
+  }
+}
+```
+
+This directly confirms the deployed version and the pre-completion return/cancellation path. The longer-off audible result is consistent with a new session, but no `started_default_session` snapshot or queue comparison was supplied for that trial. In particular, replacing a manually selected CD/Rap queue with the configured default after completed drain remains a separate field check. The policy and shuffle regression tests remain passing (27 local tests; GitHub CI passed).
+
+There is no phone-selectable default yet: MP3s is the current deployment setting. The persisted MP3s/Rap runtime selector and controller/output presence are still upcoming HOUSE work. These tests do not represent an Android HOUSE build or an ESP32 firmware release.

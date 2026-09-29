@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source service version: **0.6.2** (unit-tested; permanent-Pi deployment/validation pending)
+Current source and deployed Pi service version: **0.6.2**. Unit tests/CI passed; initial radio power-cycle results are recorded at the end of this document.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -369,7 +369,7 @@ This revealed that MPD 0.24 `single oneshot` can finish the departing session by
 
 v0.6.1 recognized this boundary but resumed the retained old queue. That historical resume choice is superseded by v0.6.2: completed drain means fresh idle under SESSION_BEHAVIOR §4, followed by a new default shuffle on passive arrival.
 
-**Runtime result:** after installing v0.6.1 with the previously silent S3 still powered, playback resumed automatically. The renderer had already been healthy/present; the fix was entirely in the server session policy. The MPD boundary artifact and v0.6.1 sound recovery were field-proven. The corrected v0.6.2 fresh-session behavior still requires separate Pi validation.
+**Runtime result:** after installing v0.6.1 with the previously silent S3 still powered, playback resumed automatically. The renderer had already been healthy/present; the fix was entirely in the server session policy. The MPD boundary artifact and v0.6.1 sound recovery were field-proven. Initial v0.6.2 Pi/radio results are now recorded below; the manually selected old-queue-to-default case remains a separate field check.
 
 
 ## Planned runtime passive-default API
@@ -404,3 +404,36 @@ Each fresh default start queries the configured folder's MPD-indexed files recur
 Pending drains are resolved before a new Snapserver presence baseline, so a monitor outage does not revive a completed queue. MPD write failures keep policy recovery alive. Recovery after the service/Pi itself restarts during an unfinished/unprocessed drain is still an open edge; no broad reboot-persistence claim is made.
 
 The former persistent default-rotation requirement has been removed. Persisting the **folder choice** (`MP3s`/`Rap`) remains planned; changing that setting must not affect an active or ordinary paused session. The completed session's order/progress is never a prerequisite for a fresh passive start.
+
+## v0.6.2 initial Pi/radio results — 2026-09-29
+
+The service is installed and running on the permanent Pi. The supplied `/session` response identifies version **0.6.2** and the current passive default **MP3s**.
+
+User-reported audible tests:
+
+- After about **10 seconds unplugged**, the radio returned to the **same song**.
+- After about **five minutes unplugged**, powering the radio back on started a **different new song**.
+
+The supplied snapshot reports:
+
+```json
+{
+  "version": "0.6.2",
+  "sessionPolicy": {
+    "mode": "passive_renderers_only",
+    "defaultFolder": "MP3s",
+    "presentCount": 1,
+    "pendingFinalStop": false,
+    "pendingSongId": null,
+    "lastAction": "pending_stop_cancelled_renderer_returned",
+    "freshIdleAutoStartImplemented": true,
+    "freshSessionShuffleImplemented": true,
+    "defaultShufflePolicy": "new_each_fresh_session",
+    "controllerPresenceImplemented": false
+  }
+}
+```
+
+This directly confirms the deployed version and the pre-completion return/cancellation path. The longer-off audible result is consistent with a new session, but no `started_default_session` snapshot or queue comparison was supplied for that trial. In particular, replacing a manually selected CD/Rap queue with the configured default after completed drain remains a separate field check. The policy and shuffle regression tests remain passing (27 local tests; GitHub CI passed).
+
+There is no phone-selectable default yet: MP3s is the current deployment setting. The persisted MP3s/Rap runtime selector and controller/output presence are still upcoming HOUSE work. These tests do not represent an Android HOUSE build or an ESP32 firmware release.
