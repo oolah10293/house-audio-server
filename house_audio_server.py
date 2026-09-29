@@ -5,7 +5,7 @@ Current scope:
 - read MPD health/state/queue/library
 - basic MPD transport and queue control over HTTP
 - live Snapserver renderer-presence tracking
-- first autonomous session policy: finish-current-track when final passive renderer leaves
+- passive sessions: final-track drain, fresh-idle startup, and a new default shuffle
 
 The service intentionally uses only the Python standard library.
 """
@@ -16,17 +16,18 @@ import copy
 import json
 from collections import deque
 import os
+import random
 import socket
 import threading
 import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import PurePosixPath
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.6.1"
+SERVICE_VERSION = "0.6.2"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -206,6 +207,13 @@ class MpdClient:
             responses[0].lines, {"file", "directory", "playlist"}
         )
         return [normalize_library_entry(record) for record in records]
+
+    def library_files(self, path: str) -> List[str]:
+        """List indexed files recursively, matching MPD's folder-add scope."""
+        path = validate_relative_path(path)
+        _, responses = self.run(f"listall {mpd_quote(path)}")
+        records = parse_mpd_records(responses[0].lines, {"file", "directory"})
+        return [record["file"] for record in records if record.get("file")]
 
     def replace_queue(
         self,
@@ -832,9 +840,9 @@ class PassiveSessionPolicy:
       then stop;
     - renderer returns before that track ends -> cancel the pending stop.
 
-    Persistent default-shuffle progress is still a later step. For now each
-    fresh default session rebuilds the configured default folder and asks MPD
-    to create a fresh Random order.
+    Each genuinely fresh session gets a new default-folder shuffle. Completed
+    drains end the old session, even when MPD lands paused on its next track.
+    An ordinary paused session, or a return before the drain ends, is retained.
     """
 
     def __init__(
@@ -844,12 +852,18 @@ class PassiveSessionPolicy:
         enabled: bool = PASSIVE_SESSION_POLICY_ENABLED,
         poll_seconds: float = PASSIVE_SESSION_POLICY_POLL_SECONDS,
         default_folder: str = PASSIVE_DEFAULT_FOLDER,
+        shuffle: Optional[Callable[[List[str]], None]] = None,
     ) -> None:
         self.monitor = monitor
         self.mpd_factory = mpd_factory
         self.enabled = enabled
         self.poll_seconds = poll_seconds
         self.default_folder = validate_relative_path(default_folder)
+        # OS entropy; never reset a deterministic seed or save a cross-session
+        # rotation. Injection lets tests exercise chance repeats without luck.
+        self._shuffle = (
+            shuffle if shuffle is not None else random.SystemRandom().shuffle
+        )
         if not self.default_folder:
             raise ValueError("PASSIVE_DEFAULT_FOLDER must not be empty")
         self._lock = threading.RLock()
@@ -892,7 +906,8 @@ class PassiveSessionPolicy:
                 "lastAction": self._last_action,
                 "lastActionEpoch": self._last_action_epoch,
                 "freshIdleAutoStartImplemented": True,
-                "persistentDefaultShuffleImplemented": False,
+                "freshSessionShuffleImplemented": True,
+                "defaultShufflePolicy": "new_each_fresh_session",
                 "controllerPresenceImplemented": False,
             }
 
@@ -909,17 +924,22 @@ class PassiveSessionPolicy:
         return "1" if state.get("single") is True else "0"
 
     def _start_default_session(self, mpd: MpdClient) -> None:
-        # Force Random off before rebuilding so turning it back on creates a
-        # fresh shuffled order over the complete folder.
+        tracks = mpd.library_files(self.default_folder)
+        if not tracks:
+            raise MpdError(f"Default folder {self.default_folder!r} is empty")
+        self._shuffle(tracks)
+        # Explicitly randomize the actual queue as well as enabling MPD Random.
+        # Starting item zero is unbiased because the entire list was shuffled.
+        # A chance repeat of the first song (or order) is allowed, never rerolled.
         commands = [
             "random 0",
             "clear",
-            f"add {mpd_quote(self.default_folder)}",
+            *(f"add {mpd_quote(track)}" for track in tracks),
             "repeat 1",
             "single 0",
             "consume 0",
             "random 1",
-            "play",
+            "play 0",
         ]
         with MPD_WRITE_LOCK:
             mpd.run(*commands)
@@ -1001,6 +1021,24 @@ class PassiveSessionPolicy:
         self._record(action)
 
     def _tick(self) -> None:
+        # Keep the state decision and its writes together relative to API writes.
+        # A failed MPD command must not kill the policy thread or lose a drain.
+        try:
+            with MPD_WRITE_LOCK:
+                self._tick_locked()
+        except (OSError, MpdError) as exc:
+            with self._lock:
+                self._previous_present_count = None
+            self._record(f"policy_waiting_for_mpd: {exc}")
+
+    def _complete_final_stop(self, mpd: MpdClient) -> None:
+        # Normalize MPD's pause-at-next-track artifact to stopped BEFORE restoring
+        # options. A later arrival (including after a service restart) must take
+        # the fresh-default path, not resume yesterday's controller-selected queue.
+        mpd.command("stop")
+        self._restore_options(mpd, "final_track_completed_session_idle")
+
+    def _tick_locked(self) -> None:
         if not self.enabled:
             return
 
@@ -1021,22 +1059,8 @@ class PassiveSessionPolicy:
 
         mpd = self.mpd_factory()
 
-        # First good sample after service startup/reconnect is an authoritative
-        # baseline. If a passive renderer is already present and MPD is stopped,
-        # that is the same product state as plugging a radio into a fresh idle
-        # house: start music.
-        if previous is None:
-            with self._lock:
-                self._previous_present_count = present_count
-            if present_count > 0:
-                try:
-                    self._handle_renderer_arrival(mpd, baseline=True)
-                except (OSError, MpdError) as exc:
-                    self._record(f"baseline_renderer_start_error: {exc}")
-            else:
-                self._record("presence_baseline_established")
-            return
-
+        # Resolve a known drain BEFORE re-establishing a Snapserver baseline.
+        # Otherwise a monitor outage could turn its boundary pause into Resume.
         if pending:
             try:
                 state = mpd.state()
@@ -1048,44 +1072,45 @@ class PassiveSessionPolicy:
 
             transport = state.get("transport")
 
-            if present_count > 0:
-                if transport == "play":
+            boundary_pause = (
+                transport == "pause"
+                and self._pending_song_id is not None
+                and state.get("songId") != self._pending_song_id
+            )
+            if transport == "stop" or boundary_pause:
+                self._complete_final_stop(mpd)
+                if present_count > 0:
+                    # The boundary already happened, even if arrival and
+                    # completion are first observed in the same policy poll.
+                    self._start_default_session(mpd)
+            elif present_count > 0:
+                if transport in ("play", "pause"):
                     # Renderer returned before the final track ended.
                     self._restore_options(
                         mpd, "pending_stop_cancelled_renderer_returned"
                     )
-                elif transport in ("pause", "stop"):
-                    # MPD 0.24's single oneshot reaches the track boundary as
-                    # a paused/stopped retained queue. The radio arriving now
-                    # is Play intent: restore the user's queue options and
-                    # resume that retained next-track position rather than
-                    # rebuilding the default folder.
-                    self._restore_options(
-                        mpd, "pending_stop_completed_renderer_returned"
-                    )
-                    with MPD_WRITE_LOCK:
+                    if transport == "pause":
+                        # Deliberate Pause on the unfinished current song is
+                        # still a retained session; passive arrival resumes it.
                         mpd.command("play")
-                    self._record(
-                        "pending_stop_completed_renderer_resumed_session"
-                    )
-            elif transport in ("pause", "stop"):
-                # Boundary reached with nobody present. Clear the temporary
-                # oneshot/repeat override now. A later passive-radio arrival
-                # will resume this retained queue (pause) or start normally
-                # from its selected item (stop).
-                self._restore_options(
-                    mpd, "final_track_completed_session_idle"
-                )
 
             with self._lock:
                 self._previous_present_count = present_count
             return
 
+        # First good sample after startup/reconnect establishes presence. A
+        # stopped session starts fresh; an ordinary paused session still resumes.
+        if previous is None:
+            if present_count > 0:
+                self._handle_renderer_arrival(mpd, baseline=True)
+            else:
+                self._record("presence_baseline_established")
+            with self._lock:
+                self._previous_present_count = present_count
+            return
+
         if previous == 0 and present_count > 0:
-            try:
-                self._handle_renderer_arrival(mpd)
-            except (OSError, MpdError) as exc:
-                self._record(f"renderer_start_error: {exc}")
+            self._handle_renderer_arrival(mpd)
 
         if previous > 0 and present_count == 0:
             try:
@@ -1232,7 +1257,7 @@ def bool_field(payload: Dict[str, object], key: str) -> bool:
 
 
 class ApiHandler(BaseHTTPRequestHandler):
-    server_version = "HouseAudioServer/0.6.1"
+    server_version = f"HouseAudioServer/{SERVICE_VERSION}"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} - {fmt % args}")

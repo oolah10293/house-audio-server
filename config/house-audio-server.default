@@ -25,6 +25,7 @@ PASSIVE_SESSION_POLICY_ENABLED=true
 PASSIVE_SESSION_POLICY_POLL_SECONDS=0.5
 
 # Folder loaded automatically when the first passive renderer appears in fresh idle.
+# Each fresh session gets a new shuffle; a completed old queue is not resumed.
 PASSIVE_DEFAULT_FOLDER=MP3s
 
 # Lightweight in-memory renderer diagnostics. Records only state changes and

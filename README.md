@@ -2,20 +2,22 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
+Current source version: **0.6.2**. The completed-drain/fresh-shuffle correction is unit-tested; installation and field validation on the permanent Pi are pending.
+
 The core rule is simple: **there is one house playback session**. Devices on the home network do not start separate competing music sessions. A room may be the only active output, or several rooms may be active, but every participating output follows the same queue, track, playback position, shuffle state, and transport state.
 
 ## Agreed playback and session behavior
 
-**Read [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) before changing the control service or integrating any client.** It records the agreed rules for the Pi, Android app, PC player, browser controller, and passive nodes. Some passive-renderer rules are now implemented and field-proven; controller-aware rules and durable default-shuffle state remain future work.
+**Read [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) before changing the control service or integrating any client.** It records the agreed rules for the Pi, Android app, PC player, browser controller, and passive nodes. Some passive-renderer rules are now implemented and field-proven; controller-aware rules and persisted runtime default-folder selection remain future work.
 
 The important session distinctions are:
 
 - With nobody connected, the Pi is idle, except while finishing the last playing track after everyone disconnects.
-- Only a **passive node** starts music automatically from fresh idle: the default `MP3s` folder, Shuffle, Repeat All, continuing its saved rotation. A phone, PC, or browser connecting first waits for Play.
+- Only a **passive node** starts music automatically from fresh idle: the configured `MP3s` or `Rap` default folder, a new random shuffle, and Repeat All. A phone, PC, or browser connecting first waits for Play.
 - A controller joining existing playback adopts the current song and queue. Changes it deliberately makes remain in effect after that controller leaves while other nodes remain.
 - All nodes disconnecting during playback means finish the current track, then stop despite Repeat All. A node returning before track end cancels the pending stop and preserves the session.
 - Only a muted phone remaining means **pause and retain the playlist, track, and exact position**, not finish and discard the session. An audible node returning or that phone unmuting resumes the retained session.
-- Save the default MP3s shuffle order and progress separately from controller-selected queues. Continue the remaining order next session; generate a fresh shuffle after the complete cycle without an immediate boundary repeat.
+- Every completed drain ends the session. The next passive power-on loads a newly shuffled queue from the currently configured default, even if MPD retained yesterday's CD/Rap queue in `pause @ 0.0`. Do not persist/continue the completed shuffle order or force a different first song; chance repeats are allowed. Only the default folder setting is intended to persist.
 - HOUSE/standalone authority is separate from local output mute. The phone gets a HOUSE-only **Mute output / Unmute output** button. Leaving home while unmuted and playing automatically continues the same song through standalone SMB/Tailscale without sending a stop or queue replacement to MPD; muted/paused phones stay silent.
 
 The accepted browser interface is another folder-first controller alongside the Android and Windows players. It should share their Pi-side control service rather than introduce a different player or queue. Detailed edge cases and implementation questions are explicitly separated from confirmed decisions in the behavior document.
@@ -177,8 +179,8 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
 7. **DONE** — Track Snapserver renderer presence, including reliable hard-power-off detection via `lastSeen` freshness rather than Snapserver's raw connected flag.
-8. **DONE for passive-radio basics** — renderer-driven session behavior is working: fresh-idle radio power-on starts default `MP3s` Random/Repeat playback; joining active playback preserves the queue; v0.5.1 resumes an ordinary paused session; v0.6.1 also handles the real MPD `single oneshot` end-of-session case where the queue lands paused at 0.0 on the next track.
-9. **NEXT session milestone** — implement durable saved progress/order for the default `MP3s` shuffle rotation, then controller-presence/output-state policy.
+8. **DONE for passive-radio basics** — renderer-driven session behavior is working: fresh-idle radio power-on starts default `MP3s` Random/Repeat playback; joining active playback preserves the queue; v0.5.1 resumes an ordinary paused session; v0.6.1 discovered MPD's `pause @ 0.0` boundary artifact. Its old-queue resume behavior is superseded by v0.6.2 fresh-idle handling, which still needs Pi field validation.
+9. **NEXT session milestone** — field-validate v0.6.2 completed-drain/fresh-shuffle behavior, then implement persisted runtime default-folder selection and controller-presence/output-state policy. Cross-session shuffle persistence is no longer desired.
 10. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
 11. **DONE** — two independent ESP32/PCM5102A renderers have passed the real audible synchronization test.
 12. **IN PROGRESS reliability work** — diagnose occasional few-second single-node audio dropouts using the v0.6.0 unattended diagnostics recorder.
@@ -293,7 +295,7 @@ When the final effective passive renderer disappears while MPD is actively playi
 
 The policy deliberately ignores Snapserver outages rather than converting them into false departures, and its state is exposed at `GET /session`.
 
-This is **implemented and unit-tested but not yet runtime-validated on the permanent Pi**. Fresh-idle default `MP3s` startup and persistent shuffle progress remain the next chunk.
+This describes the historical v0.4.0 slice. Fresh-idle startup was added later; v0.6.2 now makes completed drains fresh idle and creates a new default shuffle each fresh session. Saved cross-session shuffle progress is no longer a planned feature.
 
 ### Passive radio power-on auto-start — v0.5.0
 
@@ -305,7 +307,7 @@ v0.5.1 now implements the approved pause override: if MPD already has a paused s
 
 This also works when `house-audio-server` starts while a radio is already powered on; the initial presence baseline is treated as a real passive-node arrival when MPD is stopped.
 
-The default folder is configurable with `PASSIVE_DEFAULT_FOLDER`. Durable cross-session preservation of the exact default shuffled order/progress is still pending; v0.5.0 creates a fresh MPD Random order for each fresh default session.
+The default folder is configurable with `PASSIVE_DEFAULT_FOLDER`. v0.5.0 requested a fresh MPD Random order at each default start. v0.6.2 explicitly shuffles the actual queue using OS entropy for every fresh session; exact order/progress is not carried across completed sessions.
 
 ### Passive radio auto-start runtime validation
 
@@ -367,7 +369,7 @@ The custom `house-audio-server` should be the single client-facing bridge to tho
 - muted-output behavior;
 - fresh-idle vs retained-session rules;
 - finish-current-track behavior when all nodes leave;
-- persistent default `MP3s` shuffle progress;
+- new default-folder shuffle on each fresh session; persisted default-folder choice (runtime selector still pending);
 - HOUSE session/control protocol/version identity; home presence itself is established by the direct MPD LAN probe;
 - command acknowledgement, stale-state protection, and shared state updates.
 
@@ -418,7 +420,7 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is durable default-`MP3s` shuffle progress, controller/output presence policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. v0.6.0 provides the first unattended diagnostics capture for that investigation.
+**The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is persisted runtime default-folder selection, controller/output presence policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. v0.6.0 provides the first unattended diagnostics capture for that investigation.
 
 
 ### Leave-and-return pause edge — v0.5.1
@@ -451,7 +453,7 @@ A passive renderer was plugged in but produced no audio. The renderer itself was
 
 Root cause: the policy expected MPD `single oneshot` to complete as transport `stop`. On the permanent MPD 0.24 stack, the real observed behavior can instead be a **pause at the next-track boundary**.
 
-v0.6.1 recognizes `pause` and `stop` as completed final-track boundary states. If a radio returns after that boundary has already been reached, the service restores the normal queue options and resumes the retained queue rather than remaining silent.
+v0.6.1 restored output by resuming the retained queue after this boundary. That historical behavior is superseded: a completed drain ends the session, and v0.6.2 starts the configured passive default with fresh randomness on the next radio arrival.
 
 
 ### v0.6.1 runtime proof — final-track boundary return
@@ -468,11 +470,11 @@ Observed failure before the fix:
 
 This proved that on the real MPD 0.24 stack, `single oneshot` may complete the departing session by landing in **Pause at the next-track boundary**, not only by reporting transport `stop`.
 
-v0.6.1 now treats both `pause` and `stop` as completed final-track boundary states. If a passive renderer appears after that boundary, the service restores the saved Repeat/Single options and resumes the retained queue rather than leaving the radio silent or rebuilding the default folder.
+v0.6.1 recognized that boundary and resumed the old queue. The observation remains valid, but that queue-resume choice conflicts with the now-authoritative §4 and has been replaced in v0.6.2.
 
 Runtime result after installing v0.6.1 with the S3 still powered: **music resumed automatically.** No ESP32 firmware or wiring change was required.
 
-This closes the specific final-track-boundary return bug.
+This proved the MPD boundary artifact and restored sound in v0.6.1. It did not validate the corrected fresh-session queue behavior; v0.6.2 requires its own field test.
 
 
 ### Runtime-selectable passive default folder — planned
@@ -480,3 +482,16 @@ This closes the specific final-track-boundary return bug.
 The current passive default is still supplied by `PASSIVE_DEFAULT_FOLDER` at service startup. The next controller integration requires that choice to become a persisted server setting initially supporting `MP3s` and `Rap`.
 
 The Android HOUSE Browser will reuse the button position that is SMB in STANDALONE as this selector. Changing the server default must not alter the current queue; it affects only the next genuinely fresh passive-radio auto-start session.
+
+
+## v0.6.2 — completed drain ends the session
+
+- Return before the final song ends: restore the temporary options and preserve the playing song, position, and queue.
+- Completed drain, whether MPD reports stopped or paused on the next old-queue song: explicitly stop, restore options, and leave fresh idle. A later return uses the configured passive default; a return first observed in the completion poll does the same.
+- Fresh default startup queries that folder's indexed files and shuffles their queue order with Python `SystemRandom` (OS entropy), then enables MPD Random/Repeat and starts shuffled item zero. No fixed seed, saved rotation, previous-first-song exclusion, or reroll is used.
+- Ordinary unfinished paused sessions still resume. Pending drains remain distinguishable through Snapserver monitor outages; failed completion writes are retried.
+- The environment `PASSIVE_DEFAULT_FOLDER` remains the current configuration source. The persisted runtime MP3s/Rap selector is still pending HOUSE contract work.
+
+Local regression tests cover early/late returns, pause/stop boundaries, completion-and-arrival in one poll, both default folders, processed-drain service restart, monitor outages, write failure, fresh shuffles, and permitted chance repeats. **Pi deployment/field validation is pending.**
+
+Field acceptance: select a CD/Rap queue, switch the last radio off, let the track end, and verify `/state` is stopped and `/session` has no pending stop. Power a radio on and verify the configured default starts. Repeat with return before track end (same session), ordinary Pause (resume), and several completed sessions (fresh randomness; occasional repeat first songs are valid).

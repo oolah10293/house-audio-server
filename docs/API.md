@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current service version: **0.6.1**
+Current source service version: **0.6.2** (unit-tested; permanent-Pi deployment/validation pending)
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -49,7 +49,7 @@ Returns the current autonomous passive-renderer policy state, including:
 - the MPD song id being allowed to finish;
 - the most recent policy action.
 
-Current session-policy output also reports whether fresh-idle passive auto-start, durable default-shuffle progress, and controller-presence handling are implemented.
+Session-policy output includes `freshIdleAutoStartImplemented`, `freshSessionShuffleImplemented: true`, `defaultShufflePolicy: "new_each_fresh_session"`, and `controllerPresenceImplemented`. The obsolete `persistentDefaultShuffleImplemented` field is removed: saved order/progress across completed sessions is no longer a requirement. `defaultFolder` is the currently configured passive default.
 
 ### `GET /diagnostics?limit=<n>`
 
@@ -194,16 +194,16 @@ Implemented:
 
 - fresh idle + passive renderer present/arrives -> load the configured default folder (`MP3s`), enable Random + Repeat All, and start playback;
 - passive renderer joining active playback -> leave the existing queue untouched;
-- passive renderer joining a paused session resumes that existing session without replacing its queue;
-- final passive renderer leaves during playback -> finish the current track, then stop;
-- renderer returns before track end -> cancel the pending stop and keep the session playing;
+- passive renderer joining an ordinary paused/retained session resumes it without replacing its queue; a completed-drain boundary pause is excluded;
+- final passive renderer leaves during playback -> finish the current track, then normalize MPD to stopped/fresh idle, including a pause-on-next-track boundary;
+- renderer returns before track end -> cancel the pending stop and preserve the current song, position, and queue;
+- renderer returns after completed drain -> new randomized queue of the configured passive default; no saved old rotation and no forced first-song difference;
 - Snapserver outage -> never interpret it as all renderers leaving.
 
 Still not implemented:
 
-- durable saved progress/order for the default `MP3s` shuffle rotation
 - muted-controller pause/retain behavior
-- persistent default `MP3s` shuffle rotation
+- persisted runtime passive-default folder selection
 - controller attach/heartbeat/detach
 - local renderer mute state
 - Android/Windows authentication/pairing
@@ -277,7 +277,7 @@ If effective renderer presence returns before the song ends, the service immedia
 
 A Snapserver/control outage clears the policy's presence baseline instead of manufacturing a false "all renderers left" transition.
 
-This phase deliberately does **not** auto-start the default `MP3s` rotation yet. Persistent default shuffle/bookmark state is the next autonomous-session chunk.
+This historical phase did not auto-start the default folder. Later versions add fresh-session startup; cross-session shuffle/bookmark persistence is no longer planned.
 
 
 ## v0.5.0 passive-node auto-start
@@ -296,7 +296,7 @@ This override applies specifically to passive-radio arrival. A phone/PC/browser 
 
 The default folder is configurable with `PASSIVE_DEFAULT_FOLDER` and defaults to `MP3s`.
 
-The queue rebuild explicitly toggles Random off before loading and back on afterward so MPD creates a fresh randomized play order over the complete default queue. Durable cross-session shuffle progress is still a later milestone.
+v0.5.0 toggled Random off and back on around the rebuild. v0.6.2 additionally randomizes the actual queue using OS entropy on every genuinely fresh session. Cross-session shuffle progress is intentionally not retained.
 
 
 ## v0.5.1 pause-resume fix
@@ -367,9 +367,9 @@ Observed field state:
 
 This revealed that MPD 0.24 `single oneshot` can finish the departing session by reaching the next-track boundary in **Pause**, not necessarily transport `stop`.
 
-v0.6.1 now treats both `pause` and `stop` as completed final-track boundary states. It clears the temporary Repeat/Single override at that boundary. If a passive renderer returns while the pending final-stop state is still active and MPD is already paused/stopped at the boundary, the service restores the saved options and sends `play` so the retained queue resumes instead of remaining silent or rebuilding the default folder.
+v0.6.1 recognized this boundary but resumed the retained old queue. That historical resume choice is superseded by v0.6.2: completed drain means fresh idle under SESSION_BEHAVIOR §4, followed by a new default shuffle on passive arrival.
 
-**Runtime result:** after installing v0.6.1 with the previously silent S3 still powered, playback resumed automatically. The renderer had already been healthy/present; the fix was entirely in the server session policy. This behavior is now field-proven, not merely unit-tested.
+**Runtime result:** after installing v0.6.1 with the previously silent S3 still powered, playback resumed automatically. The renderer had already been healthy/present; the fix was entirely in the server session policy. The MPD boundary artifact and v0.6.1 sound recovery were field-proven. The corrected v0.6.2 fresh-session behavior still requires separate Pi validation.
 
 
 ## Planned runtime passive-default API
@@ -391,3 +391,16 @@ The control service needs a small persisted get/set contract for this value. Exa
 - `PASSIVE_DEFAULT_FOLDER` remains the fallback/default when no persisted value exists.
 
 This requirement supports the Android HOUSE Browser button that replaces the STANDALONE SMB button with an `MP3s` / `Rap` selector.
+
+
+## v0.6.2 completed-drain and shuffle contract
+
+A pending drain stores the final song's MPD id. Return while that song is still playing cancels the pending stop without Play/Seek/Clear or queue replacement. An ordinary pause on that unfinished song remains resumable. A stopped transport or a boundary pause on the next song completes the drain.
+
+Completion sends Stop before restoring the saved Repeat/Single settings, then clears `pendingFinalStop`/`pendingSongId`. With nobody present, `lastAction` is `final_track_completed_session_idle`. This explicit stopped state prevents a processed boundary pause from being mistaken for a retained session after a later service restart. A return after completion starts a new default session (`lastAction: started_default_session`), including when return and completion are first observed together.
+
+Each fresh default start queries the configured folder's MPD-indexed files recursively, shuffles them using `SystemRandom` (OS entropy), loads that order, enables Random + Repeat All with Single/Consume off, and starts shuffled item zero. There is no fixed seed or saved shuffle progress, and no rejection of a chance repeated first song/order. An empty default produces an error without clearing the old queue and can be retried when files become available.
+
+Pending drains are resolved before a new Snapserver presence baseline, so a monitor outage does not revive a completed queue. MPD write failures keep policy recovery alive. Recovery after the service/Pi itself restarts during an unfinished/unprocessed drain is still an open edge; no broad reboot-persistence claim is made.
+
+The former persistent default-rotation requirement has been removed. Persisting the **folder choice** (`MP3s`/`Rap`) remains planned; changing that setting must not affect an active or ordinary paused session. The completed session's order/progress is never a prerequisite for a fresh passive start.

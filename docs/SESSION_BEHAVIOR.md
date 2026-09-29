@@ -2,6 +2,8 @@
 
 **Status: authoritative product behavior.** Some rules below are now implemented and runtime-proven while others remain future work. This document defines the intended behavior; implementation/validation status is tracked in the repository README, API docs, and issues.
 
+The 2026-09-29 clarification makes §4 authoritative over the former §11 resume behavior and replaces cross-session shuffle persistence with §6 fresh-session randomness.
+
 These rules supersede earlier suggestions of an always-playing private radio station, starting music whenever any controller opens, and treating every failed server request as permission to switch to standalone playback.
 
 ## 1. One house session; separate control and sound
@@ -22,11 +24,11 @@ The browser controller is an accepted part of the plan, alongside the two existi
 
 With no nodes connected and no final track still finishing, nothing is playing. The Pi waits rather than advancing a playlist through an empty house.
 
-**Only a passive node automatically starts music from this idle state.** A radio being powered on should start the default `MP3s` folder with **Shuffle and Repeat All**, continuing the saved default rotation described below.
+**Only a passive node automatically starts music from this idle state.** A radio being powered on should start the currently configured passive default folder (`MP3s` or `Rap`) with **Shuffle and Repeat All**, using a newly randomized order for this fresh session (§6).
 
 A phone, PC player, or browser connecting first does **not** automatically start a track, even when its output is unmuted. It waits for an explicit Play action. Do not restore a controller's former private queue into MPD merely because the controller connected.
 
-This fresh-session rule is different from a paused retained/active session. **A passive radio arriving while MPD is paused should resume that existing paused session rather than leave it paused or replace it with the default MP3s queue.** Passive-node arrival is therefore allowed to override Pause; controller arrival alone is not.
+This fresh-session rule is different from a paused retained/active session. **A passive radio arriving into an ordinary paused/retained session resumes that session.** A completed-drain boundary pause is excluded: it is fresh idle under §4/§11. Passive-node arrival is therefore allowed to override Pause; controller arrival alone is not.
 
 ## 3. Joining and controlling an existing session
 
@@ -42,7 +44,7 @@ When the last node disconnects during playback, the Pi lets the current track **
 
 **Any node reconnecting before that final track ends cancels the pending stop and preserves the existing playlist.** An audible node continues the current track/session without a restart or fresh default shuffle. If the returning device is only a muted controller, apply the muted-controller pause rule rather than keeping inaudible music running.
 
-If the track reaches its end with nobody reconnected, the listening session ends. The next fresh passive-node startup uses the saved default `MP3s` rotation, not a previous session's temporary Rap folder or CD selection.
+If the track reaches its end with nobody reconnected, the listening session ends. The house becomes **fresh idle**. The next passive-node startup loads the currently configured default folder (`MP3s` or `Rap`) with a **new random shuffle**, not the previous session's temporary queue or saved shuffle progress. MPD retaining the old queue in `pause @ 0.0` does not keep the session alive.
 
 There is therefore one intentional exception to "no connected nodes means no playback": the final-track finishing period.
 
@@ -61,22 +63,19 @@ Muting the phone while other audible nodes remain must not pause those nodes. An
 
 The mute-only controller rule is a useful model for PC/browser integration as well; the exact presence/keep-alive behavior of a background app or browser tab still needs implementation definition.
 
-## 6. Persistent default MP3s shuffle
+## 6. New shuffle for every fresh passive session
 
-The purpose of the saved default rotation is to avoid hearing the same first song and sequence every time a radio is switched on.
+**Every genuinely fresh passive listening session loads the currently configured default folder (`MP3s` or `Rap`) with a newly randomized queue order, Shuffle, and Repeat All.** Use fresh randomness, not a fixed/reset seed or a saved order from a completed session.
 
-For the default `MP3s` rotation, preserve the shuffled order and progress through it across listening sessions. Continue through the remaining tracks instead of regenerating or restarting the order on every startup.
+The same first song may occur naturally by chance. Do not exclude the previous first song, compare orders to force a difference, or reroll a valid shuffle. A one-track folder necessarily starts with that track.
 
-After the entire folder has played, generate a **fresh shuffled order**, avoiding an immediate repeat of the last track at the cycle boundary.
+This replaces the older requirement to persist/continue an exact default rotation or bookmark across completed sessions. Only the chosen default **folder setting** is intended to persist; the completed session's shuffled order/progress is not.
 
-Example: if the saved order is `C -> F -> A -> D -> B -> E` and one session completes C, F, and A, the next default session begins with D, not C.
-
-The default rotation's progress is saved **separately from the currently selected house queue**. A controller selecting Rap or a CD must not erase the default MP3s rotation. This is a saved bookmark/order, not a second simultaneous playback engine.
-
-- If the current default MP3 track finishes during the normal end-of-session drain, next startup advances to the next track in the saved order.
-- A genuinely unfinished default track can retain its position, including when a controller interrupts the default rotation to select a different folder.
-- Do not replay an already-completed track solely because it was the last one selected.
-- Do not impose this default folder's Shuffle/Repeat All choice on every controller-selected CD or queue; those remain under the familiar controls.
+- A return before the final track ends continues the existing queue, track, and position without reshuffling.
+- An ordinary paused/retained session remains resumable; it has not completed a drain.
+- Once the final track finishes with nobody present, that session is over. The next passive power-on creates a fresh default session, even if MPD retained the old queue internally.
+- Each fresh start reads the folder's current MPD-indexed contents, naturally incorporating indexed additions/removals.
+- Controller-selected CDs and queues retain their familiar Shuffle/Repeat controls. The passive defaults are not imposed on those active sessions.
 
 ## 7. HOUSE output mute and transport controls
 
@@ -137,18 +136,18 @@ The short HOUSE synchronization buffer and the existing large standalone SMB buf
 
 The rules above describe the desired product, not a completed implementation. Proposed engineering details must remain distinguishable from user decisions.
 
-The Pi service will need to track controller presence and renderer presence/output state separately, retain the active queue, preserve default shuffle progress durably, and distinguish a pending finish-track stop from a paused retained session. A stale TCP socket alone must not be treated as proof that a powered-off node is still present. Heartbeats, disconnect grace periods, and storage format have not been chosen.
+The Pi service will need to track controller presence and renderer presence/output state separately, retain active/paused sessions, persist the selected passive default folder, and distinguish an unfinished drain from a completed session. Default shuffled order/progress does not survive completed sessions. A stale TCP socket alone must not be treated as proof that a powered-off node is still present. Heartbeats, disconnect grace periods, and storage format have not been chosen.
 
-Controller arrival must not be used as a blanket override of explicit transport commands. **Passive-radio arrival is the deliberate exception:** powering on a passive radio should resume an existing paused MPD session, including a deliberate Pause, rather than remaining silent or replacing the queue.
+Controller arrival must not be used as a blanket override of explicit transport commands. **Passive-radio arrival is the deliberate exception:** powering on a passive radio should resume an existing paused MPD session, including a deliberate Pause. This excludes the completed-drain artifact described in §11.
 
 Still to settle before coding the affected edges:
 
 - What happens when the last muted controller disconnects from an already auto-paused session: silently finish that retained track or end the session without advancing it? The discussed finish-current-track case involved music that was still playing.
 - Precisely when a background mobile app or open browser counts as a connected controller; how missed heartbeats and brief network interruptions are handled.
-- Initial/default output-mute setting, and whole-queue continuation for the phone away from home.
-- How additions/removals in `MP3s` are reconciled with a saved shuffle cycle, and exact recovery behavior after a Pi restart.
+- Whole-queue continuation for the phone away from home. Initial HOUSE output mute is settled in the Android requirements: start muted; auto-unmute only for phone-initiated playback.
+- Exact recovery behavior after a Pi/service restart during an unfinished or not-yet-processed drain. There is no saved cross-session shuffle cycle to reconcile.
 
-These gaps do not cancel the confirmed rules. They are intentionally not filled with invented decisions. No runtime code or Pi configuration is changed by recording this document.
+These gaps do not cancel the confirmed rules. They are intentionally not filled with invented decisions. Source implementation and field-validation status are recorded separately in the API docs and README.
 
 
 ## 10. Current proven passive-renderer behavior
@@ -165,18 +164,22 @@ The following implementation facts are now proven on the permanent Pi and real h
 An unresolved reliability issue remains: occasional few-second silence has been heard on one renderer or the other during two-node playback. Both nodes have external antennas installed. The cause is not yet known; v0.6.0 adds unattended diagnostics so the next occurrence can be correlated with Snapcast timing/presence and global stream state.
 
 
-## 11. Proven final-track boundary behavior
+## 11. MPD boundary artifact; §4 remains authoritative
 
-The real MPD 0.24 implementation adds one important detail to the normative "finish current track, then stop/idle" rule:
+The useful v0.6.1 discovery is preserved: MPD 0.24 `single oneshot` can finish the final track and land in **Pause at 0.0 seconds on the next old-queue track**, rather than reporting transport `stop`.
 
-- while the final-renderer departure policy is armed with `single oneshot`, MPD may complete the current track and retain the queue as **Pause at 0.0 seconds on the next track**, rather than reporting transport `stop`;
-- that boundary state still means the previous listening session has drained successfully;
-- when a passive radio later appears, its power-on intent resumes the retained next-track position;
-- the server must restore the temporary Repeat/Single overrides before resuming;
-- it must not mistake the retained boundary pause for an explicit controller Pause that should remain silent.
+That state is evidence that the previous session drained successfully. It is **not** an ordinary retained paused session to resume on a later radio power-on. Section 4 is authoritative:
 
-This edge was discovered from the v0.6 diagnostics and fixed in v0.6.1. Installing v0.6.1 with the previously silent passive S3 still present caused music to resume automatically, proving the behavior on the permanent Pi.
+1. Return before the final song ends: cancel the pending stop and continue the existing session unchanged.
+2. Final song ends with nobody present: end that listening session and enter fresh idle.
+3. Restore temporary Repeat/Single options and normalize the boundary artifact to stopped.
+4. Next passive-radio power-on: load the currently configured default folder with a new shuffle under §6, never resurrect the completed CD/Rap queue.
 
+This also applies when completion and radio return are first observed in the same policy poll. The boundary already ended the old session.
+
+Example: a controller selected a CD, the last radio was switched off, and the song finished with nobody listening. Hours later a radio starts the configured `MP3s` or `Rap` default with fresh randomness; it does not resume yesterday's CD.
+
+**Implementation history:** v0.6.1 successfully restored audible output on the permanent Pi, but did so by resuming the old queue. That resume choice is superseded by this clarification. v0.6.2 implements and unit-tests the completed-drain/fresh-session distinction; permanent-Pi validation of v0.6.2 is still pending. Normalizing a processed drain to stopped also prevents a later control-service restart from treating it as an ordinary pause. Recovery from a service/Pi restart during an unfinished/unprocessed drain remains a separate open edge.
 
 ## 12. Runtime-selectable passive default folder
 
@@ -194,6 +197,7 @@ Required behavior:
 - it is readable by controllers so the UI can show the current value;
 - changing it does **not** replace, restart, reshuffle, seek, or otherwise disturb the current active queue;
 - it applies only when the house later enters a genuinely fresh passive-renderer auto-start session;
-- passive-radio arrival into an already-playing or retained paused session still resumes/joins that existing session rather than loading the selected default.
+- passive-radio arrival into an already-playing or ordinary retained paused session still resumes/joins that session; a completed drain is fresh idle and loads the selected default with a new shuffle.
 
 The existing `PASSIVE_DEFAULT_FOLDER` environment value remains a sensible install-time/default fallback, but controller changes require a runtime persisted setting rather than editing service configuration.
+

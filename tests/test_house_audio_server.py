@@ -1,5 +1,7 @@
 import copy
+import shlex
 import unittest
+from unittest.mock import Mock, patch
 
 import house_audio_server as h
 
@@ -154,6 +156,16 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(records[0]["file"], "Rap/A.mp3")
         self.assertEqual(records[1]["title"], "B")
 
+    def test_library_files_includes_nested_files_but_not_directories(self):
+        mpd = h.MpdClient()
+        with patch.object(mpd, "run", return_value=("0.24.4", [h.MpdResponse([
+            "directory: MP3s", "file: MP3s/A.mp3",
+            "directory: MP3s/Sub", "file: MP3s/Sub/B.flac",
+        ])])) as run:
+            self.assertEqual(mpd.library_files("MP3s"),
+                             ["MP3s/A.mp3", "MP3s/Sub/B.flac"])
+        run.assert_called_once_with('listall "MP3s"')
+
 
 class FakeMonitor:
     def __init__(self, present=0, reachable=True):
@@ -178,8 +190,17 @@ class FakeMpd:
             "queueLength": 3,
             "random": True,
             "consume": False,
+            "elapsedSeconds": 90.5,
         }
         self.commands = []
+        self.queue_files = ["CDs/Old/A.mp3", "CDs/Old/B.mp3", "CDs/Old/C.mp3"]
+        self.library = {
+            folder: [f"{folder}/{name}.mp3" for name in ("A", "B", "C")]
+            for folder in ("MP3s", "Rap")
+        }
+
+    def library_files(self, folder):
+        return list(self.library[folder])
 
     def state(self):
         return dict(self.state_data)
@@ -191,12 +212,20 @@ class FakeMpd:
         self.commands.extend(commands)
         for command in commands:
             if command == "clear":
+                self.queue_files = []
                 self.state_data["queueLength"] = 0
+                self.state_data["transport"] = "stop"
             elif command.startswith("add "):
-                self.state_data["queueLength"] = 3
-            elif command == "play":
+                self.queue_files.append(shlex.split(command)[1])
+                self.state_data["queueLength"] = len(self.queue_files)
+            elif command == "stop":
+                self.state_data["transport"] = "stop"
+            elif command == "play" or command.startswith("play "):
                 if self.state_data.get("queueLength", 0) > 0:
                     self.state_data["transport"] = "play"
+                    if command == "play 0":
+                        self.state_data["songId"] = 42
+                        self.state_data["elapsedSeconds"] = 0.0
             elif command.startswith("repeat "):
                 self.state_data["repeat"] = command.endswith("1")
             elif command.startswith("random "):
@@ -211,246 +240,234 @@ class FakeMpd:
 
 
 class SessionPolicyTests(unittest.TestCase):
-    def test_present_renderer_at_fresh_idle_starts_default_folder(self):
-        monitor = FakeMonitor(present=1)
+    def make_policy(self, present=1, transport="play", folder="MP3s", shuffle=None):
+        monitor = FakeMonitor(present=present)
         mpd = FakeMpd()
-        mpd.state_data["transport"] = "stop"
+        mpd.state_data["transport"] = transport
+        if shuffle is None:
+            shuffle = Mock(side_effect=lambda tracks: tracks.reverse())
         policy = h.PassiveSessionPolicy(
-            monitor,
-            mpd_factory=lambda: mpd,
-            enabled=True,
-            poll_seconds=0.01,
-            default_folder="MP3s",
+            monitor, mpd_factory=lambda: mpd, enabled=True,
+            default_folder=folder, shuffle=shuffle,
         )
+        return monitor, mpd, policy, shuffle
 
+    def begin_drain(self, monitor, policy):
         policy._tick()
+        monitor.present = 0
+        policy._tick()
+        self.assertTrue(policy.snapshot()["pendingFinalStop"])
 
-        self.assertEqual(
-            mpd.commands,
-            [
-                "random 0",
-                "clear",
-                'add "MP3s"',
-                "repeat 1",
-                "single 0",
-                "consume 0",
-                "random 1",
-                "play",
-            ],
-        )
+    def complete_boundary(self, mpd, transport="pause"):
+        mpd.state_data.update(transport=transport, songId=99, elapsedSeconds=0.0)
+
+    def assert_default_session(self, mpd, folder):
         self.assertEqual(mpd.state_data["transport"], "play")
-        self.assertEqual(policy.snapshot()["lastAction"], "started_default_session")
+        self.assertEqual(mpd.queue_files, list(reversed(mpd.library[folder])))
+        self.assertTrue(mpd.state_data["repeat"])
+        self.assertTrue(mpd.state_data["random"])
+        self.assertEqual(mpd.state_data["singleMode"], "0")
+        self.assertFalse(mpd.state_data["consume"])
+        self.assertEqual(mpd.state_data["elapsedSeconds"], 0.0)
+
+    def test_present_renderer_at_fresh_idle_starts_shuffled_default(self):
+        for folder in ("MP3s", "Rap"):
+            with self.subTest(folder=folder):
+                _, mpd, policy, shuffle = self.make_policy(transport="stop", folder=folder)
+                policy._tick()
+                self.assert_default_session(mpd, folder)
+                shuffle.assert_called_once()
+                self.assertEqual(policy.snapshot()["lastAction"], "started_default_session")
 
     def test_renderer_arrival_from_zero_starts_default_folder(self):
-        monitor = FakeMonitor(present=0)
-        mpd = FakeMpd()
-        mpd.state_data["transport"] = "stop"
-        policy = h.PassiveSessionPolicy(
-            monitor,
-            mpd_factory=lambda: mpd,
-            enabled=True,
-            poll_seconds=0.01,
-            default_folder="MP3s",
-        )
-
+        monitor, mpd, policy, _ = self.make_policy(present=0, transport="stop")
         policy._tick()
         self.assertEqual(mpd.commands, [])
-
         monitor.present = 1
         policy._tick()
+        self.assert_default_session(mpd, "MP3s")
 
-        self.assertEqual(mpd.state_data["transport"], "play")
-        self.assertIn('add "MP3s"', mpd.commands)
-        self.assertEqual(policy.snapshot()["lastAction"], "started_default_session")
-
-    def test_renderer_arrival_resumes_paused_session_without_replacing_queue(self):
-        monitor = FakeMonitor(present=0)
-        mpd = FakeMpd()
-        mpd.state_data["transport"] = "pause"
-        mpd.state_data["queueLength"] = 3
-        policy = h.PassiveSessionPolicy(
-            monitor,
-            mpd_factory=lambda: mpd,
-            enabled=True,
-            poll_seconds=0.01,
-            default_folder="MP3s",
-        )
-
-        policy._tick()
-        monitor.present = 1
-        policy._tick()
-
-        self.assertEqual(mpd.commands, ["play"])
-        self.assertEqual(mpd.state_data["transport"], "play")
-        self.assertEqual(mpd.state_data["queueLength"], 3)
-        self.assertEqual(
-            policy.snapshot()["lastAction"],
-            "renderer_resumed_paused_session",
-        )
+    def test_ordinary_paused_session_resumes_without_replacing_or_shuffling(self):
+        for initial_presence in (0, 1):
+            with self.subTest(initial_presence=initial_presence):
+                monitor, mpd, policy, shuffle = self.make_policy(
+                    present=initial_presence, transport="pause")
+                old_queue = list(mpd.queue_files)
+                policy._tick()
+                if not initial_presence:
+                    monitor.present = 1
+                    policy._tick()
+                self.assertEqual(mpd.commands, ["play"])
+                self.assertEqual(mpd.queue_files, old_queue)
+                self.assertEqual(mpd.state_data["elapsedSeconds"], 90.5)
+                shuffle.assert_not_called()
 
     def test_last_renderer_leaving_arms_finish_track_stop(self):
-        monitor = FakeMonitor(present=1)
-        mpd = FakeMpd()
-        policy = h.PassiveSessionPolicy(
-            monitor,
-            mpd_factory=lambda: mpd,
-            enabled=True,
-            poll_seconds=0.01,
-        )
-
-        policy._tick()  # establish baseline at one renderer
-        monitor.present = 0
-        policy._tick()
-
+        monitor, mpd, policy, _ = self.make_policy()
+        self.begin_drain(monitor, policy)
         self.assertEqual(mpd.commands, ["repeat 0", "single oneshot"])
-        snapshot = policy.snapshot()
-        self.assertTrue(snapshot["pendingFinalStop"])
-        self.assertEqual(snapshot["pendingSongId"], 42)
+        self.assertEqual(policy.snapshot()["pendingSongId"], 42)
 
-    def test_renderer_return_cancels_pending_stop_and_restores_options(self):
-        monitor = FakeMonitor(present=1)
-        mpd = FakeMpd()
-        policy = h.PassiveSessionPolicy(
-            monitor,
-            mpd_factory=lambda: mpd,
-            enabled=True,
-            poll_seconds=0.01,
-        )
+    def test_return_before_boundary_preserves_queue_song_position_and_options(self):
+        for repeat, single in ((True, "0"), (False, "1")):
+            with self.subTest(repeat=repeat, single=single):
+                monitor, mpd, policy, shuffle = self.make_policy()
+                mpd.state_data.update(repeat=repeat, singleMode=single)
+                old_queue = list(mpd.queue_files)
+                self.begin_drain(monitor, policy)
+                monitor.present = 1
+                policy._tick()
+                self.assertEqual(mpd.queue_files, old_queue)
+                self.assertEqual(mpd.state_data["songId"], 42)
+                self.assertEqual(mpd.state_data["elapsedSeconds"], 90.5)
+                self.assertEqual(mpd.state_data["transport"], "play")
+                self.assertEqual(mpd.state_data["repeat"], repeat)
+                self.assertEqual(mpd.state_data["singleMode"], single)
+                self.assertFalse(policy.snapshot()["pendingFinalStop"])
+                self.assertFalse(any(c.startswith(("clear", "add ", "play", "stop"))
+                                     for c in mpd.commands))
+                shuffle.assert_not_called()
 
+    def test_completed_drain_stops_and_later_return_uses_current_default(self):
+        for transport in ("pause", "stop"):
+            for folder in ("MP3s", "Rap"):
+                with self.subTest(transport=transport, folder=folder):
+                    monitor, mpd, policy, shuffle = self.make_policy()
+                    self.begin_drain(monitor, policy)
+                    self.complete_boundary(mpd, transport)
+                    policy._tick()
+                    self.assertEqual(mpd.state_data["transport"], "stop")
+                    self.assertFalse(policy.snapshot()["pendingFinalStop"])
+                    self.assertEqual(policy.snapshot()["lastAction"],
+                                     "final_track_completed_session_idle")
+                    self.assertEqual(mpd.commands[-3:], ["stop", "single 0", "repeat 1"])
+                    shuffle.assert_not_called()
+                    # A later startup consumes the current setting, not the old CD queue.
+                    policy.default_folder = folder
+                    monitor.present = 1
+                    policy._tick()
+                    self.assert_default_session(mpd, folder)
+                    shuffle.assert_called_once()
+
+    def test_return_first_observed_after_boundary_starts_fresh(self):
+        for transport in ("pause", "stop"):
+            with self.subTest(transport=transport):
+                monitor, mpd, policy, shuffle = self.make_policy(folder="Rap")
+                self.begin_drain(monitor, policy)
+                self.complete_boundary(mpd, transport)
+                monitor.present = 1
+                policy._tick()
+                self.assert_default_session(mpd, "Rap")
+                self.assertFalse(policy.snapshot()["pendingFinalStop"])
+                self.assertNotIn("play", mpd.commands)  # never resume old selection
+                shuffle.assert_called_once()
+
+    def test_pause_of_unfinished_song_during_drain_is_not_completed(self):
+        monitor, mpd, policy, shuffle = self.make_policy()
+        old_queue = list(mpd.queue_files)
+        self.begin_drain(monitor, policy)
+        mpd.state_data["transport"] = "pause"
         policy._tick()
-        monitor.present = 0
-        policy._tick()
+        self.assertTrue(policy.snapshot()["pendingFinalStop"])
         monitor.present = 1
         policy._tick()
-
-        self.assertEqual(
-            mpd.commands,
-            ["repeat 0", "single oneshot", "single 0", "repeat 1"],
-        )
-        snapshot = policy.snapshot()
-        self.assertFalse(snapshot["pendingFinalStop"])
-        self.assertEqual(
-            snapshot["lastAction"],
-            "pending_stop_cancelled_renderer_returned",
-        )
-
-    def test_completed_final_track_restores_options_and_clears_pending(self):
-        monitor = FakeMonitor(present=1)
-        mpd = FakeMpd()
-        policy = h.PassiveSessionPolicy(
-            monitor,
-            mpd_factory=lambda: mpd,
-            enabled=True,
-            poll_seconds=0.01,
-        )
-
-        policy._tick()
-        monitor.present = 0
-        policy._tick()
-        mpd.state_data["transport"] = "stop"
-        mpd.state_data["singleMode"] = "0"
-        policy._tick()
-
-        self.assertEqual(
-            mpd.commands,
-            ["repeat 0", "single oneshot", "single 0", "repeat 1"],
-        )
-        snapshot = policy.snapshot()
-        self.assertFalse(snapshot["pendingFinalStop"])
-        self.assertEqual(
-            snapshot["lastAction"],
-            "final_track_completed_session_idle",
-        )
-
-    def test_final_track_boundary_pause_clears_pending(self):
-        monitor = FakeMonitor(present=1)
-        mpd = FakeMpd()
-        policy = h.PassiveSessionPolicy(
-            monitor,
-            mpd_factory=lambda: mpd,
-            enabled=True,
-            poll_seconds=0.01,
-        )
-
-        policy._tick()
-        monitor.present = 0
-        policy._tick()
-
-        # Real MPD 0.24 single-oneshot behavior observed in the field:
-        # pause at the next track boundary rather than transport=stop.
-        mpd.state_data["transport"] = "pause"
-        mpd.state_data["songId"] = 99
-        policy._tick()
-
-        self.assertEqual(
-            mpd.commands,
-            ["repeat 0", "single oneshot", "single 0", "repeat 1"],
-        )
-        snapshot = policy.snapshot()
-        self.assertFalse(snapshot["pendingFinalStop"])
-        self.assertEqual(
-            snapshot["lastAction"],
-            "final_track_completed_session_idle",
-        )
-
-    def test_renderer_return_after_boundary_pause_resumes_session(self):
-        monitor = FakeMonitor(present=1)
-        mpd = FakeMpd()
-        policy = h.PassiveSessionPolicy(
-            monitor,
-            mpd_factory=lambda: mpd,
-            enabled=True,
-            poll_seconds=0.01,
-        )
-
-        policy._tick()
-        monitor.present = 0
-        policy._tick()
-
-        # Boundary completed before the policy got a no-renderer cleanup tick.
-        mpd.state_data["transport"] = "pause"
-        mpd.state_data["songId"] = 99
-        monitor.present = 1
-        policy._tick()
-
-        self.assertEqual(
-            mpd.commands,
-            [
-                "repeat 0",
-                "single oneshot",
-                "single 0",
-                "repeat 1",
-                "play",
-            ],
-        )
         self.assertEqual(mpd.state_data["transport"], "play")
-        snapshot = policy.snapshot()
-        self.assertFalse(snapshot["pendingFinalStop"])
-        self.assertEqual(
-            snapshot["lastAction"],
-            "pending_stop_completed_renderer_resumed_session",
+        self.assertEqual(mpd.state_data["elapsedSeconds"], 90.5)
+        self.assertEqual(mpd.queue_files, old_queue)
+        shuffle.assert_not_called()
+
+    def test_restart_after_completed_drain_does_not_resurrect_old_queue(self):
+        monitor, mpd, policy, shuffle = self.make_policy()
+        self.begin_drain(monitor, policy)
+        self.complete_boundary(mpd)
+        policy._tick()
+        restarted = h.PassiveSessionPolicy(
+            monitor, mpd_factory=lambda: mpd, enabled=True,
+            default_folder="Rap", shuffle=shuffle,
         )
+        monitor.present = 1
+        restarted._tick()
+        self.assert_default_session(mpd, "Rap")
 
     def test_snapserver_outage_does_not_look_like_departure(self):
-        monitor = FakeMonitor(present=1)
-        mpd = FakeMpd()
-        policy = h.PassiveSessionPolicy(
-            monitor,
-            mpd_factory=lambda: mpd,
-            enabled=True,
-            poll_seconds=0.01,
-        )
-
+        monitor, mpd, policy, shuffle = self.make_policy()
         policy._tick()
         monitor.reachable = False
         monitor.present = 0
         policy._tick()
-        self.assertEqual(mpd.commands, [])
-
         monitor.reachable = True
-        policy._tick()  # new baseline only
+        policy._tick()
         self.assertEqual(mpd.commands, [])
+        shuffle.assert_not_called()
 
+    def test_pending_drain_survives_snapserver_outage_before_or_after_boundary(self):
+        for completed in (False, True):
+            with self.subTest(completed=completed):
+                monitor, mpd, policy, shuffle = self.make_policy()
+                old_queue = list(mpd.queue_files)
+                self.begin_drain(monitor, policy)
+                monitor.reachable = False
+                policy._tick()
+                if completed:
+                    self.complete_boundary(mpd)
+                monitor.reachable = True
+                monitor.present = 1
+                policy._tick()
+                self.assertFalse(policy.snapshot()["pendingFinalStop"])
+                if completed:
+                    self.assert_default_session(mpd, "MP3s")
+                else:
+                    self.assertEqual(mpd.queue_files, old_queue)
+                    self.assertEqual(mpd.state_data["elapsedSeconds"], 90.5)
+                    shuffle.assert_not_called()
+
+    def test_failed_drain_cleanup_is_retried_without_resuming_old_queue(self):
+        monitor, mpd, policy, _ = self.make_policy()
+        self.begin_drain(monitor, policy)
+        self.complete_boundary(mpd)
+        with patch.object(mpd, "command", side_effect=OSError("offline")):
+            policy._tick()
+        self.assertTrue(policy.snapshot()["pendingFinalStop"])
+        monitor.present = 1
+        policy._tick()
+        self.assert_default_session(mpd, "MP3s")
+        self.assertFalse(policy.snapshot()["pendingFinalStop"])
+
+    def test_each_fresh_session_reshuffles_and_chance_repeat_is_allowed(self):
+        # Two different orders share their first song; the third repeats the
+        # entire second order by chance. Never reject or reroll either result.
+        orders = [["A", "B", "C"], ["A", "C", "B"], ["A", "C", "B"]]
+        remaining = iter(orders)
+        shuffle = Mock(side_effect=lambda tracks: tracks.__setitem__(
+            slice(None), [f"MP3s/{name}.mp3" for name in next(remaining)]))
+        monitor, mpd, policy, _ = self.make_policy(transport="stop", shuffle=shuffle)
+        for number, order in enumerate(orders, 1):
+            monitor.present = 1
+            policy._tick()
+            self.assertEqual(mpd.queue_files, [f"MP3s/{name}.mp3" for name in order])
+            self.assertEqual(shuffle.call_count, number)
+            monitor.present = 0
+            policy._tick()
+            self.complete_boundary(mpd)
+            policy._tick()
+        self.assertEqual(shuffle.call_count, 3)
+
+    def test_empty_default_does_not_clear_queue_and_retries_when_available(self):
+        monitor, mpd, policy, shuffle = self.make_policy(transport="stop")
+        old_queue = list(mpd.queue_files)
+        mpd.library["MP3s"] = []
+        policy._tick()
+        self.assertEqual(mpd.commands, [])
+        self.assertEqual(mpd.queue_files, old_queue)
+        shuffle.assert_not_called()
+        mpd.library["MP3s"] = ["MP3s/A.mp3"]
+        policy._tick()
+        self.assert_default_session(mpd, "MP3s")
+
+    def test_production_shuffle_uses_system_entropy(self):
+        policy = h.PassiveSessionPolicy(FakeMonitor(), enabled=False)
+        self.assertIsInstance(policy._shuffle.__self__, h.random.SystemRandom)
+        self.assertEqual(policy.snapshot()["defaultShufflePolicy"], "new_each_fresh_session")
 
 
 class FakeClock:
