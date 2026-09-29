@@ -163,3 +163,16 @@ The following implementation facts are now proven on the permanent Pi and real h
 - effective renderer presence uses Snapcast `lastSeen` freshness, not the raw Snapserver `connected` flag, because a hard-powered-off node can leave a stale TCP connection looking established.
 
 An unresolved reliability issue remains: occasional few-second silence has been heard on one renderer or the other during two-node playback. Both nodes have external antennas installed. The cause is not yet known; v0.6.0 adds unattended diagnostics so the next occurrence can be correlated with Snapcast timing/presence and global stream state.
+
+
+## 11. Proven final-track boundary behavior
+
+The real MPD 0.24 implementation adds one important detail to the normative "finish current track, then stop/idle" rule:
+
+- while the final-renderer departure policy is armed with `single oneshot`, MPD may complete the current track and retain the queue as **Pause at 0.0 seconds on the next track**, rather than reporting transport `stop`;
+- that boundary state still means the previous listening session has drained successfully;
+- when a passive radio later appears, its power-on intent resumes the retained next-track position;
+- the server must restore the temporary Repeat/Single overrides before resuming;
+- it must not mistake the retained boundary pause for an explicit controller Pause that should remain silent.
+
+This edge was discovered from the v0.6 diagnostics and fixed in v0.6.1. Installing v0.6.1 with the previously silent passive S3 still present caused music to resume automatically, proving the behavior on the permanent Pi.
