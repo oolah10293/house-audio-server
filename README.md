@@ -6,7 +6,7 @@ The core rule is simple: **there is one house playback session**. Devices on the
 
 ## Agreed playback and session behavior
 
-**Read [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) before implementing the control service or integrating any client.** It records the agreed rules for the Pi, Android app, PC player, browser controller, and passive nodes. These are approved requirements, not implemented features.
+**Read [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) before changing the control service or integrating any client.** It records the agreed rules for the Pi, Android app, PC player, browser controller, and passive nodes. Some passive-renderer rules are now implemented and field-proven; controller-aware rules and durable default-shuffle state remain future work.
 
 The important session distinctions are:
 
@@ -177,7 +177,7 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 5. **DONE** — Add the PCM5102A I2S DAC and prove real audible playback from the permanent FLAC Snapcast stream.
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
 7. **DONE** — Track Snapserver renderer presence, including reliable hard-power-off detection via `lastSeen` freshness rather than Snapserver's raw connected flag.
-8. **DONE for passive-radio basics** — renderer-driven session behavior is working: fresh-idle radio power-on starts default `MP3s` Random/Repeat playback; joining active playback preserves the queue; v0.5.1 also resumes an existing paused session when a passive radio appears.
+8. **DONE for passive-radio basics** — renderer-driven session behavior is working: fresh-idle radio power-on starts default `MP3s` Random/Repeat playback; joining active playback preserves the queue; v0.5.1 resumes an ordinary paused session; v0.6.1 also handles the real MPD `single oneshot` end-of-session case where the queue lands paused at 0.0 on the next track.
 9. **NEXT session milestone** — implement durable saved progress/order for the default `MP3s` shuffle rotation, then controller-presence/output-state policy.
 10. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
 11. **DONE** — two independent ESP32/PCM5102A renderers have passed the real audible synchronization test.
@@ -452,3 +452,24 @@ A passive renderer was plugged in but produced no audio. The renderer itself was
 Root cause: the policy expected MPD `single oneshot` to complete as transport `stop`. On the permanent MPD 0.24 stack, the real observed behavior can instead be a **pause at the next-track boundary**.
 
 v0.6.1 recognizes `pause` and `stop` as completed final-track boundary states. If a radio returns after that boundary has already been reached, the service restores the normal queue options and resumes the retained queue rather than remaining silent.
+
+
+### v0.6.1 runtime proof — final-track boundary return
+
+The MPD `single oneshot` boundary fix is now **field-proven on the permanent Pi and real ESP32 renderer hardware**.
+
+Observed failure before the fix:
+
+- a passive S3 was powered on but no music came out;
+- Snapserver showed the renderer healthy, fresh, present, and nominally audible;
+- MPD was actually `pause` at **0.0 seconds on the next queued track**;
+- Snapserver's `default` stream was `idle`;
+- the session policy still showed `pending_stop_cancelled_renderer_returned`.
+
+This proved that on the real MPD 0.24 stack, `single oneshot` may complete the departing session by landing in **Pause at the next-track boundary**, not only by reporting transport `stop`.
+
+v0.6.1 now treats both `pause` and `stop` as completed final-track boundary states. If a passive renderer appears after that boundary, the service restores the saved Repeat/Single options and resumes the retained queue rather than leaving the radio silent or rebuilding the default folder.
+
+Runtime result after installing v0.6.1 with the S3 still powered: **music resumed automatically.** No ESP32 firmware or wiring change was required.
+
+This closes the specific final-track-boundary return bug.
