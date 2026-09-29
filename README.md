@@ -2,7 +2,7 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source: **v0.8.0** — controller/output presence and muted-controller session handling; 73 local tests pass. Pi installation/field validation of v0.8.0 is pending. Latest confirmed deployed version: **v0.7.0**, field-proven for changing MP3s/Rap without disturbing playback and starting a fresh Rap session after completed drain (Ludacris — *Southern Hospitality*).
+Current source/deployed version: **v0.8.0** — controller/output presence and muted-controller session handling; 73 local tests and GitHub CI pass. v0.8.0 is installed on the permanent Pi. Initial deployment validation confirms healthy MPD/Snapserver connectivity and correct zero-controller / one-passive-S3 baseline classification. Physical muted-controller pause/resume testing is still pending.
 
 The core rule is simple: **there is one house playback session**. Devices on the home network do not start separate competing music sessions. A room may be the only active output, or several rooms may be active, but every participating output follows the same queue, track, playback position, shuffle state, and transport state.
 
@@ -180,7 +180,7 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
 7. **DONE** — Track Snapserver renderer presence, including reliable hard-power-off detection via `lastSeen` freshness rather than Snapserver's raw connected flag.
 8. **DONE for passive-radio basics** — renderer-driven session behavior is working: fresh-idle radio power-on starts default `MP3s` Random/Repeat playback; joining active playback preserves the queue; v0.5.1 resumes an ordinary paused session; v0.6.1 discovered MPD's `pause @ 0.0` boundary artifact. Its old-queue resume behavior is superseded by v0.6.2 fresh-idle handling. v0.6.2 is installed, with initial short/long power-cycle results recorded below.
-9. **IN PROGRESS HOUSE server contract** — persisted runtime default-folder selection is implemented and field-proven in v0.7.0. Changing `MP3s`/`Rap` leaves current playback untouched; after completed drain the next passive session uses the saved choice with a fresh shuffle. Controller-presence/output-state policy is implemented/tested in v0.8.0, awaiting installation and field testing. Cross-session shuffle persistence is no longer desired.
+9. **IN PROGRESS HOUSE server contract** — persisted runtime default-folder selection is field-proven in v0.7.0. Controller-presence/output-state policy is implemented/tested and now deployed in v0.8.0; initial Pi baseline validation is good, while physical muted-controller pause/resume testing remains pending. Cross-session shuffle persistence is no longer desired.
 10. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
 11. **DONE** — two independent ESP32/PCM5102A renderers have passed the real audible synchronization test.
 12. **IN PROGRESS reliability work** — diagnose occasional few-second single-node audio dropouts using the v0.6.0 unattended diagnostics recorder.
@@ -577,4 +577,33 @@ The two previously open choices—background presence and ending the last muted 
 
 Use the existing installer. The current systemd state directory also stores `controllers.json`; no MPD/Snapserver configuration change is needed. See [docs/API.md](docs/API.md) for the complete client contract. The main field check is a controller holding a muted lease while the last radio leaves (pause), an audible radio returning (resume), and the last muted controller detaching/expiring (stop, then fresh default on the next radio).
 
-Controller leases and the automatic-pause reason are not restored across control-service restarts yet. MPD retains its paused queue; explicit Play or a passive arrival can resume it. Unfinished-drain restart recovery, authentication/pairing, and transport-command deduplication remain open. Android integration must report real renderer readiness and must not replay stale transport writes.
+Restart policy is now explicitly settled: a `house-audio-server` restart is a **hard listening-session boundary**. Do not reconstruct the prior live controller/session state. Live leases, mute/readiness reports, automatic-pause ownership, pending drains, and the old queue/session are disposable across restart. Persist only durable configuration/identity such as the selected `MP3s`/`Rap` passive default and controller-to-renderer ownership. After restart the house should normalize to fresh idle; a controller reconnecting first stays idle, while a passive S3 present/arriving starts a new shuffled configured default. v0.8.0 already forgets the live leases/auto-pause marker, but explicit startup normalization to fresh idle is **not yet implemented** and is the remaining restart-behavior code change. Authentication/pairing and transport-command deduplication remain open.
+
+
+### v0.8.0 permanent-Pi deployment baseline — PASS
+
+v0.8.0 is now installed on the permanent Raspberry Pi.
+
+Immediately after deployment:
+
+- `GET /health` reported service version `0.8.0`, status `ok`, MPD reachable at protocol `0.24.0`, and Snapserver `0.31.0` reachable;
+- one real S3 renderer was connected, present, and audible;
+- the second remembered S3 was correctly retained as known-but-not-present;
+- `GET /controllers` reported zero controllers, one passive renderer, `presentCount: 1`, and `audibleCount: 1`;
+- the active S3 was correctly classified as `passive: true`, proving the new controller layer did not disturb existing passive-radio classification.
+
+This validates installation and the no-controller baseline only. The new muted-controller pause/resume/expiry behavior still needs physical/API field testing.
+
+### Restart semantics — settled product rule
+
+A `house-audio-server` restart is a **fresh-session boundary**, not a state-recovery exercise.
+
+After restart:
+
+- discard live controller leases, mute/output-ready reports, automatic-pause reason, pending drain state, and the previous listening session;
+- preserve only durable configuration/identity, including the persisted `MP3s`/`Rap` passive default and controller↔renderer ownership;
+- normalize MPD to fresh idle instead of trying to infer whether an old Pause was automatic or deliberate;
+- a controller reconnecting first does not start music;
+- a passive S3 present/arriving starts a new shuffled session from the configured default.
+
+This supersedes the earlier idea of persisting/restoring automatic-pause ownership after restart. v0.8.0 does not yet perform the explicit startup normalization, so that small implementation change remains pending.
