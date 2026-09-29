@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source version: **v0.8.1**, adding verified fresh-idle startup (85 local tests pass). Latest confirmed Pi deployment is **v0.8.0**; health and no-controller/passive-renderer baseline validation pass. v0.8.1 deployment/restart and physical controller/mute validation remain pending.
+Current source/deployed version: **v0.8.1**, adding fresh-idle startup (85 local tests and GitHub CI pass). v0.8.1 is installed on the permanent Pi. The restart path with one passive S3 already present is field-proven; physical controller/mute validation remains pending.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -639,3 +639,20 @@ Settings and controller attach/heartbeat/detach remain available. A lease issued
 After the reset, a passive S3 present/arriving starts a freshly shuffled configured default with Repeat All. A controller alone leaves the empty house idle until deliberate playback. Once startup is ready, ordinary dependency outages do not rerun this reset; same-process retained pauses and return-before-drain-completion behavior remain unchanged.
 
 **Validation:** 85 local tests pass. v0.8.0's installed Pi baseline remains the latest field evidence; v0.8.1 restart behavior and physical controller transitions await the combined Pi checkpoint in README.
+
+
+## v0.8.1 runtime restart validation
+
+The permanent Pi is now running v0.8.1. The update itself restarted `house-audio-server` while one passive S3 was still powered.
+
+Observed result:
+
+- the old listening session did not continue;
+- a fresh randomized `Rap` session started automatically;
+- `GET /session` showed `startup.ready: true` and `lastError: null`;
+- `lastAction` was `started_default_session`;
+- the persisted default remained `Rap`;
+- presence showed one passive/audible renderer and zero controllers;
+- no stale automatic-pause or pending-drain state remained.
+
+This validates the restart contract for the **radio already present at service restart** case. Restart with all passive radios off, followed by a later radio arrival, remains a separate field check. Controller attach/heartbeat/detach and muted-controller transition behavior are still awaiting physical/API acceptance tests.
