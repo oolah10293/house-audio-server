@@ -473,3 +473,10 @@ v0.6.1 now treats both `pause` and `stop` as completed final-track boundary stat
 Runtime result after installing v0.6.1 with the S3 still powered: **music resumed automatically.** No ESP32 firmware or wiring change was required.
 
 This closes the specific final-track-boundary return bug.
+
+
+### Runtime-selectable passive default folder — planned
+
+The current passive default is still supplied by `PASSIVE_DEFAULT_FOLDER` at service startup. The next controller integration requires that choice to become a persisted server setting initially supporting `MP3s` and `Rap`.
+
+The Android HOUSE Browser will reuse the button position that is SMB in STANDALONE as this selector. Changing the server default must not alter the current queue; it affects only the next genuinely fresh passive-radio auto-start session.
