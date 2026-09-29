@@ -145,7 +145,7 @@ Controller arrival must not be used as a blanket override of explicit transport 
 Still to settle before coding the affected edges:
 
 - Whole-queue continuation for the phone away from home. Initial HOUSE output mute is settled in the Android requirements: start muted; auto-unmute only for phone-initiated playback.
-- Exact recovery behavior after a Pi/service restart during an unfinished or not-yet-processed drain. There is no saved cross-session shuffle cycle to reconcile.
+- No pause/drain reconstruction is required after a `house-audio-server` restart: restart is now explicitly a fresh-session boundary (§13).
 - Restoring the reason for an automatic pause after a control-service restart. v0.8.0 retains MPD's paused queue but keeps its automatic-pause marker in memory; a passive arrival or explicit Play can resume it. A controller alone must not guess whether an existing pause was automatic or deliberate.
 
 These gaps do not cancel the confirmed rules. They are intentionally not filled with invented decisions. Source implementation and field-validation status are recorded separately in the API docs and README.
@@ -211,3 +211,27 @@ The runtime-selectable passive default in §12 is now proven on the permanent Pi
 A controller-side API write changed the server-owned default from `MP3s` to `Rap` while music was already playing; the current song was not changed or restarted. After the last S3 remained off for roughly ten minutes and the prior session completed, powering an S3 back on started a fresh `Rap` session (first observed track: Ludacris — *Southern Hospitality*).
 
 This validates the intended separation between **current house queue** and **future passive default**.
+
+
+## 13. Server restart is a fresh-session boundary
+
+A `house-audio-server` restart is intentionally treated as a **hard listening-session boundary**. Do not attempt to reconstruct or resume the previous live house session.
+
+On restart:
+
+- discard live controller leases;
+- discard reported mute/output-ready state;
+- discard automatic-pause ownership/reason;
+- discard pending final-track drain state;
+- abandon the previous queue/session as live session state and normalize MPD to fresh idle;
+- preserve durable configuration/identity only, including the selected passive default folder and controller↔renderer ownership.
+
+After restart:
+
+- a phone/PC/browser reconnecting first does not auto-start playback;
+- a passive S3 that is already present or subsequently arrives may start a genuinely fresh session from the configured `MP3s`/`Rap` default with a new shuffle;
+- no attempt is made to infer whether an old MPD Pause was deliberate or automatic.
+
+This decision replaces the earlier idea of restoring the automatic-pause reason or unfinished drain across a control-service restart. A Pi reboot naturally falls on the same side of the boundary.
+
+**Implementation status:** v0.8.0 already keeps live leases and automatic-pause state in memory only, but it does not yet explicitly normalize MPD to fresh idle at service startup. That startup normalization is the remaining implementation step for this rule.
