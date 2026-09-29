@@ -441,3 +441,14 @@ curl -s http://127.0.0.1:8787/diagnostics
 ```
 
 If one renderer shows a time-sync/presence anomaly while the other stays clean, investigate that renderer's Wi-Fi/client path. If the Snapserver stream changes state, investigate upstream. If neither happens during the audible dropout, instrument the ESP32 decoder/buffer/I2S path next.
+
+
+### MPD oneshot boundary edge — v0.6.1
+
+The v0.6 diagnostics immediately helped expose another real session-policy edge.
+
+A passive renderer was plugged in but produced no audio. The renderer itself was healthy and present, while MPD showed `pause` at 0.0 seconds on the next queued track and Snapserver was idle. The policy action showed that a pending finish-current-track stop had just been cancelled by the renderer return.
+
+Root cause: the policy expected MPD `single oneshot` to complete as transport `stop`. On the permanent MPD 0.24 stack, the real observed behavior can instead be a **pause at the next-track boundary**.
+
+v0.6.1 recognizes `pause` and `stop` as completed final-track boundary states. If a radio returns after that boundary has already been reached, the service restores the normal queue options and resumes the retained queue rather than remaining silent.
