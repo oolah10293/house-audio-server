@@ -176,3 +176,24 @@ The real MPD 0.24 implementation adds one important detail to the normative "fin
 - it must not mistake the retained boundary pause for an explicit controller Pause that should remain silent.
 
 This edge was discovered from the v0.6 diagnostics and fixed in v0.6.1. Installing v0.6.1 with the previously silent passive S3 still present caused music to resume automatically, proving the behavior on the permanent Pi.
+
+
+## 12. Runtime-selectable passive default folder
+
+The passive-radio default is no longer a fixed deployment-only choice. The Android HOUSE UI will expose a compact selector for the server-owned default folder.
+
+Initial supported values:
+
+- `MP3s`
+- `Rap`
+
+Required behavior:
+
+- the selected value is persisted on the Pi;
+- it survives phone disconnects and service restarts;
+- it is readable by controllers so the UI can show the current value;
+- changing it does **not** replace, restart, reshuffle, seek, or otherwise disturb the current active queue;
+- it applies only when the house later enters a genuinely fresh passive-renderer auto-start session;
+- passive-radio arrival into an already-playing or retained paused session still resumes/joins that existing session rather than loading the selected default.
+
+The existing `PASSIVE_DEFAULT_FOLDER` environment value remains a sensible install-time/default fallback, but controller changes require a runtime persisted setting rather than editing service configuration.
