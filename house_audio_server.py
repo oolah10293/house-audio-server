@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.6.0"
+SERVICE_VERSION = "0.6.1"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -1046,10 +1046,36 @@ class PassiveSessionPolicy:
                     self._previous_present_count = present_count
                 return
 
+            transport = state.get("transport")
+
             if present_count > 0:
-                self._restore_options(mpd, "pending_stop_cancelled_renderer_returned")
-            elif state.get("transport") == "stop":
-                self._restore_options(mpd, "final_track_completed_session_stopped")
+                if transport == "play":
+                    # Renderer returned before the final track ended.
+                    self._restore_options(
+                        mpd, "pending_stop_cancelled_renderer_returned"
+                    )
+                elif transport in ("pause", "stop"):
+                    # MPD 0.24's single oneshot reaches the track boundary as
+                    # a paused/stopped retained queue. The radio arriving now
+                    # is Play intent: restore the user's queue options and
+                    # resume that retained next-track position rather than
+                    # rebuilding the default folder.
+                    self._restore_options(
+                        mpd, "pending_stop_completed_renderer_returned"
+                    )
+                    with MPD_WRITE_LOCK:
+                        mpd.command("play")
+                    self._record(
+                        "pending_stop_completed_renderer_resumed_session"
+                    )
+            elif transport in ("pause", "stop"):
+                # Boundary reached with nobody present. Clear the temporary
+                # oneshot/repeat override now. A later passive-radio arrival
+                # will resume this retained queue (pause) or start normally
+                # from its selected item (stop).
+                self._restore_options(
+                    mpd, "final_track_completed_session_idle"
+                )
 
             with self._lock:
                 self._previous_present_count = present_count
@@ -1206,7 +1232,7 @@ def bool_field(payload: Dict[str, object], key: str) -> bool:
 
 
 class ApiHandler(BaseHTTPRequestHandler):
-    server_version = "HouseAudioServer/0.6"
+    server_version = "HouseAudioServer/0.6.1"
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} - {fmt % args}")
