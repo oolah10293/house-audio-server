@@ -2,6 +2,8 @@
 
 Current source version: **v0.8.2**, adding guarded in-place queue reordering for Android HOUSE Sort (90 local tests pass). Latest confirmed Pi deployment: **v0.8.1**. Its restart path with one passive S3 already present is field-proven; v0.8.2 installation and physical controller/mute validation remain pending.
 
+The companion Android v0.4.0 APK (`9c89b24`, including heartbeat recovery) is delivered; its CI and server v0.8.2 CI passed. [Exact release builds and downloads](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.0.md). These results establish build/test completion, not Pi installation or phone/S3 synchronization.
+
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
 The service listens on port `8787` by default and talks to MPD locally on `127.0.0.1:6600`.
@@ -209,6 +211,8 @@ Rules:
 - absolute paths, backslashes, and `..` traversal are rejected.
 - the API never accepts arbitrary MPD protocol commands from a client.
 
+Use `/queue/replace` for a new folder/filtered PLAY LIST or selected-track queue. To sort the existing queue while preserving playback, use `/queue/reorder` below.
+
 ### `POST /queue/reorder` — v0.8.2
 
 Reorder the existing queue by MPD entry ID, without replacing files or restarting/seeking playback:
@@ -223,7 +227,7 @@ The service serializes this operation with its other MPD writes, checks the revi
 
 Returns the updated `mpd` state. A stale revision or different ID set returns HTTP 409 `stale_queue` without a write; malformed input returns 400 `invalid_request`. Refresh before another deliberate sort. Startup gating returns 503 `startup_pending`, just like other MPD-changing endpoints. Native MPD clients writing outside the service are outside its concurrency boundary. A connection failure partway through the moves can leave a partially reordered queue; refresh authoritative state and do not automatically replay the request.
 
-This endpoint is the intended primitive for Android/Windows `PLAY LIST`, search-filtered queues, selected-track-first rotation, and deliberate sorted-queue replacement.
+This endpoint sorts only the existing queue. It does not select new files or replace a PLAY LIST; those operations use `/queue/replace`.
 
 ## Current boundaries
 
@@ -237,12 +241,14 @@ Implemented now:
 - seek
 - Shuffle/Repeat
 - queue clear/replace
+- guarded in-place queue reorder (v0.8.2; CI passed, Pi field validation pending)
 - persisted passive-default read/set (v0.7.0; permanent-Pi validation complete)
 - controller attach/heartbeat/detach, output reports, and muted-controller session policy (v0.8.0; deployed baseline passes, physical controller transitions pending)
+- Android local receiver mute/readiness reporting (Android v0.4.0; build passed, phone acceptance pending)
 
 Implemented:
 
-- fresh idle + passive renderer present/arrives -> load the configured default folder (`MP3s`), enable Random + Repeat All, and start playback;
+- fresh idle + passive renderer present/arrives -> load the configured default folder (`MP3s` or `Rap`), enable Random + Repeat All, and start playback;
 - passive renderer joining active playback -> leave the existing queue untouched;
 - passive renderer joining an ordinary paused/retained session resumes it without replacing its queue; a completed-drain boundary pause is excluded;
 - final passive renderer leaves during playback -> finish the current track, then normalize MPD to stopped/fresh idle, including a pause-on-next-track boundary;
@@ -252,8 +258,7 @@ Implemented:
 
 Still not implemented:
 
-- Android local receiver mute/readiness implementation (server reporting is implemented)
-- transport-command request deduplication/revision checks
+- general transport-command request deduplication/revision checks beyond the guarded `/queue/reorder` operation
 - Android/Windows authentication/pairing
 - push state feed
 
@@ -646,7 +651,7 @@ Every service process starts with `startup.ready: false`. Before automatic sessi
 
 Readiness starts false and becomes true once for the process. `lastError` contains the latest reset failure while retrying and clears on success. Health remains HTTP 200 with `status: degraded` until startup is ready and both MPD/Snapserver are reachable. `GET /session` and the policy object in `GET /state` expose the same readiness object as `sessionPolicy.startup`. Reads of MPD state/queue while pending can still show old or partially cleared state; clients must not interpret that as a retained live session.
 
-While pending, all MPD-changing POST endpoints return **503** with `error: startup_pending`: `/play`, `/pause`, `/stop`, `/next`, `/previous`, `/seek`, `/shuffle`, `/repeat`, `/queue/clear`, and `/queue/replace`. Such a request has made no MPD change. Clients should show startup/reconnecting, refresh state after readiness, and accept a current deliberate command; do not replay an uncertain pre-restart queue or skip command.
+While pending, all MPD-changing POST endpoints return **503** with `error: startup_pending`: `/play`, `/pause`, `/stop`, `/next`, `/previous`, `/seek`, `/shuffle`, `/repeat`, `/queue/clear`, `/queue/replace`, and (from v0.8.2) `/queue/reorder`. Such a request has made no MPD change. Clients should show startup/reconnecting, refresh state after readiness, and accept a current deliberate command; do not replay an uncertain pre-restart queue or skip command.
 
 Settings and controller attach/heartbeat/detach remain available. A lease issued by this new process while reset is pending remains valid under normal expiry rules. Only old-process live state is discarded. Durable passive-default selection and renderer ownership survive. An already-known phone renderer alone is never a passive auto-starter, even before its app reattaches.
 

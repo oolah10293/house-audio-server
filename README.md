@@ -4,6 +4,8 @@ Central playback, control, and synchronized-audio service for the whole-house mu
 
 Current source version: **v0.8.2** — adds guarded queue reordering for the first Android HOUSE build; 90 local tests pass. Latest confirmed Pi deployment remains **v0.8.1**. Its already-present-radio restart path is field-proven: startup reached ready state, retained the saved `Rap` default, recognized one passive S3, and started a fresh randomized Rap session. Update to v0.8.2 for Android Now Playing Sort. Physical phone/S3 synchronization and controller pause/resume/expiry checks remain pending.
 
+**2026-09-29 release handoff:** Android v0.4.0's final `9c89b24` APK is delivered, including the heartbeat recovery fix, and [Android CI](https://github.com/oolah10293/smb-music-player/actions/runs/36614059665) and [server v0.8.2 CI](https://github.com/oolah10293/house-audio-server/actions/runs/36613448675) passed. The [release record](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.0.md) contains exact builds, APK/source downloads, checksums and installation order. No Pi v0.8.2 installation or phone listening result has been reported. No ESP32 firmware change is required.
+
 The core rule is simple: **there is one house playback session**. Devices on the home network do not start separate competing music sessions. A room may be the only active output, or several rooms may be active, but every participating output follows the same queue, track, playback position, shuffle state, and transport state.
 
 ## Agreed playback and session behavior

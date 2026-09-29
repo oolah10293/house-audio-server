@@ -247,6 +247,8 @@ This validates restart-as-fresh-session for that hardware path without requiring
 
 ## 14. Initial Android HOUSE implementation checkpoint
 
+The 2026-09-29 [release record](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.0.md) identifies final Android v0.4.0 commit `9c89b24` (including heartbeat recovery) and server v0.8.2 commit `9c98973`. The APK is delivered, Android build/3 state tests/native packaging and server CI/90 tests passed. Pi v0.8.2 installation and phone/S3 acceptance remain pending; v0.8.1 is still the confirmed installed server. This handoff changes no product/session decisions.
+
 Android v0.4.0 implements initial HOUSE selection, the existing Browser/Now Playing control surface, a bundled synchronized receiver, muted attachment, service-owned controller heartbeats, local output interruption handling, and phone-only Quit. Phone/S3 synchronization and controller transitions still need hardware acceptance; source/build success is not audible proof. STANDALONE keeps the existing engine. Live home/away handoff remains later work under the open decisions above.
 
 Server v0.8.2 adds revision-guarded in-place queue reordering for explicit Now Playing Sort. Reordering must not change the current song/position/transport or clear automatic-pause/pending-drain ownership. The §4 completed-drain and §13 startup boundaries remain unchanged, including pre-completion return preserving the existing session. See API.md and the Android HOUSE_VALIDATION checklist.
