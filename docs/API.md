@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current service version: **0.6.0**
+Current service version: **0.6.1**
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -352,3 +352,19 @@ v0.6.0's `/diagnostics` endpoint is intended to separate:
 - cases where all server-side indicators remain clean, which would push investigation toward the ESP32 decoder/audio-buffer/I2S path.
 
 The diagnostics feature is implemented and unit-tested. A real dropout capture is still pending.
+
+
+## v0.6.1 final-track boundary fix
+
+A real passive-radio reconnect exposed an MPD state-machine detail that the v0.4-v0.6 policy did not model correctly.
+
+Observed field state:
+
+- one renderer returned healthy/present;
+- MPD was `pause` at **0.0 seconds** on the next queued track;
+- Snapserver stream was `idle`;
+- session policy still showed `pending_stop_cancelled_renderer_returned`.
+
+This revealed that MPD 0.24 `single oneshot` can finish the departing session by reaching the next-track boundary in **Pause**, not necessarily transport `stop`.
+
+v0.6.1 now treats both `pause` and `stop` as completed final-track boundary states. It clears the temporary Repeat/Single override at that boundary. If a passive renderer returns while the pending final-stop state is still active and MPD is already paused/stopped at the boundary, the service restores the saved options and sends `play` so the retained queue resumes instead of remaining silent or rebuilding the default folder.
