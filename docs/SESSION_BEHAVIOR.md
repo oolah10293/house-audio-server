@@ -201,3 +201,12 @@ Required behavior:
 
 The existing `PASSIVE_DEFAULT_FOLDER` environment value remains the install-time fallback when no saved setting exists. v0.7.0 implements `GET /settings` and `POST /settings` with a persisted `passiveDefaultFolder` (`MP3s` or `Rap`); see [API.md](API.md). The service reads this value once per fresh passive start. No queue/order/progress is persisted, and setting it does not change any active/retained session or pending drain. The server implementation has local regression coverage; Pi installation/field validation and the Android selector remain pending.
 
+
+
+### v0.7.0 field confirmation
+
+The runtime-selectable passive default in §12 is now proven on the permanent Pi.
+
+A controller-side API write changed the server-owned default from `MP3s` to `Rap` while music was already playing; the current song was not changed or restarted. After the last S3 remained off for roughly ten minutes and the prior session completed, powering an S3 back on started a fresh `Rap` session (first observed track: Ludacris — *Southern Hospitality*).
+
+This validates the intended separation between **current house queue** and **future passive default**.
