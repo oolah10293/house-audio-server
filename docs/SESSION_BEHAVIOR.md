@@ -234,3 +234,12 @@ After restart:
 This decision replaces the earlier idea of restoring the automatic-pause reason or unfinished drain across a control-service restart. A Pi reboot naturally falls on the same side of the boundary.
 
 **Implementation status:** v0.8.1 implements this boundary. Before new playback commands or presence-driven playback, it stops MPD, clears the old queue, disables leftover Single/Consume/Repeat/Random modes, and verifies empty stopped state. A failed reset retries until MPD is available, independently of Snapserver availability. Disabling automatic presence policy does not disable the restart boundary. Once completed, routine MPD/Snapserver reconnections do not repeat the reset. Controller attachment and saved settings remain available while startup is pending; new attachments are not discarded by a delayed reset. See [API.md](API.md) for readiness and command gating. The v0.8.0 Pi baseline is proven; v0.8.1 restart and physical controller transitions await field validation.
+
+
+### v0.8.1 field confirmation
+
+The §13 restart rule is now field-proven on the permanent Pi for an already-present passive renderer.
+
+During the v0.8.1 install/restart, one S3 remained powered. The previous live session was not retained; after startup completed, the service started a new randomized `Rap` default session. The resulting session snapshot showed `startup.ready: true`, `lastAction: started_default_session`, one passive/audible renderer, zero controllers, and no automatic-pause or pending-drain state.
+
+This validates restart-as-fresh-session for that hardware path without requiring pause-reason/session reconstruction.
