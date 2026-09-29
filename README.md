@@ -2,7 +2,7 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source/deployed version: **v0.8.0** — controller/output presence and muted-controller session handling; 73 local tests and GitHub CI pass. v0.8.0 is installed on the permanent Pi. Initial deployment validation confirms healthy MPD/Snapserver connectivity and correct zero-controller / one-passive-S3 baseline classification. Physical muted-controller pause/resume testing is still pending.
+Current source version: **v0.8.1** — server restart creates fresh idle before a new session; 85 local tests pass. Latest confirmed Pi deployment: **v0.8.0**, with healthy MPD/Snapserver connectivity and correct zero-controller / one-passive-S3 baseline classification. v0.8.1 deployment/restart checks and physical controller pause/resume/expiry checks remain pending.
 
 The core rule is simple: **there is one house playback session**. Devices on the home network do not start separate competing music sessions. A room may be the only active output, or several rooms may be active, but every participating output follows the same queue, track, playback position, shuffle state, and transport state.
 
@@ -420,7 +420,7 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is physical validation of controller/output policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. Persisted runtime default-folder selection is field-proven in v0.7.0. Controller/output presence is implemented/tested in v0.8.0, awaiting deployment. v0.6.0 provides the first unattended diagnostics capture for that investigation.
+**The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is physical validation of controller/output policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. Persisted runtime default-folder selection is field-proven in v0.7.0. Controller/output presence is deployed in v0.8.0 with baseline checks passing; physical controller transitions remain pending. v0.6.0 provides the first unattended diagnostics capture for that investigation.
 
 
 ### Leave-and-return pause edge — v0.5.1
@@ -485,7 +485,7 @@ The Android HOUSE Browser will reuse the button position that is SMB in STANDALO
 
 Storage uses atomic replacement in the existing systemd state directory, `/var/lib/house-audio-server/settings.json`. The installer preserves saved settings and existing environment configuration. See [docs/API.md](docs/API.md) for request/response, validation, and storage failure behavior.
 
-**Validation:** 42 local tests pass, including HTTP requests without MPD, both folder values, persistence across a recreated service settings object, concurrent sets, storage errors, unchanged active/paused sessions, and selection after completed drain. Pi installation/field validation is pending; the most recently confirmed installed release remains v0.6.2.
+**Validation:** 42 tests passed for v0.7.0, including HTTP requests without MPD, both folder values, persistence across a recreated service settings object, concurrent sets, storage errors, unchanged active/paused sessions, and selection after completed drain. Subsequent Pi installation and default-selection field results are recorded below.
 
 After installing v0.7.0 with the existing `sudo sh install.sh`, these commands read the setting and select Rap without changing playback:
 
@@ -494,7 +494,7 @@ curl -fsS http://127.0.0.1:8787/settings
 curl -fsS -H 'Content-Type: application/json' -d '{"passiveDefaultFolder":"Rap"}' http://127.0.0.1:8787/settings
 ```
 
-Use `MP3s` in the same request to select it again. The field check is to save either choice during playback, confirm the current song/queue continues, and confirm a fresh passive session uses that folder. The saved choice should also be readable after a control-service restart. This persistence check does not resolve the separate unfinished-drain restart edge described in the session document.
+Use `MP3s` in the same request to select it again. The field check is to save either choice during playback, confirm the current song/queue continues, and confirm a fresh passive session uses that folder. The saved choice should also be readable after a control-service restart. Restart now ends every prior session under SESSION_BEHAVIOR §13; v0.8.1 implements that boundary without reconstructing a drain.
 
 
 ## v0.6.2 — completed drain ends the session
@@ -540,7 +540,7 @@ The supplied snapshot reports:
 
 This directly confirms the deployed version and the pre-completion return/cancellation path. The longer-off audible result is consistent with a new session, but no `started_default_session` snapshot or queue comparison was supplied for that trial. In particular, replacing a manually selected CD/Rap queue with the configured default after completed drain remains a separate field check. The policy and shuffle regression tests remain passing (27 local tests; GitHub CI passed).
 
-At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 now provides the field-proven server settings API; the Android button remains pending. Controller/output presence is implemented/tested in v0.8.0, awaiting deployment. These results do not represent an Android HOUSE build or an ESP32 firmware release.
+At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 now provides the field-proven server settings API; the Android button remains pending. Controller/output presence is deployed in v0.8.0 with baseline checks passing; physical controller transitions remain pending. These results do not represent an Android HOUSE build or an ESP32 firmware release.
 
 
 ### v0.7.0 permanent-Pi field validation — PASS
@@ -573,11 +573,11 @@ The Pi now has a shared controller-presence API for Android, Windows, and browse
 
 The two previously open choices—background presence and ending the last muted controller's auto-paused session—were confirmed on 2026-09-29 and recorded in the canonical session document. The existing Android UI and planned Browser polish remain unchanged in scope; this release supplies their server dependency.
 
-**Validation:** 73 local tests pass, including the prior passive/shuffle/settings suite, HTTP lifecycle requests, persistence of renderer ownership, expiry/stale reports, drain boundaries, manual transport overrides, output failure/recovery, and MPD-write retry. Pi deployment and real controller/output tests are pending. The most recently confirmed installed service remains v0.7.0; there is no Android HOUSE APK or ESP32 firmware change in this milestone.
+**Validation:** 73 tests passed for v0.8.0, including the prior passive/shuffle/settings suite, HTTP lifecycle requests, persistence of renderer ownership, expiry/stale reports, drain boundaries, manual transport overrides, output failure/recovery, and MPD-write retry. v0.8.0 is installed on the Pi with health/passive-S3 baseline checks passing, as recorded below. Physical controller transitions remain pending; there is no Android HOUSE APK or ESP32 firmware change in this milestone.
 
 Use the existing installer. The current systemd state directory also stores `controllers.json`; no MPD/Snapserver configuration change is needed. See [docs/API.md](docs/API.md) for the complete client contract. The main field check is a controller holding a muted lease while the last radio leaves (pause), an audible radio returning (resume), and the last muted controller detaching/expiring (stop, then fresh default on the next radio).
 
-Restart policy is now explicitly settled: a `house-audio-server` restart is a **hard listening-session boundary**. Do not reconstruct the prior live controller/session state. Live leases, mute/readiness reports, automatic-pause ownership, pending drains, and the old queue/session are disposable across restart. Persist only durable configuration/identity such as the selected `MP3s`/`Rap` passive default and controller-to-renderer ownership. After restart the house should normalize to fresh idle; a controller reconnecting first stays idle, while a passive S3 present/arriving starts a new shuffled configured default. v0.8.0 already forgets the live leases/auto-pause marker, but explicit startup normalization to fresh idle is **not yet implemented** and is the remaining restart-behavior code change. Authentication/pairing and transport-command deduplication remain open.
+Restart policy is now explicitly settled: a `house-audio-server` restart is a **hard listening-session boundary**. Do not reconstruct the prior live controller/session state. Live leases, mute/readiness reports, automatic-pause ownership, pending drains, and the old queue/session are disposable across restart. Persist only durable configuration/identity such as the selected `MP3s`/`Rap` passive default and controller-to-renderer ownership. After restart the house should normalize to fresh idle; a controller reconnecting first stays idle, while a passive S3 present/arriving starts a new shuffled configured default. v0.8.1 implements the startup fresh-idle boundary in source/tests; Pi deployment and restart validation remain pending. Authentication/pairing and transport-command deduplication remain open.
 
 
 ### v0.8.0 permanent-Pi deployment baseline — PASS
@@ -606,4 +606,20 @@ After restart:
 - a controller reconnecting first does not start music;
 - a passive S3 present/arriving starts a new shuffled session from the configured default.
 
-This supersedes the earlier idea of persisting/restoring automatic-pause ownership after restart. v0.8.0 does not yet perform the explicit startup normalization, so that small implementation change remains pending.
+This supersedes the earlier idea of persisting/restoring automatic-pause ownership after restart. v0.8.1 implements the startup fresh-idle boundary in source/tests; Pi deployment and restart validation remain pending.
+
+## v0.8.1 — fresh idle on server restart
+
+Implements the settled restart rule in SESSION_BEHAVIOR §13. On each service start, stop MPD, clear the old queue, and reset Single/Consume/Repeat/Random to off. Verify empty stopped state before allowing playback commands. Saved passive-default configuration and controller↔renderer ownership remain intact; live leases, output reports, pause reasons, and drains are not restored.
+
+- Controller reconnect alone leaves the house idle.
+- A passive radio already present or arriving later starts the configured MP3s/Rap default with a new random shuffle and Repeat All. Natural chance repeats are allowed.
+- MPD startup failure or a partial reset retries. Snapserver can be offline during the reset. Normal dependency reconnects after readiness do not clear the new session.
+- `GET /health` exposes `startup.ready` and remains degraded while reset is pending. `GET /session` exposes the same object under `sessionPolicy.startup`. Playback writes return 503 `startup_pending` until ready; settings and controller lifecycle endpoints stay available.
+- The restart boundary also applies when automatic presence policy is disabled; passive auto-start remains disabled in that configuration.
+
+**Validation:** 85 local tests pass, covering startup from playing/paused/stopped and drain-artifact states, saved settings/ownership, controller-first silence, passive arrival, partial failure/retry, dependency reconnects, write gating, and all existing session regressions. Return before the final song ends in the same running service still cancels the stop and preserves queue/song/position. Unit tests do not establish physical playback behavior.
+
+**One Pi checkpoint:** install v0.8.1 through the existing update workflow. With radios off, restart from a selected queue/paused or draining state and verify `startup.ready: true`, Stop, and an empty queue; a controller attaching first stays silent. Power on a radio (and repeat with a radio already present at restart) to verify a fresh configured default. Check the saved folder and known phone-renderer ownership survive. Include the pending v0.8.0 muted-controller pause/resume/expiry checks in this checkpoint. A naturally repeated first song is valid.
+
+**Next implementation slice:** Android HOUSE backend and synchronized phone output through the existing Browser/Now Playing screens, including the approved Browser polish and MP3s/Rap selector. Preserve STANDALONE. Home/away recovery and final device acceptance follow; the settled restart rule requires no session-recovery subsystem.

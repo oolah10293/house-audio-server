@@ -18,9 +18,9 @@ SNAPSERVER_RETRY_SECONDS=2.0
 SNAPSERVER_POLL_SECONDS=1.0
 SNAPSERVER_STALE_AFTER_SECONDS=5.0
 
-# First autonomous session-policy slice:
-# when the final passive renderer leaves during playback, finish the current
-# track and stop; cancel that pending stop if a renderer returns first.
+# Automatic controller/renderer session policy (including final-track drain).
+# The service-start fresh-idle reset still runs when this is false; only
+# presence-driven playback is disabled. Saved settings/ownership persist.
 PASSIVE_SESSION_POLICY_ENABLED=true
 PASSIVE_SESSION_POLICY_POLL_SECONDS=0.5
 

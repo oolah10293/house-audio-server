@@ -371,8 +371,11 @@ class ControllerPolicyTests(ControllerFixture):
 class ControllerHttpTests(ControllerFixture):
     def setUp(self):
         super().setUp()
+        # These HTTP cases exercise an established session after startup.
+        startup = h.MpdStartupBoundary()
+        startup.ensure_ready(FakeMpd())
         for name, value in (("CONTROLLERS", self.registry), ("SNAPCAST_MONITOR", self.monitor),
-                            ("PASSIVE_SESSION_POLICY", self.policy)):
+                            ("PASSIVE_SESSION_POLICY", self.policy), ("MPD_STARTUP", startup)):
             patcher = patch.object(h, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)

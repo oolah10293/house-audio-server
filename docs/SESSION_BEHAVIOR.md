@@ -142,11 +142,10 @@ The Pi tracks controller presence and renderer/output state separately, retains 
 
 Controller arrival must not be used as a blanket override of explicit transport commands. **Passive-radio arrival is the deliberate exception:** powering on a passive radio should resume an existing paused MPD session, including a deliberate Pause. This excludes the completed-drain artifact described in §11.
 
-Still to settle before coding the affected edges:
+Remaining client decisions and settled restart boundary:
 
 - Whole-queue continuation for the phone away from home. Initial HOUSE output mute is settled in the Android requirements: start muted; auto-unmute only for phone-initiated playback.
 - No pause/drain reconstruction is required after a `house-audio-server` restart: restart is now explicitly a fresh-session boundary (§13).
-- Restoring the reason for an automatic pause after a control-service restart. v0.8.0 retains MPD's paused queue but keeps its automatic-pause marker in memory; a passive arrival or explicit Play can resume it. A controller alone must not guess whether an existing pause was automatic or deliberate.
 
 These gaps do not cancel the confirmed rules. They are intentionally not filled with invented decisions. Source implementation and field-validation status are recorded separately in the API docs and README.
 
@@ -180,7 +179,7 @@ This also applies when completion and radio return are first observed in the sam
 
 Example: a controller selected a CD, the last radio was switched off, and the song finished with nobody listening. Hours later a radio starts the configured `MP3s` or `Rap` default with fresh randomness; it does not resume yesterday's CD.
 
-**Implementation history:** v0.6.1 successfully restored audible output on the permanent Pi, but did so by resuming the old queue. That resume choice is superseded by this clarification. v0.6.2 implements and unit-tests the completed-drain/fresh-session distinction and is now running on the permanent Pi. On 2026-09-29 the user reported same-song return after about 10 seconds unplugged and a different song after about five minutes unplugged. The captured `/session` action confirms the early-return branch; exact old-CD/Rap-queue replacement after completed drain remains a separate field check. See the evidence in [API.md](API.md). Normalizing a processed drain to stopped also prevents a later control-service restart from treating it as an ordinary pause. Recovery from a service/Pi restart during an unfinished/unprocessed drain remains a separate open edge.
+**Implementation history:** v0.6.1 successfully restored audible output on the permanent Pi, but did so by resuming the old queue. That resume choice is superseded by this clarification. v0.6.2 implements and unit-tests the completed-drain/fresh-session distinction and is now running on the permanent Pi. On 2026-09-29 the user reported same-song return after about 10 seconds unplugged and a different song after about five minutes unplugged. The captured `/session` action confirms the early-return branch; exact old-CD/Rap-queue replacement after completed drain remains a separate field check. See the evidence in [API.md](API.md). Normalizing a processed drain to stopped also prevents a later control-service restart from treating it as an ordinary pause. Section 13 now settles service/Pi restart during any unfinished/unprocessed drain: abandon that session and normalize to fresh idle.
 
 ## 12. Runtime-selectable passive default folder
 
@@ -234,4 +233,4 @@ After restart:
 
 This decision replaces the earlier idea of restoring the automatic-pause reason or unfinished drain across a control-service restart. A Pi reboot naturally falls on the same side of the boundary.
 
-**Implementation status:** v0.8.0 already keeps live leases and automatic-pause state in memory only, but it does not yet explicitly normalize MPD to fresh idle at service startup. That startup normalization is the remaining implementation step for this rule.
+**Implementation status:** v0.8.1 implements this boundary. Before new playback commands or presence-driven playback, it stops MPD, clears the old queue, disables leftover Single/Consume/Repeat/Random modes, and verifies empty stopped state. A failed reset retries until MPD is available, independently of Snapserver availability. Disabling automatic presence policy does not disable the restart boundary. Once completed, routine MPD/Snapserver reconnections do not repeat the reset. Controller attachment and saved settings remain available while startup is pending; new attachments are not discarded by a delayed reset. See [API.md](API.md) for readiness and command gating. The v0.8.0 Pi baseline is proven; v0.8.1 restart and physical controller transitions await field validation.

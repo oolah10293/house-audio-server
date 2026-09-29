@@ -31,7 +31,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.8.0"
+SERVICE_VERSION = "0.8.1"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -1106,6 +1106,52 @@ class DiagnosticsRecorder:
 DIAGNOSTICS = DiagnosticsRecorder(SNAPCAST_MONITOR)
 
 
+class MpdStartupBoundary:
+    """Forget the old MPD session once per service process, before new writes.
+
+    A delayed/partially failed reset is retried. Once ready, routine dependency
+    reconnects must never reset a session created during this process.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._ready = False
+        self._last_error = None
+
+    def snapshot(self):
+        with self._lock:
+            return {"ready": self._ready, "lastError": self._last_error}
+
+    def require_ready(self):
+        if not self.snapshot()["ready"]:
+            raise ApiError(503, "startup_pending",
+                           "MPD fresh-idle startup reset is not complete; retry after startup.ready")
+
+    def ensure_ready(self, mpd):
+        with MPD_WRITE_LOCK:
+            if self.snapshot()["ready"]:
+                return
+            try:
+                # Stop first, abandon the old queue, and remove leftover drain
+                # modes. Passive startup sets Shuffle/Repeat All for its new queue.
+                mpd.run("stop", "clear", "single 0", "consume 0", "repeat 0", "random 0")
+                state = mpd.state()
+                if (state.get("transport") != "stop" or state.get("queueLength") != 0
+                        or state.get("singleMode") != "0"
+                        or any(state.get(mode) is not False for mode in ("consume", "repeat", "random"))):
+                    raise MpdError("MPD did not reach fresh idle at service startup")
+            except (OSError, MpdError) as exc:
+                with self._lock:
+                    self._last_error = str(exc)
+                raise
+            with self._lock:
+                self._ready = True
+                self._last_error = None
+
+
+MPD_STARTUP = MpdStartupBoundary()
+
+
 class PassiveSessionPolicy:
     """One house session policy for passive radios and controlling nodes.
 
@@ -1133,12 +1179,14 @@ class PassiveSessionPolicy:
         shuffle: Optional[Callable[[List[str]], None]] = None,
         settings: Optional[PassiveDefaultSettings] = None,
         controllers: Optional[ControllerRegistry] = None,
+        startup: Optional[MpdStartupBoundary] = None,
     ) -> None:
         self.monitor = monitor
         self.mpd_factory = mpd_factory
         self.enabled = enabled
         self.poll_seconds = poll_seconds
         self.settings = settings
+        self.startup = startup
         self.controllers = controllers if controllers is not None else ControllerRegistry()
         self.default_folder = (
             str(settings.snapshot()["passiveDefaultFolder"])
@@ -1165,7 +1213,7 @@ class PassiveSessionPolicy:
         self._last_action_epoch = time.time()
 
     def start(self) -> None:
-        if not self.enabled:
+        if not self.enabled and self.startup is None:
             with self._lock:
                 self._last_action = "disabled"
                 self._last_action_epoch = time.time()
@@ -1202,6 +1250,7 @@ class PassiveSessionPolicy:
                 "defaultShufflePolicy": "new_each_fresh_session",
                 "runtimeDefaultFolderImplemented": self.settings is not None,
                 "controllerPresenceImplemented": True,
+                "startup": self.startup.snapshot() if self.startup is not None else None,
             }
 
     def _record(self, action: str) -> None:
@@ -1382,7 +1431,13 @@ class PassiveSessionPolicy:
             self._record("paused_muted_controllers_only")
 
     def _tick_locked(self) -> None:
+        # A process restart ends the old session even if Snapserver is offline
+        # or automatic presence policy is disabled. Never infer old pause/drain
+        # ownership. New controller registrations are allowed while this retries.
+        if self.startup is not None:
+            self.startup.ensure_ready(self.mpd_factory())
         if not self.enabled:
+            self._record("disabled")
             return
         snap = self.monitor.snapshot()
         if not bool(snap.get("reachable", False)):
@@ -1443,7 +1498,8 @@ class PassiveSessionPolicy:
 PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
 CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE)
 PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
-    SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS
+    SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS,
+    startup=MPD_STARTUP,
 )
 
 
@@ -1664,7 +1720,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "error": str(exc),
                     }
 
-                healthy = bool(mpd_status["reachable"]) and bool(
+                startup = MPD_STARTUP.snapshot()
+                healthy = startup["ready"] and bool(mpd_status["reachable"]) and bool(
                     snap.get("reachable", False)
                 )
                 self._json(
@@ -1675,6 +1732,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "status": "ok" if healthy else "degraded",
                         "mpd": mpd_status,
                         "snapserver": snap,
+                        "startup": startup,
                     },
                 )
                 return
@@ -1817,6 +1875,11 @@ class ApiHandler(BaseHTTPRequestHandler):
                 })
                 return
 
+            if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
+                        "/shuffle", "/repeat", "/queue/clear", "/queue/replace"}:
+                # Readiness is monotonic for this process. A pending reset may
+                # not acknowledge a new queue/command and later erase it.
+                MPD_STARTUP.require_ready()
             mpd = MpdClient()
 
             if path == "/play":

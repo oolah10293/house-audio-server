@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source/deployed version: **v0.8.0**, controller/output presence and session policy (73 local tests and GitHub CI pass). v0.8.0 is installed on the permanent Pi; health and no-controller/passive-renderer baseline validation pass. Physical controller/mute policy validation remains pending.
+Current source version: **v0.8.1**, adding verified fresh-idle startup (85 local tests pass). Latest confirmed Pi deployment is **v0.8.0**; health and no-controller/passive-renderer baseline validation pass. v0.8.1 deployment/restart and physical controller/mute validation remain pending.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -224,7 +224,7 @@ Implemented now:
 - Shuffle/Repeat
 - queue clear/replace
 - persisted passive-default read/set (v0.7.0; permanent-Pi validation complete)
-- controller attach/heartbeat/detach, output reports, and muted-controller session policy (v0.8.0; source/tests complete, Pi validation pending)
+- controller attach/heartbeat/detach, output reports, and muted-controller session policy (v0.8.0; deployed baseline passes, physical controller transitions pending)
 
 Implemented:
 
@@ -435,7 +435,7 @@ Completion sends Stop before restoring the saved Repeat/Single settings, then cl
 
 Each fresh default start queries the configured folder's MPD-indexed files recursively, shuffles them using `SystemRandom` (OS entropy), loads that order, enables Random + Repeat All with Single/Consume off, and starts shuffled item zero. There is no fixed seed or saved shuffle progress, and no rejection of a chance repeated first song/order. An empty default produces an error without clearing the old queue and can be retried when files become available.
 
-Pending drains are resolved before a new Snapserver presence baseline, so a monitor outage does not revive a completed queue. MPD write failures keep policy recovery alive. Recovery after the service/Pi itself restarts during an unfinished/unprocessed drain is still an open edge; no broad reboot-persistence claim is made.
+Pending drains are resolved before a new Snapserver presence baseline, so a monitor outage does not revive a completed queue. MPD write failures keep policy recovery alive. Service/Pi restart is now a hard fresh-session boundary under SESSION_BEHAVIOR §13, implemented in v0.8.1; unfinished drains are abandoned, not recovered.
 
 The former persistent default-rotation requirement has been removed. v0.7.0 adds persistence of the **folder choice** (`MP3s`/`Rap`); changing that setting does not affect an active or ordinary paused session. The completed session's order/progress is never a prerequisite for a fresh passive start.
 
@@ -470,7 +470,7 @@ The supplied snapshot reports:
 
 This directly confirms the deployed version and the pre-completion return/cancellation path. The longer-off audible result is consistent with a new session, but no `started_default_session` snapshot or queue comparison was supplied for that trial. In particular, replacing a manually selected CD/Rap queue with the configured default after completed drain remains a separate field check. The policy and shuffle regression tests remain passing (27 local tests; GitHub CI passed).
 
-At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 provides the field-proven settings API; the Android button remains pending. Controller/output presence is implemented/tested in v0.8.0, awaiting deployment. These results do not represent an Android HOUSE build or an ESP32 firmware release.
+At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 provides the field-proven settings API; the Android button remains pending. Controller/output presence is deployed in v0.8.0 with baseline checks passing; physical controller transitions remain pending. These results do not represent an Android HOUSE build or an ESP32 firmware release.
 
 
 ## v0.7.0 runtime validation
@@ -600,7 +600,7 @@ Session snapshots now use `mode: "controllers_and_renderers"`, combined `present
 
 Renderer-to-controller ownership is saved atomically in `/var/lib/house-audio-server/controllers.json` (override `HOUSE_AUDIO_CONTROLLERS_FILE`). Ownership survives expiry, Quit, and service restart so a known phone cannot later be mistaken for a passive radio. Registration must succeed before its receiver connects. Old associations remain classified as controlled; they are not reassigned to a different controller id. Missing files start empty; corrupt/unreadable files fail startup instead of guessing roles. A binding-write failure returns 503 `controller_storage_failed`; do not start the receiver until attach succeeds.
 
-Live leases, reported mute/readiness, automatic-pause ownership, and pending-drain state are intentionally transient. The product rule is now that a `house-audio-server` restart ends the old listening session and returns the house to fresh idle; the server should not reconstruct pause reasons or unfinished drains. Durable renderer ownership and passive-default configuration still persist. A controller reconnecting first stays idle; a passive S3 present/arriving starts a new shuffled configured default. v0.8.0 does not yet normalize MPD to fresh idle on startup, so that explicit restart-boundary normalization remains a small implementation gap rather than a state-recovery feature.
+Live leases, reported mute/readiness, automatic-pause ownership, and pending-drain state are intentionally transient. The product rule is now that a `house-audio-server` restart ends the old listening session and returns the house to fresh idle; the server should not reconstruct pause reasons or unfinished drains. Durable renderer ownership and passive-default configuration still persist. A controller reconnecting first stays idle; a passive S3 present/arriving starts a new shuffled configured default. v0.8.1 implements the startup fresh-idle boundary in source/tests; Pi deployment and restart validation remain pending.
 
 Authentication/pairing, transport-command request deduplication/revision checks, and Android receiver/background-service implementation remain separate work. Do not automatically replay Next/queue writes after a lost HTTP response.
 
@@ -619,3 +619,23 @@ Observed immediately after deployment:
 - the active S3 remained classified as passive, showing that the new controller registry did not misclassify existing radios.
 
 This is installation/baseline proof only. Attach/heartbeat/detach, muted-controller automatic pause, audible-return resume, expiry, and last-controller session end still need real field validation.
+
+## v0.8.1 startup readiness and restart boundary
+
+Every service process starts with `startup.ready: false`. Before automatic session policy or an accepted playback write, the server stops MPD, clears the old queue, sets Single/Consume/Repeat/Random off, and verifies empty stopped state. Reset failure (including partial command success or failed verification) is retried at the policy poll interval. Snapserver availability is not a prerequisite. This reset also runs with `PASSIVE_SESSION_POLICY_ENABLED=false`, without enabling passive auto-start.
+
+`GET /health` adds:
+
+```json
+{"startup": {"ready": true, "lastError": null}}
+```
+
+Readiness starts false and becomes true once for the process. `lastError` contains the latest reset failure while retrying and clears on success. Health remains HTTP 200 with `status: degraded` until startup is ready and both MPD/Snapserver are reachable. `GET /session` and the policy object in `GET /state` expose the same readiness object as `sessionPolicy.startup`. Reads of MPD state/queue while pending can still show old or partially cleared state; clients must not interpret that as a retained live session.
+
+While pending, all MPD-changing POST endpoints return **503** with `error: startup_pending`: `/play`, `/pause`, `/stop`, `/next`, `/previous`, `/seek`, `/shuffle`, `/repeat`, `/queue/clear`, and `/queue/replace`. Such a request has made no MPD change. Clients should show startup/reconnecting, refresh state after readiness, and accept a current deliberate command; do not replay an uncertain pre-restart queue or skip command.
+
+Settings and controller attach/heartbeat/detach remain available. A lease issued by this new process while reset is pending remains valid under normal expiry rules. Only old-process live state is discarded. Durable passive-default selection and renderer ownership survive. An already-known phone renderer alone is never a passive auto-starter, even before its app reattaches.
+
+After the reset, a passive S3 present/arriving starts a freshly shuffled configured default with Repeat All. A controller alone leaves the empty house idle until deliberate playback. Once startup is ready, ordinary dependency outages do not rerun this reset; same-process retained pauses and return-before-drain-completion behavior remain unchanged.
+
+**Validation:** 85 local tests pass. v0.8.0's installed Pi baseline remains the latest field evidence; v0.8.1 restart behavior and physical controller transitions await the combined Pi checkpoint in README.
