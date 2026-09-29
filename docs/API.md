@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source version: **0.7.0** — persisted passive-default settings, with 42 local tests passing. Latest confirmed Pi deployment: **0.6.2**; its initial radio power-cycle results are recorded below. v0.7.0 installation/field validation is pending.
+Current source/deployed version: **0.7.0** — persisted passive-default settings, with 42 local tests and GitHub CI passing. The permanent Pi now has v0.7.0 installed and the settings API plus real passive-session use of the saved `Rap` default are field-proven.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -222,7 +222,7 @@ Implemented now:
 - seek
 - Shuffle/Repeat
 - queue clear/replace
-- persisted passive-default read/set (v0.7.0; Pi validation pending)
+- persisted passive-default read/set (v0.7.0; permanent-Pi validation complete)
 
 Implemented:
 
@@ -470,3 +470,23 @@ The supplied snapshot reports:
 This directly confirms the deployed version and the pre-completion return/cancellation path. The longer-off audible result is consistent with a new session, but no `started_default_session` snapshot or queue comparison was supplied for that trial. In particular, replacing a manually selected CD/Rap queue with the configured default after completed drain remains a separate field check. The policy and shuffle regression tests remain passing (27 local tests; GitHub CI passed).
 
 At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 now implements the server settings API in source/tests; deployment and the Android button remain pending. Controller/output presence is still upcoming HOUSE work. These results do not represent an Android HOUSE build or an ESP32 firmware release.
+
+
+## v0.7.0 runtime validation
+
+The persisted passive-default API is now field-proven on the permanent Pi.
+
+Observed sequence:
+
+1. `GET /settings` returned:
+   - service version `0.7.0`;
+   - `passiveDefaultFolder: "MP3s"`;
+   - allowed values `MP3s` and `Rap`.
+2. `POST /settings` changed the default to `Rap` successfully.
+3. The already-playing song continued unchanged during that write.
+4. The last S3 was then unplugged for about ten minutes, allowing the old session to complete and become fresh idle.
+5. On S3 power-up, the server started a fresh `Rap` session. The first observed track was Ludacris — *Southern Hospitality*.
+
+This confirms the two key API semantics in real use: changing the future passive default is non-disruptive to the active session, and the saved choice is applied to the next fresh passive-radio session.
+
+Controller presence and muted-phone/output-state policy remain the next server work.
