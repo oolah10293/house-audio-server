@@ -31,7 +31,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.8.1"
+SERVICE_VERSION = "0.8.2"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -472,6 +472,34 @@ class MpdClient:
         _, responses = self.run("playlistinfo")
         records = parse_mpd_records(responses[0].lines, {"file"})
         return [normalize_song(record) for record in records if record.get("file")]
+
+    def reorder_queue(self, song_ids, queue_version):
+        """Reorder existing MPD IDs without clearing, playing, pausing, or seeking.
+
+        The API write lock serializes normal house writers. The revision/ID
+        checks reject a controller sorting a queue another controller replaced.
+        Out-of-band native MPD writes are outside this API's concurrency boundary.
+        """
+        if (not isinstance(song_ids, list) or any(type(value) is not int or value < 0 for value in song_ids)
+                or len(set(song_ids)) != len(song_ids) or type(queue_version) is not int or queue_version < 0):
+            raise ApiError(400, "invalid_request", "Provide unique nonnegative songIds and queueVersion")
+        with MPD_WRITE_LOCK:
+            if self.state().get("queueVersion") != queue_version:
+                raise ApiError(409, "stale_queue", "Queue changed; refresh before sorting")
+            current = [song["id"] for song in self.queue()]
+            if self.state().get("queueVersion") != queue_version:
+                raise ApiError(409, "stale_queue", "Queue changed; refresh before sorting")
+            if len(current) != len(song_ids) or set(current) != set(song_ids):
+                raise ApiError(409, "stale_queue", "songIds must contain every current queue entry exactly once")
+            commands = []
+            for destination, song_id in enumerate(song_ids):
+                source = current.index(song_id)
+                if source != destination:
+                    commands.append(f"moveid {song_id} {destination}")
+                    current.insert(destination, current.pop(source))
+            if commands:
+                self.run(*commands)
+            return self.state()
 
     def browse(self, path: str) -> List[Dict[str, object]]:
         command = "lsinfo" if not path else f"lsinfo {mpd_quote(path)}"
@@ -1876,11 +1904,18 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
 
             if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
-                        "/shuffle", "/repeat", "/queue/clear", "/queue/replace"}:
+                        "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder"}:
                 # Readiness is monotonic for this process. A pending reset may
                 # not acknowledge a new queue/command and later erase it.
                 MPD_STARTUP.require_ready()
             mpd = MpdClient()
+
+            if path == "/queue/reorder":
+                if set(payload) != {"songIds", "queueVersion"}:
+                    raise ApiError(400, "invalid_request", "Provide only songIds and queueVersion")
+                state = mpd.reorder_queue(payload["songIds"], payload["queueVersion"])
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, "mpd": state})
+                return
 
             if path == "/play":
                 with MPD_WRITE_LOCK:

@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source/deployed version: **v0.8.1**, adding fresh-idle startup (85 local tests and GitHub CI pass). v0.8.1 is installed on the permanent Pi. The restart path with one passive S3 already present is field-proven; physical controller/mute validation remains pending.
+Current source version: **v0.8.2**, adding guarded in-place queue reordering for Android HOUSE Sort (90 local tests pass). Latest confirmed Pi deployment: **v0.8.1**. Its restart path with one passive S3 already present is field-proven; v0.8.2 installation and physical controller/mute validation remain pending.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -208,6 +208,20 @@ Rules:
 - `positionSeconds` defaults to `0` and is applied only when `play` is true.
 - absolute paths, backslashes, and `..` traversal are rejected.
 - the API never accepts arbitrary MPD protocol commands from a client.
+
+### `POST /queue/reorder` — v0.8.2
+
+Reorder the existing queue by MPD entry ID, without replacing files or restarting/seeking playback:
+
+```json
+{"songIds": [42, 17, 38], "queueVersion": 12}
+```
+
+Read the IDs from `GET /queue` and the revision from `GET /state` (`mpd.queueVersion`). Supply every current ID exactly once in the desired order; duplicate file paths still have separate IDs. Only these two fields are accepted. IDs/revision must be nonnegative integers (not booleans).
+
+The service serializes this operation with its other MPD writes, checks the revision before and after reading the queue, then uses only `moveid` commands. The current song ID, elapsed position, transport, Random/Repeat, automatic-pause ownership, and pending drain are preserved. Sorting an unchanged order is a no-op. Android rotates its sorted list so the current entry is first, as in its standalone UI.
+
+Returns the updated `mpd` state. A stale revision or different ID set returns HTTP 409 `stale_queue` without a write; malformed input returns 400 `invalid_request`. Refresh before another deliberate sort. Startup gating returns 503 `startup_pending`, just like other MPD-changing endpoints. Native MPD clients writing outside the service are outside its concurrency boundary. A connection failure partway through the moves can leave a partially reordered queue; refresh authoritative state and do not automatically replay the request.
 
 This endpoint is the intended primitive for Android/Windows `PLAY LIST`, search-filtered queues, selected-track-first rotation, and deliberate sorted-queue replacement.
 
@@ -600,7 +614,7 @@ Session snapshots now use `mode: "controllers_and_renderers"`, combined `present
 
 Renderer-to-controller ownership is saved atomically in `/var/lib/house-audio-server/controllers.json` (override `HOUSE_AUDIO_CONTROLLERS_FILE`). Ownership survives expiry, Quit, and service restart so a known phone cannot later be mistaken for a passive radio. Registration must succeed before its receiver connects. Old associations remain classified as controlled; they are not reassigned to a different controller id. Missing files start empty; corrupt/unreadable files fail startup instead of guessing roles. A binding-write failure returns 503 `controller_storage_failed`; do not start the receiver until attach succeeds.
 
-Live leases, reported mute/readiness, automatic-pause ownership, and pending-drain state are intentionally transient. The product rule is now that a `house-audio-server` restart ends the old listening session and returns the house to fresh idle; the server should not reconstruct pause reasons or unfinished drains. Durable renderer ownership and passive-default configuration still persist. A controller reconnecting first stays idle; a passive S3 present/arriving starts a new shuffled configured default. v0.8.1 implements the startup fresh-idle boundary in source/tests; Pi deployment and restart validation remain pending.
+Live leases, reported mute/readiness, automatic-pause ownership, and pending-drain state are intentionally transient. The product rule is now that a `house-audio-server` restart ends the old listening session and returns the house to fresh idle; the server should not reconstruct pause reasons or unfinished drains. Durable renderer ownership and passive-default configuration still persist. A controller reconnecting first stays idle; a passive S3 present/arriving starts a new shuffled configured default. v0.8.1 implements this boundary and is deployed; restart with an already-present passive S3 is field-proven. Physical controller transitions remain pending.
 
 Authentication/pairing, transport-command request deduplication/revision checks, and Android receiver/background-service implementation remain separate work. Do not automatically replay Next/queue writes after a lost HTTP response.
 
@@ -638,7 +652,7 @@ Settings and controller attach/heartbeat/detach remain available. A lease issued
 
 After the reset, a passive S3 present/arriving starts a freshly shuffled configured default with Repeat All. A controller alone leaves the empty house idle until deliberate playback. Once startup is ready, ordinary dependency outages do not rerun this reset; same-process retained pauses and return-before-drain-completion behavior remain unchanged.
 
-**Validation:** 85 local tests pass. v0.8.0's installed Pi baseline remains the latest field evidence; v0.8.1 restart behavior and physical controller transitions await the combined Pi checkpoint in README.
+**Validation:** 85 tests passed for v0.8.1. The installed v0.8.1 restart with an already-present S3 is field-proven as recorded below. The all-radios-off restart variant and physical controller transitions remain pending. v0.8.2 adds five reorder tests, bringing the suite to 90.
 
 
 ## v0.8.1 runtime restart validation

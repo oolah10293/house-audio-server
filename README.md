@@ -2,7 +2,7 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source/deployed version: **v0.8.1** — server restart creates fresh idle before a new session; 85 local tests and GitHub CI pass. v0.8.1 is installed on the permanent Pi. The already-present-radio restart path is field-proven: startup reached ready state, retained the saved `Rap` default, recognized one passive S3, and started a fresh randomized Rap session. Physical controller pause/resume/expiry checks remain pending.
+Current source version: **v0.8.2** — adds guarded queue reordering for the first Android HOUSE build; 90 local tests pass. Latest confirmed Pi deployment remains **v0.8.1**. Its already-present-radio restart path is field-proven: startup reached ready state, retained the saved `Rap` default, recognized one passive S3, and started a fresh randomized Rap session. Update to v0.8.2 for Android Now Playing Sort. Physical phone/S3 synchronization and controller pause/resume/expiry checks remain pending.
 
 The core rule is simple: **there is one house playback session**. Devices on the home network do not start separate competing music sessions. A room may be the only active output, or several rooms may be active, but every participating output follows the same queue, track, playback position, shuffle state, and transport state.
 
@@ -143,7 +143,7 @@ Controllers are optional. An Android phone or Windows player can select music an
 
 ## HOUSE vs STANDALONE behavior
 
-Android and Windows clients should select behavior automatically. This integration is planned, not implemented.
+Android and Windows clients should select behavior automatically. Android v0.4.0 implements initial app-launch selection and HOUSE control/audio; live home/away handoff remains later work. Windows integration remains planned.
 
 **HOUSE** means the client verifies the Pi directly through the physical home LAN. Wi-Fi and Ethernet both count. Temporary loss while at home stays HOUSE/reconnecting rather than starting a competing independent queue.
 
@@ -205,6 +205,7 @@ Implemented write endpoints:
 - `POST /shuffle`, `/repeat`
 - `POST /queue/clear`
 - `POST /queue/replace` — accepts an ordered list of relative library paths, start index, optional start position, and play flag.
+- `POST /queue/reorder` — v0.8.2: guarded ID/revision-based reordering that preserves the current track, position, transport, and policy state.
 
 The API does not expose an arbitrary MPD-command passthrough. Queue/library paths are validated as relative paths before being sent to MPD. See [docs/API.md](docs/API.md) for the current contract.
 
@@ -369,7 +370,7 @@ The custom `house-audio-server` should be the single client-facing bridge to tho
 - muted-output behavior;
 - fresh-idle vs retained-session rules;
 - finish-current-track behavior when all nodes leave;
-- new default-folder shuffle on each fresh session; persisted default-folder choice (server API implemented in v0.7.0; Android selector pending);
+- new default-folder shuffle on each fresh session; persisted default-folder choice (server API implemented in v0.7.0; Android v0.4.0 selector awaiting phone acceptance);
 - HOUSE session/control protocol/version identity; home presence itself is established by the direct MPD LAN probe;
 - command acknowledgement, stale-state protection, and shared state updates.
 
@@ -642,3 +643,13 @@ The subsequent `GET /session` snapshot reported:
 Together with the audible fresh randomized Rap playback, this field-proves the v0.8.1 restart boundary when a passive radio is already present: the prior live session is discarded, startup reaches fresh-idle readiness, durable settings survive, and the present passive radio starts a genuinely fresh default session.
 
 The separate restart-with-all-radios-off case has not yet been explicitly field-tested. Physical controller pause/resume/expiry behavior also remains pending.
+
+## v0.8.2 — Android queue-sort support
+
+Android v0.4.0 now implements the first HOUSE backend and bundled Snapcast receiver through its existing Browser/Now Playing UI, including the approved Browser polish and saved MP3s/Rap selector. It retains its standalone SMB/Media3 engine. No ESP32 firmware change is required.
+
+This server release adds `POST /queue/reorder`: require the expected queue revision and every existing MPD ID exactly once, then move those entries in place. This allows Now Playing Sort to preserve paused/playing/stopped state, current song, elapsed position, shuffle/repeat, automatic-pause ownership, and pending drain. Stale selections fail with 409 before any move; uncertain writes must be refreshed, never blindly replayed. See [API.md](docs/API.md).
+
+**Validation:** 90 local tests pass, including the original 85-test session/startup baseline plus reorder validation, stale revisions, duplicate files, no-op sorting, and transport/position invariants. v0.8.2 is not yet claimed installed or field-proven. v0.8.1's already-present-S3 restart remains the deployed baseline.
+
+**Next combined checkpoint:** update the Pi using the existing install procedure, install Android v0.4.0, then follow [the phone/S3 checklist](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Validate silent opening, phone/S3 synchronization, sort during pause/play, local mute, background controller presence, audible-return resume, and Quit preserving remaining listeners. Live home/away handoff follows that implementation slice; its open decisions remain unchanged.

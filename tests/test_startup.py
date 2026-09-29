@@ -234,7 +234,8 @@ class StartupHttpTests(StartupFixture):
         for path, payload in (("/play", {}), ("/pause", {}), ("/stop", {}), ("/next", {}),
                               ("/previous", {}), ("/seek", {"seconds": 10}),
                               ("/shuffle", {"enabled": True}), ("/repeat", {"enabled": True}),
-                              ("/queue/clear", {}), ("/queue/replace", {"tracks": ["CDs/New/A.mp3"]})):
+                              ("/queue/clear", {}), ("/queue/replace", {"tracks": ["CDs/New/A.mp3"]}),
+                              ("/queue/reorder", {"songIds": [42], "queueVersion": 1})):
             with self.subTest(path=path):
                 status, body = self.request(path, payload)
                 self.assertEqual(status, 503)
