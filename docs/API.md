@@ -370,3 +370,24 @@ This revealed that MPD 0.24 `single oneshot` can finish the departing session by
 v0.6.1 now treats both `pause` and `stop` as completed final-track boundary states. It clears the temporary Repeat/Single override at that boundary. If a passive renderer returns while the pending final-stop state is still active and MPD is already paused/stopped at the boundary, the service restores the saved options and sends `play` so the retained queue resumes instead of remaining silent or rebuilding the default folder.
 
 **Runtime result:** after installing v0.6.1 with the previously silent S3 still powered, playback resumed automatically. The renderer had already been healthy/present; the fix was entirely in the server session policy. This behavior is now field-proven, not merely unit-tested.
+
+
+## Planned runtime passive-default API
+
+Android HOUSE mode now requires the passive-radio default folder to be controllable at runtime instead of only through the startup environment.
+
+Initial allowed values:
+
+- `MP3s`
+- `Rap`
+
+The control service needs a small persisted get/set contract for this value. Exact endpoint naming is still implementation detail, but the semantics are fixed:
+
+- GET returns the current server-owned passive default;
+- SET accepts only supported library-relative default folders;
+- persistence survives service restart;
+- changing the value has **no effect on the currently active/paused retained queue**;
+- the selected value is consumed only by the next fresh passive-renderer auto-start;
+- `PASSIVE_DEFAULT_FOLDER` remains the fallback/default when no persisted value exists.
+
+This requirement supports the Android HOUSE Browser button that replaces the STANDALONE SMB button with an `MP3s` / `Rap` selector.
