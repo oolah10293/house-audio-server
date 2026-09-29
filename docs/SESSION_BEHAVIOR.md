@@ -61,7 +61,9 @@ The agreed case is:
 
 Muting the phone while other audible nodes remain must not pause those nodes. An existing retained session is not a fresh idle session, so resuming it is not permission for a controller connecting to an otherwise idle house to start a new track.
 
-The mute-only controller rule is a useful model for PC/browser integration as well; the exact presence/keep-alive behavior of a background app or browser tab still needs implementation definition.
+The same rule applies to PC/browser controllers. **If the last controller leaves an already automatically paused session, end the session without advancing the song.** The next passive radio starts a fresh session using the configured default. This choice was confirmed on 2026-09-29.
+
+**Background apps and screen-off phones remain present while heartbeats continue.** The agreed initial timing is one heartbeat every five seconds, expiring after fifteen seconds without renewal. Explicit Quit detaches immediately rather than waiting for expiry. A still-audible renderer can remain an output if its control connection alone is lost; its roles still belong to one device. Android must maintain its background heartbeat through the appropriate service lifecycle. Browser timer suspension is a lost heartbeat, not proof of presence. These choices were confirmed on 2026-09-29.
 
 ## 6. New shuffle for every fresh passive session
 
@@ -136,16 +138,15 @@ The short HOUSE synchronization buffer and the existing large standalone SMB buf
 
 The rules above describe the desired product, not a completed implementation. Proposed engineering details must remain distinguishable from user decisions.
 
-The Pi service will need to track controller presence and renderer presence/output state separately, retain active/paused sessions, persist the selected passive default folder, and distinguish an unfinished drain from a completed session. Default shuffled order/progress does not survive completed sessions. A stale TCP socket alone must not be treated as proof that a powered-off node is still present. Heartbeats, disconnect grace periods, and storage format have not been chosen.
+The Pi tracks controller presence and renderer/output state separately, retains active/paused sessions, persists the selected passive default folder, and distinguishes an unfinished drain from a completed session. Default shuffled order/progress does not survive completed sessions. A stale TCP socket alone is not proof that a powered-off node is present. Controller heartbeats and expiry follow §5; the phone's home/away network grace period remains separate and undecided.
 
 Controller arrival must not be used as a blanket override of explicit transport commands. **Passive-radio arrival is the deliberate exception:** powering on a passive radio should resume an existing paused MPD session, including a deliberate Pause. This excludes the completed-drain artifact described in §11.
 
 Still to settle before coding the affected edges:
 
-- What happens when the last muted controller disconnects from an already auto-paused session: silently finish that retained track or end the session without advancing it? The discussed finish-current-track case involved music that was still playing.
-- Precisely when a background mobile app or open browser counts as a connected controller; how missed heartbeats and brief network interruptions are handled.
 - Whole-queue continuation for the phone away from home. Initial HOUSE output mute is settled in the Android requirements: start muted; auto-unmute only for phone-initiated playback.
 - Exact recovery behavior after a Pi/service restart during an unfinished or not-yet-processed drain. There is no saved cross-session shuffle cycle to reconcile.
+- Restoring the reason for an automatic pause after a control-service restart. v0.8.0 retains MPD's paused queue but keeps its automatic-pause marker in memory; a passive arrival or explicit Play can resume it. A controller alone must not guess whether an existing pause was automatic or deliberate.
 
 These gaps do not cancel the confirmed rules. They are intentionally not filled with invented decisions. Source implementation and field-validation status are recorded separately in the API docs and README.
 
@@ -199,7 +200,7 @@ Required behavior:
 - it applies only when the house later enters a genuinely fresh passive-renderer auto-start session;
 - passive-radio arrival into an already-playing or ordinary retained paused session still resumes/joins that session; a completed drain is fresh idle and loads the selected default with a new shuffle.
 
-The existing `PASSIVE_DEFAULT_FOLDER` environment value remains the install-time fallback when no saved setting exists. v0.7.0 implements `GET /settings` and `POST /settings` with a persisted `passiveDefaultFolder` (`MP3s` or `Rap`); see [API.md](API.md). The service reads this value once per fresh passive start. No queue/order/progress is persisted, and setting it does not change any active/retained session or pending drain. The server implementation has local regression coverage; Pi installation/field validation and the Android selector remain pending.
+The existing `PASSIVE_DEFAULT_FOLDER` environment value remains the install-time fallback when no saved setting exists. v0.7.0 implements `GET /settings` and `POST /settings` with a persisted `passiveDefaultFolder` (`MP3s` or `Rap`); see [API.md](API.md). The service reads this value once per fresh passive start. No queue/order/progress is persisted, and setting it does not change any active/retained session or pending drain. The server setting is field-proven in v0.7.0, as recorded below. The Android selector remains pending.
 
 
 

@@ -176,6 +176,9 @@ class FakeMonitor:
         return {
             "reachable": self.reachable,
             "presentCount": self.present,
+            "audibleCount": self.present,
+            "clients": [{"id": f"radio-{index}", "present": True, "audible": True}
+                        for index in range(self.present)],
         }
 
 
@@ -220,6 +223,8 @@ class FakeMpd:
                 self.state_data["queueLength"] = len(self.queue_files)
             elif command == "stop":
                 self.state_data["transport"] = "stop"
+            elif command == "pause 1":
+                self.state_data["transport"] = "pause"
             elif command == "play" or command.startswith("play "):
                 if self.state_data.get("queueLength", 0) > 0:
                     self.state_data["transport"] = "play"

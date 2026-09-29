@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source/deployed version: **0.7.0** — persisted passive-default settings, with 42 local tests and GitHub CI passing. The permanent Pi now has v0.7.0 installed and the settings API plus real passive-session use of the saved `Rap` default are field-proven.
+Current source: **v0.8.0**, controller/output presence and session policy (73 local tests pass; Pi installation/field validation pending). Latest confirmed deployed version: **v0.7.0**, with the settings API and fresh passive use of the saved Rap default field-proven.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -41,15 +41,16 @@ The service polls Snapserver's `Server.GetStatus` over the local JSON-RPC contro
 
 ### `GET /session`
 
-Returns the current autonomous passive-renderer policy state, including:
+Returns the current autonomous house-session policy state, including:
 
 - whether the policy is enabled;
-- the last effective passive-renderer count seen by policy;
+- the last effective total-node, passive-renderer, controller, and audible counts seen by policy;
+- automatic-pause status and reason;
 - whether a final-track stop is armed;
 - the MPD song id being allowed to finish;
 - the most recent policy action.
 
-Session-policy output includes `freshIdleAutoStartImplemented`, `freshSessionShuffleImplemented: true`, `defaultShufflePolicy: "new_each_fresh_session"`, `runtimeDefaultFolderImplemented: true` (v0.7.0), and `controllerPresenceImplemented: false`. The obsolete `persistentDefaultShuffleImplemented` field is removed: saved order/progress across completed sessions is no longer a requirement. `defaultFolder` is the current runtime selection for the next fresh passive session, which can differ from the folder of the active queue.
+Session-policy output includes `freshIdleAutoStartImplemented`, `freshSessionShuffleImplemented: true`, `defaultShufflePolicy: "new_each_fresh_session"`, `runtimeDefaultFolderImplemented: true` (v0.7.0), and `controllerPresenceImplemented: true` (v0.8.0). The obsolete `persistentDefaultShuffleImplemented` field is removed: saved order/progress across completed sessions is no longer a requirement. `defaultFolder` is the current runtime selection for the next fresh passive session, which can differ from the folder of the active queue.
 
 ### `GET /settings` — v0.7.0
 
@@ -223,6 +224,7 @@ Implemented now:
 - Shuffle/Repeat
 - queue clear/replace
 - persisted passive-default read/set (v0.7.0; permanent-Pi validation complete)
+- controller attach/heartbeat/detach, output reports, and muted-controller session policy (v0.8.0; source/tests complete, Pi validation pending)
 
 Implemented:
 
@@ -236,9 +238,8 @@ Implemented:
 
 Still not implemented:
 
-- muted-controller pause/retain behavior
-- controller attach/heartbeat/detach
-- local renderer mute state
+- Android local receiver mute/readiness implementation (server reporting is implemented)
+- transport-command request deduplication/revision checks
 - Android/Windows authentication/pairing
 - push state feed
 
@@ -469,7 +470,7 @@ The supplied snapshot reports:
 
 This directly confirms the deployed version and the pre-completion return/cancellation path. The longer-off audible result is consistent with a new session, but no `started_default_session` snapshot or queue comparison was supplied for that trial. In particular, replacing a manually selected CD/Rap queue with the configured default after completed drain remains a separate field check. The policy and shuffle regression tests remain passing (27 local tests; GitHub CI passed).
 
-At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 now implements the server settings API in source/tests; deployment and the Android button remain pending. Controller/output presence is still upcoming HOUSE work. These results do not represent an Android HOUSE build or an ESP32 firmware release.
+At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 provides the field-proven settings API; the Android button remains pending. Controller/output presence is implemented/tested in v0.8.0, awaiting deployment. These results do not represent an Android HOUSE build or an ESP32 firmware release.
 
 
 ## v0.7.0 runtime validation
@@ -490,3 +491,115 @@ Observed sequence:
 This confirms the two key API semantics in real use: changing the future passive default is non-disruptive to the active session, and the saved choice is applied to the next fresh passive-radio session.
 
 Controller presence and muted-phone/output-state policy remain the next server work.
+
+## v0.8.0 controller presence and output contract
+
+**Source/test status:** 73 tests pass locally. Installation and physical controller/output tests are pending. v0.7.0 remains the latest confirmed Pi deployment.
+
+The controller API is shared by Android, Windows, and browser clients. No Android receiver or UI is implemented in this release. The existing MPD transport endpoints remain authoritative. Presence calls update bookkeeping; the policy applies resulting playback transitions on its next poll (normally within 0.5 seconds while dependencies are available).
+
+### Read presence: `GET /controllers`
+
+Returns `service`, `version`, and `presence`:
+
+- `controllers`: controller id, associated renderer id (or null), `present`, `outputMuted`, `outputReady`, remaining lease seconds, and latest sequence; lease tokens are omitted.
+- `renderers`: Snapcast renderer id, owning controller id (or null), passive classification, effective presence, and policy audibility.
+- `controllerCount`: live controller leases; `passiveCount`: present unassociated radios.
+- `presentCount`: passive radios plus unique controlling devices with a live lease or a still-audible output. A phone is counted once across its roles.
+- `audibleCount`: passive audible outputs plus unique audible controlling devices.
+- `passiveIds`, `snapserverReachable`, `heartbeatSeconds`, and `leaseSeconds`.
+
+`GET /renderers` continues to expose raw normalized Snapcast observations. `GET /controllers` adds controller ownership and reported local output state. Counts from an unreachable Snapserver are incomplete; autonomous policy waits for trustworthy renderer evidence rather than treating its outage as departure.
+
+### Attach: `POST /controllers/attach`
+
+Register before starting the associated Snapcast receiver. Use stable application-generated identities, and associate only that device's own receiver:
+
+```json
+{
+  "controllerId": "phone-example",
+  "rendererId": "phone-example-audio",
+  "outputMuted": true,
+  "outputReady": false
+}
+```
+
+`controllerId` is required. `rendererId` may be omitted/null for a control-only browser. IDs contain 1–128 ASCII letters, digits, underscores, dots, colons, or hyphens, beginning with a letter/digit. Output fields are optional booleans, defaulting to muted/not-ready. A control-only client must remain muted/not-ready.
+
+The response includes service/version and:
+
+```json
+{
+  "controller": {
+    "controllerId": "phone-example",
+    "rendererId": "phone-example-audio",
+    "outputMuted": true,
+    "outputReady": false,
+    "present": true,
+    "leaseRemainingSeconds": 15.0,
+    "sequence": 0
+  },
+  "leaseId": "<opaque lease token>",
+  "heartbeatSeconds": 5.0,
+  "leaseSeconds": 15.0
+}
+```
+
+A new attachment replaces that controller's previous lease. An old token cannot update or detach the replacement. A renderer already owned by another controller returns 409 `renderer_already_owned`.
+
+On a new Android HOUSE attachment, start locally muted. On a connection recovery, preserve the current local mute choice and report it explicitly; do not replay queued old output changes. Neither muted nor unmuted attachment starts a fresh session or overrides an ordinary explicit Pause.
+
+### Heartbeat/output report: `POST /controllers/heartbeat`
+
+Send every five seconds and immediately when output state changes:
+
+```json
+{
+  "controllerId": "phone-example",
+  "leaseId": "<token from attach>",
+  "sequence": 1,
+  "outputMuted": false,
+  "outputReady": true
+}
+```
+
+All five fields are required. Sequence is a positive integer strictly greater than the last accepted sequence for this lease. Out-of-order/duplicate reports return 409 `stale_controller_sequence` without renewing presence or changing output state. Old tokens return 409 `stale_controller_lease`; expired/detached leases return 409 `expired_controller_lease`. After expiry, attach again and use a new sequence starting at 1. These tokens prevent stale lifecycle writes; they are not authentication/pairing credentials.
+
+`outputMuted` is the user's local mute choice. `outputReady` says the receiver/output path is available to render, including while MPD is paused; it is not a claim that music is currently playing. A call, route failure, or receiver failure can report not-ready without discarding the mute preference. This API reports output state; the client must actually mute/unmute its own receiver.
+
+A controlling output counts as audible only when it is reported unmuted/ready and its associated Snapcast renderer is effectively present and audible. An unmute report without a live receiver cannot resume an automatic pause. A real renderer can remain audible after its control lease expires; it remains a controlling output and never becomes a passive auto-starter.
+
+Background/screen-off apps count while they continue renewing. Expiry is fifteen seconds after the last accepted attach/heartbeat using a monotonic clock; a suspended browser or dead process cannot hold a session indefinitely. Timings are configurable via `CONTROLLER_HEARTBEAT_SECONDS` and `CONTROLLER_LEASE_SECONDS` (heartbeat must be positive and less than expiry).
+
+### Quit: `POST /controllers/detach`
+
+```json
+{"controllerId": "phone-example", "leaseId": "<token from attach>"}
+```
+
+Stop this device's receiver, stop its heartbeat loop, then detach. The response includes `controllerId` and `detached: true`. Detach is immediate/idempotent for the current token and suppresses lingering renderer-socket evidence for that device. It sends no global Stop/Clear directly. The policy observes the remaining nodes and applies the rules below.
+
+### Session transitions
+
+| Event | Policy result |
+| --- | --- |
+| Controller joins fresh idle, even unmuted | Stay stopped; wait for explicit Play/selection. |
+| Controller joins/quits while a radio remains audible | Preserve shared queue, track, position, and transport. |
+| Only controllers with muted/unavailable outputs remain | Pause exactly where playback is, retain queue, mark `autoPaused: true`. |
+| Output becomes audible during that automatic pause | Resume retained playback. |
+| Explicit HTTP Pause/Stop after an automatic pause | Clear automatic-resume ownership; controller arrival/unmute cannot undo it. A passive-radio arrival may still resume ordinary Pause. |
+| Last controller leaves/expires during automatic pause | Stop without advancing; the session ends. Next passive arrival starts a new shuffled configured default. |
+| All nodes leave while playing | Finish the current track, then become fresh idle. |
+| Controller returns before drain completion | Cancel drain; keep playing if audible, otherwise pause/retain. |
+| Controller returns after drain completion | Stay fresh idle; do not resurrect the old queue. |
+| Passive radio returns after completed drain | Start the saved MP3s/Rap default with fresh randomness. |
+
+Session snapshots now use `mode: "controllers_and_renderers"`, combined `presentCount`, separate `controllerCount`/`passiveCount`/`audibleCount`, `controllerPresenceImplemented: true`, and `autoPaused`/`pauseReason` (null or `no_audible_output`). These reflect the last successful policy poll.
+
+### Persistence and remaining boundaries
+
+Renderer-to-controller ownership is saved atomically in `/var/lib/house-audio-server/controllers.json` (override `HOUSE_AUDIO_CONTROLLERS_FILE`). Ownership survives expiry, Quit, and service restart so a known phone cannot later be mistaken for a passive radio. Registration must succeed before its receiver connects. Old associations remain classified as controlled; they are not reassigned to a different controller id. Missing files start empty; corrupt/unreadable files fail startup instead of guessing roles. A binding-write failure returns 503 `controller_storage_failed`; do not start the receiver until attach succeeds.
+
+Live leases, reported mute/readiness, and the automatic-pause marker are in memory. After a service restart clients must attach again; already active associated renderers remain controlled outputs. A retained MPD pause is not guessed to be automatic: resume with explicit Play or a passive-radio arrival until pause-reason recovery is implemented. Unprocessed-drain restart recovery remains open.
+
+Authentication/pairing, transport-command request deduplication/revision checks, and Android receiver/background-service implementation remain separate work. Do not automatically replay Next/queue writes after a lost HTTP response.

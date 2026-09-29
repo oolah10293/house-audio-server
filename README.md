@@ -2,13 +2,13 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source/deployed version: **0.7.0** — persisted runtime `MP3s` / `Rap` default selection; 42 local tests and GitHub CI pass. v0.7.0 is now installed and field-validated on the permanent Pi: GET/POST settings work, changing the default does not disturb active playback, and after a completed drain a passive S3 started a fresh `Rap` session (first observed track: Ludacris — *Southern Hospitality*).
+Current source: **v0.8.0** — controller/output presence and muted-controller session handling; 73 local tests pass. Pi installation/field validation of v0.8.0 is pending. Latest confirmed deployed version: **v0.7.0**, field-proven for changing MP3s/Rap without disturbing playback and starting a fresh Rap session after completed drain (Ludacris — *Southern Hospitality*).
 
 The core rule is simple: **there is one house playback session**. Devices on the home network do not start separate competing music sessions. A room may be the only active output, or several rooms may be active, but every participating output follows the same queue, track, playback position, shuffle state, and transport state.
 
 ## Agreed playback and session behavior
 
-**Read [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) before changing the control service or integrating any client.** It records the agreed rules for the Pi, Android app, PC player, browser controller, and passive nodes. Some passive-renderer rules are implemented and field-proven. Runtime default-folder selection is implemented in v0.7.0 source/tests; controller-aware rules remain future work.
+**Read [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md) before changing the control service or integrating any client.** It records the agreed rules for the Pi, Android app, PC player, browser controller, and passive nodes. Some passive-renderer rules are implemented and field-proven. Runtime default-folder selection is field-proven in v0.7.0. Controller-aware rules are implemented in v0.8.0 source/tests and await Pi validation.
 
 The important session distinctions are:
 
@@ -180,7 +180,7 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 6. **DONE** — Add and runtime-validate the basic `house-audio-server` MPD browse/state/queue/transport API on the permanent Pi.
 7. **DONE** — Track Snapserver renderer presence, including reliable hard-power-off detection via `lastSeen` freshness rather than Snapserver's raw connected flag.
 8. **DONE for passive-radio basics** — renderer-driven session behavior is working: fresh-idle radio power-on starts default `MP3s` Random/Repeat playback; joining active playback preserves the queue; v0.5.1 resumes an ordinary paused session; v0.6.1 discovered MPD's `pause @ 0.0` boundary artifact. Its old-queue resume behavior is superseded by v0.6.2 fresh-idle handling. v0.6.2 is installed, with initial short/long power-cycle results recorded below.
-9. **IN PROGRESS HOUSE server contract** — persisted runtime default-folder selection is implemented and field-proven in v0.7.0. Changing `MP3s`/`Rap` leaves current playback untouched; after completed drain the next passive session uses the saved choice with a fresh shuffle. Controller-presence/output-state policy is next. Cross-session shuffle persistence is no longer desired.
+9. **IN PROGRESS HOUSE server contract** — persisted runtime default-folder selection is implemented and field-proven in v0.7.0. Changing `MP3s`/`Rap` leaves current playback untouched; after completed drain the next passive session uses the saved choice with a fresh shuffle. Controller-presence/output-state policy is implemented/tested in v0.8.0, awaiting installation and field testing. Cross-session shuffle persistence is no longer desired.
 10. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
 11. **DONE** — two independent ESP32/PCM5102A renderers have passed the real audible synchronization test.
 12. **IN PROGRESS reliability work** — diagnose occasional few-second single-node audio dropouts using the v0.6.0 unattended diagnostics recorder.
@@ -420,7 +420,7 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is controller/output presence policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. Persisted runtime default-folder selection is implemented in v0.7.0 source/tests, awaiting Pi installation. v0.6.0 provides the first unattended diagnostics capture for that investigation.
+**The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is physical validation of controller/output policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. Persisted runtime default-folder selection is field-proven in v0.7.0. Controller/output presence is implemented/tested in v0.8.0, awaiting deployment. v0.6.0 provides the first unattended diagnostics capture for that investigation.
 
 
 ### Leave-and-return pause edge — v0.5.1
@@ -540,7 +540,7 @@ The supplied snapshot reports:
 
 This directly confirms the deployed version and the pre-completion return/cancellation path. The longer-off audible result is consistent with a new session, but no `started_default_session` snapshot or queue comparison was supplied for that trial. In particular, replacing a manually selected CD/Rap queue with the configured default after completed drain remains a separate field check. The policy and shuffle regression tests remain passing (27 local tests; GitHub CI passed).
 
-At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 now implements the server settings API in source/tests; deployment and the Android button remain pending. Controller/output presence is still upcoming HOUSE work. These results do not represent an Android HOUSE build or an ESP32 firmware release.
+At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 now provides the field-proven server settings API; the Android button remains pending. Controller/output presence is implemented/tested in v0.8.0, awaiting deployment. These results do not represent an Android HOUSE build or an ESP32 firmware release.
 
 
 ### v0.7.0 permanent-Pi field validation — PASS
@@ -557,4 +557,24 @@ Confirmed:
 
 This proves the server behavior required by the future Android HOUSE `MP3s` / `Rap` button: the phone can change the Pi-owned future passive default without disturbing current listeners, and the saved choice is consumed on the next genuinely fresh passive-S3 session.
 
-The next server milestone is controller presence plus muted-phone/output-state handling.
+That next server milestone is implemented in v0.8.0 below; physical controller/output validation remains pending.
+
+## v0.8.0 — controllers and muted-phone sessions
+
+The Pi now has a shared controller-presence API for Android, Windows, and browser clients:
+
+- `GET /controllers`; `POST /controllers/attach`, `/controllers/heartbeat`, and `/controllers/detach`.
+- Five-second heartbeats and fifteen-second expiry; background/screen-off apps remain present while renewing. Quit detaches immediately.
+- Controller and renderer roles belong to one device. Durable renderer ownership prevents a known phone's Snapcast socket from becoming a passive radio after expiry, Quit, or service restart.
+- Muted/unavailable-output controllers hold a paused queue/song/position. Audible return resumes that automatic pause; explicit Pause/Stop remain respected.
+- The last controller leaving an automatic pause ends the session without advancing. All nodes leaving during playback still finish the current song, and pre-boundary return preserves that session.
+- Fresh-idle controller attachment never starts or reshuffles music. Only passive radios start the configured default after completed drain.
+- Lease tokens and increasing sequence numbers reject stale lifecycle/output reports. Local mute choice and actual output readiness are reported separately.
+
+The two previously open choices—background presence and ending the last muted controller's auto-paused session—were confirmed on 2026-09-29 and recorded in the canonical session document. The existing Android UI and planned Browser polish remain unchanged in scope; this release supplies their server dependency.
+
+**Validation:** 73 local tests pass, including the prior passive/shuffle/settings suite, HTTP lifecycle requests, persistence of renderer ownership, expiry/stale reports, drain boundaries, manual transport overrides, output failure/recovery, and MPD-write retry. Pi deployment and real controller/output tests are pending. The most recently confirmed installed service remains v0.7.0; there is no Android HOUSE APK or ESP32 firmware change in this milestone.
+
+Use the existing installer. The current systemd state directory also stores `controllers.json`; no MPD/Snapserver configuration change is needed. See [docs/API.md](docs/API.md) for the complete client contract. The main field check is a controller holding a muted lease while the last radio leaves (pause), an audible radio returning (resume), and the last muted controller detaching/expiring (stop, then fresh default on the next radio).
+
+Controller leases and the automatic-pause reason are not restored across control-service restarts yet. MPD retains its paused queue; explicit Play or a passive arrival can resume it. Unfinished-drain restart recovery, authentication/pairing, and transport-command deduplication remain open. Android integration must report real renderer readiness and must not replay stale transport writes.

@@ -4,7 +4,7 @@
 Current scope:
 - read MPD health/state/queue/library
 - basic MPD transport and queue control over HTTP
-- live Snapserver renderer-presence tracking
+- live Snapserver renderer presence and leased controller/output state
 - passive sessions: final-track drain, fresh-idle startup, and a new default shuffle
 - persisted runtime choice of the passive default folder
 
@@ -18,6 +18,8 @@ import json
 from collections import deque
 import os
 import random
+import re
+import secrets
 import socket
 import tempfile
 import threading
@@ -29,7 +31,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.7.0"
+SERVICE_VERSION = "0.8.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -64,6 +66,11 @@ SETTINGS_FILE = os.environ.get(
     "HOUSE_AUDIO_SETTINGS_FILE", "/var/lib/house-audio-server/settings.json"
 )
 PASSIVE_DEFAULT_FOLDERS = ("MP3s", "Rap")
+CONTROLLER_BINDINGS_FILE = os.environ.get(
+    "HOUSE_AUDIO_CONTROLLERS_FILE", "/var/lib/house-audio-server/controllers.json"
+)
+CONTROLLER_HEARTBEAT_SECONDS = float(os.environ.get("CONTROLLER_HEARTBEAT_SECONDS", "5"))
+CONTROLLER_LEASE_SECONDS = float(os.environ.get("CONTROLLER_LEASE_SECONDS", "15"))
 
 DIAGNOSTICS_ENABLED = os.environ.get(
     "DIAGNOSTICS_ENABLED", "true"
@@ -166,6 +173,192 @@ class PassiveDefaultSettings:
                         # fails; never report it as an MPD availability failure.
                         pass
             return self.snapshot()
+
+
+class ControllerRegistry:
+    """Leased control presence plus durable ownership of Snapcast renderer ids.
+
+    Leases and mute reports are transient. Renderer ownership survives expiry,
+    detach, and service restart so a phone cannot become a passive auto-starter.
+    """
+
+    def __init__(self, path: Optional[str] = None, clock=time.monotonic,
+                 heartbeat_seconds=CONTROLLER_HEARTBEAT_SECONDS,
+                 lease_seconds=CONTROLLER_LEASE_SECONDS):
+        if not 0 < heartbeat_seconds < lease_seconds < float("inf"):
+            raise ValueError("Require 0 < controller heartbeat < lease expiry")
+        self.path = Path(path) if path is not None else None
+        self.clock = clock
+        self.heartbeat_seconds = heartbeat_seconds
+        self.lease_seconds = lease_seconds
+        self._lock = threading.RLock()
+        self._leases: Dict[str, dict] = {}
+        self._bindings: Dict[str, str] = {}
+        if self.path is not None:
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                data = {}
+            if not isinstance(data, dict):
+                raise ValueError("Controller bindings must be an object")
+            for renderer_id, controller_id in data.items():
+                self._id(renderer_id, "rendererId")
+                self._id(controller_id, "controllerId")
+            self._bindings = data
+
+    @staticmethod
+    def _id(value, field):
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value):
+            raise ApiError(400, "invalid_controller_request", f"Invalid {field}")
+        return value
+
+    def _save_binding(self, renderer_id, controller_id):
+        if self._bindings.get(renderer_id) == controller_id:
+            return
+        updated = {**self._bindings, renderer_id: controller_id}
+        temporary = None
+        try:
+            if self.path is not None:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                        dir=self.path.parent, prefix=f".{self.path.name}.", delete=False) as target:
+                    temporary = Path(target.name)
+                    json.dump(updated, target)
+                    target.write("\n")
+                    target.flush()
+                    os.fsync(target.fileno())
+                os.replace(temporary, self.path)
+                self._bindings = updated
+                directory = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+            else:
+                self._bindings = updated
+        except OSError as exc:
+            raise ApiError(503, "controller_storage_failed", str(exc)) from exc
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _view(self, controller_id, lease, now):
+        return {
+            "controllerId": controller_id, "rendererId": lease["rendererId"],
+            "outputMuted": lease["outputMuted"],
+            "outputReady": lease["outputReady"],
+            "present": not lease["detached"] and now < lease["expires"],
+            "leaseRemainingSeconds": round(max(0, lease["expires"] - now), 3),
+            "sequence": lease["sequence"],
+        }
+
+    def attach(self, payload):
+        if not set(payload) <= {"controllerId", "rendererId", "outputMuted", "outputReady"}:
+            raise ApiError(400, "invalid_controller_request", "Unknown attach field")
+        controller_id = self._id(payload.get("controllerId"), "controllerId")
+        renderer_id = payload.get("rendererId")
+        if renderer_id is not None:
+            self._id(renderer_id, "rendererId")
+        output_muted = payload.get("outputMuted", True)
+        output_ready = payload.get("outputReady", False)
+        if not isinstance(output_muted, bool) or not isinstance(output_ready, bool):
+            raise ApiError(400, "invalid_controller_request", "outputMuted and outputReady must be boolean")
+        if renderer_id is None and (not output_muted or output_ready):
+            raise ApiError(400, "renderer_required", "A controller without a renderer must be muted and not ready")
+        with self._lock:
+            if renderer_id is not None:
+                owner = self._bindings.get(renderer_id)
+                if owner is not None and owner != controller_id:
+                    raise ApiError(409, "renderer_already_owned", "Renderer belongs to another controller")
+                self._save_binding(renderer_id, controller_id)
+            now = self.clock()
+            lease = {"leaseId": secrets.token_urlsafe(24), "rendererId": renderer_id,
+                     "outputMuted": output_muted, "expires": now + self.lease_seconds,
+                     "outputReady": output_ready,
+                     "sequence": 0, "detached": False}
+            self._leases[controller_id] = lease
+            return self._response(controller_id, lease, now)
+
+    def _response(self, controller_id, lease, now):
+        return {"controller": self._view(controller_id, lease, now),
+                "leaseId": lease["leaseId"], "heartbeatSeconds": self.heartbeat_seconds,
+                "leaseSeconds": self.lease_seconds}
+
+    def _lookup(self, payload, allow_detached=False):
+        controller_id = self._id(payload.get("controllerId"), "controllerId")
+        lease = self._leases.get(controller_id)
+        if lease is None or payload.get("leaseId") != lease["leaseId"]:
+            raise ApiError(409, "stale_controller_lease", "Attach again and use the new lease")
+        if not allow_detached and (lease["detached"] or self.clock() >= lease["expires"]):
+            raise ApiError(409, "expired_controller_lease", "Attach again; expired leases cannot be renewed")
+        return controller_id, lease
+
+    def heartbeat(self, payload):
+        if set(payload) != {"controllerId", "leaseId", "sequence", "outputMuted", "outputReady"}:
+            raise ApiError(400, "invalid_controller_request", "Heartbeat needs controllerId, leaseId, sequence, outputMuted, outputReady")
+        sequence = payload["sequence"]
+        if (type(sequence) is not int or sequence <= 0 or not isinstance(payload["outputMuted"], bool)
+                or not isinstance(payload["outputReady"], bool)):
+            raise ApiError(400, "invalid_controller_request", "Positive integer sequence and boolean output fields required")
+        with self._lock:
+            controller_id, lease = self._lookup(payload)
+            if sequence <= lease["sequence"]:
+                raise ApiError(409, "stale_controller_sequence", "Use a newer sequence; do not replay old output state")
+            if lease["rendererId"] is None and (not payload["outputMuted"] or payload["outputReady"]):
+                raise ApiError(400, "renderer_required", "A controller without a renderer must be muted and not ready")
+            now = self.clock()
+            lease.update(sequence=sequence, outputMuted=payload["outputMuted"],
+                         outputReady=payload["outputReady"], expires=now + self.lease_seconds)
+            return self._response(controller_id, lease, now)
+
+    def detach(self, payload):
+        if set(payload) != {"controllerId", "leaseId"}:
+            raise ApiError(400, "invalid_controller_request", "Detach needs controllerId and leaseId")
+        with self._lock:
+            controller_id, lease = self._lookup(payload, allow_detached=True)
+            lease.update(detached=True, expires=0, outputMuted=True, outputReady=False)
+            return {"controllerId": controller_id, "detached": True}
+
+    def snapshot(self, snap):
+        with self._lock:
+            now = self.clock()
+            controllers = [self._view(key, lease, now) for key, lease in sorted(self._leases.items())]
+            live = {item["controllerId"] for item in controllers if item["present"]}
+            passive, passive_audible, controlled_audible = set(), set(), set()
+            renderers = []
+            for client in snap.get("clients", []):
+                renderer_id = str(client.get("id", ""))
+                owner = self._bindings.get(renderer_id)
+                present = bool(client.get("present", False))
+                audible = present and bool(client.get("audible", False))
+                if owner is None:
+                    if present:
+                        passive.add(renderer_id)
+                    if audible:
+                        passive_audible.add(renderer_id)
+                else:
+                    lease = self._leases.get(owner)
+                    # Local mute/detach overrides a temporarily stale Snapcast
+                    # report. A still-audible renderer can outlive its control
+                    # lease, but it never becomes a passive radio.
+                    if lease is not None:
+                        audible = audible and not lease["outputMuted"] and lease["outputReady"] and not lease["detached"]
+                        audible = audible and lease["rendererId"] == renderer_id
+                    if audible:
+                        controlled_audible.add(owner)
+                renderers.append({"rendererId": renderer_id, "controllerId": owner,
+                                  "passive": owner is None, "present": present, "audible": audible})
+            return {
+                "heartbeatSeconds": self.heartbeat_seconds, "leaseSeconds": self.lease_seconds,
+                "controllers": controllers, "renderers": renderers,
+                "controllerCount": len(live), "passiveCount": len(passive),
+                "presentCount": len(passive) + len(live | controlled_audible),
+                "audibleCount": len(passive_audible) + len(controlled_audible),
+                "passiveIds": sorted(passive),
+                "snapserverReachable": bool(snap.get("reachable", False)),
+            }
 
 
 @dataclass
@@ -301,6 +494,7 @@ class MpdClient:
         start_index: int = 0,
         play: bool = True,
         position_seconds: float = 0.0,
+        before_write: Optional[Callable[[], None]] = None,
     ) -> Dict[str, object]:
         if not tracks:
             raise ApiError(400, "empty_queue", "tracks must contain at least one item")
@@ -314,6 +508,8 @@ class MpdClient:
             raise ApiError(400, "invalid_track", "Track paths cannot be empty")
 
         with MPD_WRITE_LOCK:
+            if before_write is not None:
+                before_write()
             commands = ["clear"]
             commands.extend(f"add {mpd_quote(track)}" for track in safe_tracks)
             if play:
@@ -911,7 +1107,7 @@ DIAGNOSTICS = DiagnosticsRecorder(SNAPCAST_MONITOR)
 
 
 class PassiveSessionPolicy:
-    """Autonomous policy for passive renderer nodes.
+    """One house session policy for passive radios and controlling nodes.
 
     Current behavior:
     - fresh idle + passive renderer present/arrives -> start the default folder;
@@ -919,6 +1115,8 @@ class PassiveSessionPolicy:
     - final passive renderer leaves during playback -> finish current track,
       then stop;
     - renderer returns before that track ends -> cancel the pending stop.
+    - controllers without audible outputs hold an automatic retained pause;
+    - last controller leaving that automatic pause ends the session immediately.
 
     Each genuinely fresh session gets a new default-folder shuffle. Completed
     drains end the old session, even when MPD lands paused on its next track.
@@ -934,12 +1132,14 @@ class PassiveSessionPolicy:
         default_folder: str = PASSIVE_DEFAULT_FOLDER,
         shuffle: Optional[Callable[[List[str]], None]] = None,
         settings: Optional[PassiveDefaultSettings] = None,
+        controllers: Optional[ControllerRegistry] = None,
     ) -> None:
         self.monitor = monitor
         self.mpd_factory = mpd_factory
         self.enabled = enabled
         self.poll_seconds = poll_seconds
         self.settings = settings
+        self.controllers = controllers if controllers is not None else ControllerRegistry()
         self.default_folder = (
             str(settings.snapshot()["passiveDefaultFolder"])
             if settings is not None else validate_relative_path(default_folder)
@@ -955,6 +1155,8 @@ class PassiveSessionPolicy:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._previous_present_count: Optional[int] = None
+        self._previous_presence: Optional[dict] = None
+        self._auto_paused_state: Optional[tuple] = None
         self._pending_final_stop = False
         self._pending_song_id: Optional[int] = None
         self._saved_repeat = False
@@ -983,9 +1185,14 @@ class PassiveSessionPolicy:
         with self._lock:
             return {
                 "enabled": self.enabled,
-                "mode": "passive_renderers_only",
+                "mode": "controllers_and_renderers",
                 "defaultFolder": self._default_folder(),
                 "presentCount": self._previous_present_count,
+                "controllerCount": (self._previous_presence or {}).get("controllerCount"),
+                "passiveCount": (self._previous_presence or {}).get("passiveCount"),
+                "audibleCount": (self._previous_presence or {}).get("audibleCount"),
+                "autoPaused": self._auto_paused_state is not None,
+                "pauseReason": "no_audible_output" if self._auto_paused_state is not None else None,
                 "pendingFinalStop": self._pending_final_stop,
                 "pendingSongId": self._pending_song_id,
                 "lastAction": self._last_action,
@@ -994,7 +1201,7 @@ class PassiveSessionPolicy:
                 "freshSessionShuffleImplemented": True,
                 "defaultShufflePolicy": "new_each_fresh_session",
                 "runtimeDefaultFolderImplemented": self.settings is not None,
-                "controllerPresenceImplemented": False,
+                "controllerPresenceImplemented": True,
             }
 
     def _record(self, action: str) -> None:
@@ -1121,8 +1328,8 @@ class PassiveSessionPolicy:
             with MPD_WRITE_LOCK:
                 self._tick_locked()
         except (OSError, MpdError) as exc:
-            with self._lock:
-                self._previous_present_count = None
+            # Keep the previous successful sample so a failed departure/pause
+            # write is retried, not lost by treating the next poll as a baseline.
             self._record(f"policy_waiting_for_mpd: {exc}")
 
     def _complete_final_stop(self, mpd: MpdClient) -> None:
@@ -1132,92 +1339,100 @@ class PassiveSessionPolicy:
         mpd.command("stop")
         self._restore_options(mpd, "final_track_completed_session_idle")
 
+    @staticmethod
+    def _session_identity(state):
+        return state.get("songId"), state.get("queueVersion")
+
+    def explicit_transport(self, mpd):
+        """Called under MPD_WRITE_LOCK before deliberate play/pause/stop/queue edits."""
+        if self._pending_final_stop:
+            self._restore_options(mpd, "pending_stop_cancelled_explicit_command")
+        with self._lock:
+            self._auto_paused_state = None
+
+    def _apply_controller_pause(self, mpd, presence):
+        state = mpd.state()
+        transport = state.get("transport")
+        with self._lock:
+            auto_paused = self._auto_paused_state
+        if auto_paused is not None and (
+            transport != "pause" or self._session_identity(state) != auto_paused
+        ):
+            # A deliberate/out-of-band transport or queue edit supersedes our
+            # automatic pause. Controller arrival must not override manual Pause.
+            with self._lock:
+                self._auto_paused_state = None
+            auto_paused = None
+        if auto_paused is not None:
+            if presence["presentCount"] == 0:
+                mpd.command("stop")
+                with self._lock:
+                    self._auto_paused_state = None
+                self._record("last_muted_controller_left_session_idle")
+            elif presence["audibleCount"] > 0:
+                mpd.command("play")
+                with self._lock:
+                    self._auto_paused_state = None
+                self._record("audible_node_resumed_retained_session")
+        elif (transport == "play" and presence["controllerCount"] > 0
+              and presence["audibleCount"] == 0):
+            mpd.command("pause 1")
+            with self._lock:
+                self._auto_paused_state = self._session_identity(state)
+            self._record("paused_muted_controllers_only")
+
     def _tick_locked(self) -> None:
         if not self.enabled:
             return
-
         snap = self.monitor.snapshot()
         if not bool(snap.get("reachable", False)):
-            # Never convert a Snapserver outage into "all radios left".
+            # Unknown renderer state is not proof of departure or inaudibility.
             with self._lock:
                 self._previous_present_count = None
+                self._previous_presence = None
             self._record("waiting_for_snapserver")
             return
-
-        raw_present = snap.get("presentCount", 0)
-        present_count = int(raw_present) if isinstance(raw_present, int) else 0
-
+        presence = self.controllers.snapshot(snap)
+        present_count = presence["presentCount"]
         with self._lock:
-            previous = self._previous_present_count
+            previous = self._previous_presence
             pending = self._pending_final_stop
-
         mpd = self.mpd_factory()
+        passive_arrival = bool(set(presence["passiveIds"]) - set((previous or {}).get("passiveIds", [])))
 
-        # Resolve a known drain BEFORE re-establishing a Snapserver baseline.
-        # Otherwise a monitor outage could turn its boundary pause into Resume.
+        # Resolve the known drain before interpreting any kind of arrival.
         if pending:
-            try:
-                state = mpd.state()
-            except (OSError, MpdError):
-                self._record("pending_stop_waiting_for_mpd")
-                with self._lock:
-                    self._previous_present_count = present_count
-                return
-
+            state = mpd.state()
             transport = state.get("transport")
-
-            boundary_pause = (
-                transport == "pause"
-                and self._pending_song_id is not None
-                and state.get("songId") != self._pending_song_id
-            )
+            boundary_pause = (transport == "pause" and self._pending_song_id is not None
+                              and state.get("songId") != self._pending_song_id)
             if transport == "stop" or boundary_pause:
                 self._complete_final_stop(mpd)
-                if present_count > 0:
-                    # The boundary already happened, even if arrival and
-                    # completion are first observed in the same policy poll.
+                if presence["passiveCount"] > 0:
                     self._start_default_session(mpd)
-            elif present_count > 0:
-                if transport in ("play", "pause"):
-                    # Renderer returned before the final track ended.
-                    self._restore_options(
-                        mpd, "pending_stop_cancelled_renderer_returned"
-                    )
-                    if transport == "pause":
-                        # Deliberate Pause on the unfinished current song is
-                        # still a retained session; passive arrival resumes it.
-                        mpd.command("play")
-
-            with self._lock:
-                self._previous_present_count = present_count
-            return
-
-        # First good sample after startup/reconnect establishes presence. A
-        # stopped session starts fresh; an ordinary paused session still resumes.
-        if previous is None:
-            if present_count > 0:
-                self._handle_renderer_arrival(mpd, baseline=True)
-            else:
+                # A late controller, even with audible output, cannot restart
+                # the completed old queue or auto-start the fresh default.
+            elif present_count > 0 and transport in ("play", "pause"):
+                self._restore_options(mpd, "pending_stop_cancelled_renderer_returned"
+                                      if presence["passiveCount"] else "pending_stop_cancelled_controller_returned")
+                if transport == "pause" and presence["passiveCount"] > 0:
+                    mpd.command("play")
+                self._apply_controller_pause(mpd, presence)
+        else:
+            if passive_arrival:
+                self._handle_renderer_arrival(mpd, baseline=previous is None)
+            elif previous is None:
                 self._record("presence_baseline_established")
-            with self._lock:
-                self._previous_present_count = present_count
-            return
-
-        if previous == 0 and present_count > 0:
-            self._handle_renderer_arrival(mpd)
-
-        if previous > 0 and present_count == 0:
-            try:
+            self._apply_controller_pause(mpd, presence)
+            if previous is not None and previous["presentCount"] > 0 and present_count == 0:
                 state = mpd.state()
                 if state.get("transport") == "play":
                     self._begin_final_stop(mpd, state)
-                else:
+                elif state.get("transport") != "stop":
                     self._record("last_renderer_left_transport_not_playing")
-            except (OSError, MpdError) as exc:
-                self._record(f"last_renderer_left_mpd_error: {exc}")
-
         with self._lock:
             self._previous_present_count = present_count
+            self._previous_presence = presence
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -1226,8 +1441,9 @@ class PassiveSessionPolicy:
 
 
 PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
+CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE)
 PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
-    SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS
+    SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS
 )
 
 
@@ -1419,6 +1635,13 @@ class ApiHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         try:
+            if path == "/controllers":
+                self._json(200, {
+                    "service": SERVICE_NAME, "version": SERVICE_VERSION,
+                    "presence": CONTROLLERS.snapshot(SNAPCAST_MONITOR.snapshot()),
+                })
+                return
+
             if path == "/settings":
                 self._json(200, {
                     "service": SERVICE_NAME,
@@ -1567,6 +1790,17 @@ class ApiHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
 
+            controller_commands = {
+                "/controllers/attach": CONTROLLERS.attach,
+                "/controllers/heartbeat": CONTROLLERS.heartbeat,
+                "/controllers/detach": CONTROLLERS.detach,
+            }
+            if path in controller_commands:
+                with MPD_WRITE_LOCK:
+                    result = controller_commands[path](payload)
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, **result})
+                return
+
             if path == "/settings":
                 if set(payload) != {"passiveDefaultFolder"}:
                     raise ApiError(
@@ -1587,18 +1821,21 @@ class ApiHandler(BaseHTTPRequestHandler):
 
             if path == "/play":
                 with MPD_WRITE_LOCK:
+                    PASSIVE_SESSION_POLICY.explicit_transport(mpd)
                     mpd.command("play")
                 self._mpd_state_response()
                 return
 
             if path == "/pause":
                 with MPD_WRITE_LOCK:
+                    PASSIVE_SESSION_POLICY.explicit_transport(mpd)
                     mpd.command("pause 1")
                 self._mpd_state_response()
                 return
 
             if path == "/stop":
                 with MPD_WRITE_LOCK:
+                    PASSIVE_SESSION_POLICY.explicit_transport(mpd)
                     mpd.command("stop")
                 self._mpd_state_response()
                 return
@@ -1642,6 +1879,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
             if path == "/queue/clear":
                 with MPD_WRITE_LOCK:
+                    PASSIVE_SESSION_POLICY.explicit_transport(mpd)
                     mpd.command("clear")
                 self._mpd_state_response()
                 return
@@ -1676,6 +1914,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     start_index=start_index,
                     play=play,
                     position_seconds=float(position_seconds),
+                    before_write=lambda: PASSIVE_SESSION_POLICY.explicit_transport(mpd),
                 )
                 self._json(
                     200,
