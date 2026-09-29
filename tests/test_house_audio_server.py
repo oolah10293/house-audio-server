@@ -359,7 +359,76 @@ class SessionPolicyTests(unittest.TestCase):
         self.assertFalse(snapshot["pendingFinalStop"])
         self.assertEqual(
             snapshot["lastAction"],
-            "final_track_completed_session_stopped",
+            "final_track_completed_session_idle",
+        )
+
+    def test_final_track_boundary_pause_clears_pending(self):
+        monitor = FakeMonitor(present=1)
+        mpd = FakeMpd()
+        policy = h.PassiveSessionPolicy(
+            monitor,
+            mpd_factory=lambda: mpd,
+            enabled=True,
+            poll_seconds=0.01,
+        )
+
+        policy._tick()
+        monitor.present = 0
+        policy._tick()
+
+        # Real MPD 0.24 single-oneshot behavior observed in the field:
+        # pause at the next track boundary rather than transport=stop.
+        mpd.state_data["transport"] = "pause"
+        mpd.state_data["songId"] = 99
+        policy._tick()
+
+        self.assertEqual(
+            mpd.commands,
+            ["repeat 0", "single oneshot", "single 0", "repeat 1"],
+        )
+        snapshot = policy.snapshot()
+        self.assertFalse(snapshot["pendingFinalStop"])
+        self.assertEqual(
+            snapshot["lastAction"],
+            "final_track_completed_session_idle",
+        )
+
+    def test_renderer_return_after_boundary_pause_resumes_session(self):
+        monitor = FakeMonitor(present=1)
+        mpd = FakeMpd()
+        policy = h.PassiveSessionPolicy(
+            monitor,
+            mpd_factory=lambda: mpd,
+            enabled=True,
+            poll_seconds=0.01,
+        )
+
+        policy._tick()
+        monitor.present = 0
+        policy._tick()
+
+        # Boundary completed before the policy got a no-renderer cleanup tick.
+        mpd.state_data["transport"] = "pause"
+        mpd.state_data["songId"] = 99
+        monitor.present = 1
+        policy._tick()
+
+        self.assertEqual(
+            mpd.commands,
+            [
+                "repeat 0",
+                "single oneshot",
+                "single 0",
+                "repeat 1",
+                "play",
+            ],
+        )
+        self.assertEqual(mpd.state_data["transport"], "play")
+        snapshot = policy.snapshot()
+        self.assertFalse(snapshot["pendingFinalStop"])
+        self.assertEqual(
+            snapshot["lastAction"],
+            "pending_stop_completed_renderer_resumed_session",
         )
 
     def test_snapserver_outage_does_not_look_like_departure(self):
