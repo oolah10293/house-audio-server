@@ -368,3 +368,5 @@ Observed field state:
 This revealed that MPD 0.24 `single oneshot` can finish the departing session by reaching the next-track boundary in **Pause**, not necessarily transport `stop`.
 
 v0.6.1 now treats both `pause` and `stop` as completed final-track boundary states. It clears the temporary Repeat/Single override at that boundary. If a passive renderer returns while the pending final-stop state is still active and MPD is already paused/stopped at the boundary, the service restores the saved options and sends `play` so the retained queue resumes instead of remaining silent or rebuilding the default folder.
+
+**Runtime result:** after installing v0.6.1 with the previously silent S3 still powered, playback resumed automatically. The renderer had already been healthy/present; the fix was entirely in the server session policy. This behavior is now field-proven, not merely unit-tested.
