@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source: **v0.8.0**, controller/output presence and session policy (73 local tests pass; Pi installation/field validation pending). Latest confirmed deployed version: **v0.7.0**, with the settings API and fresh passive use of the saved Rap default field-proven.
+Current source/deployed version: **v0.8.0**, controller/output presence and session policy (73 local tests and GitHub CI pass). v0.8.0 is installed on the permanent Pi; health and no-controller/passive-renderer baseline validation pass. Physical controller/mute policy validation remains pending.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -494,7 +494,7 @@ Controller presence and muted-phone/output-state policy remain the next server w
 
 ## v0.8.0 controller presence and output contract
 
-**Source/test status:** 73 tests pass locally. Installation and physical controller/output tests are pending. v0.7.0 remains the latest confirmed Pi deployment.
+**Source/test/deployment status:** 73 tests pass locally and GitHub CI passes. v0.8.0 is installed on the permanent Pi. Initial health and controller-baseline checks pass; physical controller/output transition tests remain pending.
 
 The controller API is shared by Android, Windows, and browser clients. No Android receiver or UI is implemented in this release. The existing MPD transport endpoints remain authoritative. Presence calls update bookkeeping; the policy applies resulting playback transitions on its next poll (normally within 0.5 seconds while dependencies are available).
 
@@ -600,6 +600,22 @@ Session snapshots now use `mode: "controllers_and_renderers"`, combined `present
 
 Renderer-to-controller ownership is saved atomically in `/var/lib/house-audio-server/controllers.json` (override `HOUSE_AUDIO_CONTROLLERS_FILE`). Ownership survives expiry, Quit, and service restart so a known phone cannot later be mistaken for a passive radio. Registration must succeed before its receiver connects. Old associations remain classified as controlled; they are not reassigned to a different controller id. Missing files start empty; corrupt/unreadable files fail startup instead of guessing roles. A binding-write failure returns 503 `controller_storage_failed`; do not start the receiver until attach succeeds.
 
-Live leases, reported mute/readiness, and the automatic-pause marker are in memory. After a service restart clients must attach again; already active associated renderers remain controlled outputs. A retained MPD pause is not guessed to be automatic: resume with explicit Play or a passive-radio arrival until pause-reason recovery is implemented. Unprocessed-drain restart recovery remains open.
+Live leases, reported mute/readiness, automatic-pause ownership, and pending-drain state are intentionally transient. The product rule is now that a `house-audio-server` restart ends the old listening session and returns the house to fresh idle; the server should not reconstruct pause reasons or unfinished drains. Durable renderer ownership and passive-default configuration still persist. A controller reconnecting first stays idle; a passive S3 present/arriving starts a new shuffled configured default. v0.8.0 does not yet normalize MPD to fresh idle on startup, so that explicit restart-boundary normalization remains a small implementation gap rather than a state-recovery feature.
 
 Authentication/pairing, transport-command request deduplication/revision checks, and Android receiver/background-service implementation remain separate work. Do not automatically replay Next/queue writes after a lost HTTP response.
+
+
+## v0.8.0 permanent-Pi baseline validation
+
+v0.8.0 is installed and running on the permanent Pi.
+
+Observed immediately after deployment:
+
+- `GET /health`: version `0.8.0`, status `ok`;
+- MPD reachable, protocol `0.24.0`;
+- Snapserver reachable, version `0.31.0`;
+- one S3 connected/present/audible and one remembered S3 offline/stale;
+- `GET /controllers`: no live controllers, one present passive renderer, `presentCount: 1`, `audibleCount: 1`;
+- the active S3 remained classified as passive, showing that the new controller registry did not misclassify existing radios.
+
+This is installation/baseline proof only. Attach/heartbeat/detach, muted-controller automatic pause, audible-return resume, expiry, and last-controller session end still need real field validation.
