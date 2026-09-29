@@ -6,6 +6,7 @@ Current scope:
 - basic MPD transport and queue control over HTTP
 - live Snapserver renderer-presence tracking
 - passive sessions: final-track drain, fresh-idle startup, and a new default shuffle
+- persisted runtime choice of the passive default folder
 
 The service intentionally uses only the Python standard library.
 """
@@ -18,16 +19,17 @@ from collections import deque
 import os
 import random
 import socket
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.6.2"
+SERVICE_VERSION = "0.7.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -58,6 +60,10 @@ PASSIVE_SESSION_POLICY_POLL_SECONDS = float(
     os.environ.get("PASSIVE_SESSION_POLICY_POLL_SECONDS", "0.5")
 )
 PASSIVE_DEFAULT_FOLDER = os.environ.get("PASSIVE_DEFAULT_FOLDER", "MP3s")
+SETTINGS_FILE = os.environ.get(
+    "HOUSE_AUDIO_SETTINGS_FILE", "/var/lib/house-audio-server/settings.json"
+)
+PASSIVE_DEFAULT_FOLDERS = ("MP3s", "Rap")
 
 DIAGNOSTICS_ENABLED = os.environ.get(
     "DIAGNOSTICS_ENABLED", "true"
@@ -86,6 +92,80 @@ class ApiError(RuntimeError):
         self.status = status
         self.code = code
         self.detail = detail
+
+
+class PassiveDefaultSettings:
+    """One server-owned setting; no queue, transport, or shuffle persistence."""
+
+    def __init__(self, path: str, fallback: str = PASSIVE_DEFAULT_FOLDER) -> None:
+        self.path = Path(path)
+        self._lock = threading.RLock()
+        try:
+            with self.path.open(encoding="utf-8") as source:
+                saved = json.load(source)
+            folder = saved.get("passiveDefaultFolder") if isinstance(saved, dict) else None
+        except FileNotFoundError:
+            folder = fallback
+        # A damaged/unreadable saved setting is a startup error. Do not silently
+        # revert to a different folder or overwrite the user's saved choice.
+        self._validate(folder)
+        self._folder = folder
+
+    @staticmethod
+    def _validate(folder: object) -> None:
+        if folder not in PASSIVE_DEFAULT_FOLDERS:
+            raise ApiError(
+                400, "invalid_passive_default_folder",
+                "passiveDefaultFolder must be exactly MP3s or Rap",
+            )
+
+    def snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            return {
+                "passiveDefaultFolder": self._folder,
+                "allowedPassiveDefaultFolders": list(PASSIVE_DEFAULT_FOLDERS),
+            }
+
+    def set_default_folder(self, folder: object) -> Dict[str, object]:
+        self._validate(folder)
+        with self._lock:
+            temporary = None
+            try:
+                # The systemd StateDirectory already supplies the writable
+                # parent. Keep the temporary file on the same filesystem.
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=self.path.parent,
+                    prefix=f".{self.path.name}.", delete=False,
+                ) as target:
+                    temporary = Path(target.name)
+                    json.dump({"passiveDefaultFolder": folder}, target)
+                    target.write("\n")
+                    target.flush()
+                    os.fsync(target.fileno())
+                os.replace(temporary, self.path)
+                self._folder = folder
+                # Keep memory consistent with the replaced file even if the
+                # directory durability check fails and the API returns 503.
+                directory = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+            except OSError as exc:
+                raise ApiError(
+                    503, "settings_write_failed",
+                    "Could not confirm settings persistence; read /settings "
+                    "before retrying: " + str(exc),
+                ) from exc
+            finally:
+                if temporary is not None:
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        # Preserve the original settings error if cleanup also
+                        # fails; never report it as an MPD availability failure.
+                        pass
+            return self.snapshot()
 
 
 @dataclass
@@ -853,12 +933,17 @@ class PassiveSessionPolicy:
         poll_seconds: float = PASSIVE_SESSION_POLICY_POLL_SECONDS,
         default_folder: str = PASSIVE_DEFAULT_FOLDER,
         shuffle: Optional[Callable[[List[str]], None]] = None,
+        settings: Optional[PassiveDefaultSettings] = None,
     ) -> None:
         self.monitor = monitor
         self.mpd_factory = mpd_factory
         self.enabled = enabled
         self.poll_seconds = poll_seconds
-        self.default_folder = validate_relative_path(default_folder)
+        self.settings = settings
+        self.default_folder = (
+            str(settings.snapshot()["passiveDefaultFolder"])
+            if settings is not None else validate_relative_path(default_folder)
+        )
         # OS entropy; never reset a deterministic seed or save a cross-session
         # rotation. Injection lets tests exercise chance repeats without luck.
         self._shuffle = (
@@ -899,7 +984,7 @@ class PassiveSessionPolicy:
             return {
                 "enabled": self.enabled,
                 "mode": "passive_renderers_only",
-                "defaultFolder": self.default_folder,
+                "defaultFolder": self._default_folder(),
                 "presentCount": self._previous_present_count,
                 "pendingFinalStop": self._pending_final_stop,
                 "pendingSongId": self._pending_song_id,
@@ -908,6 +993,7 @@ class PassiveSessionPolicy:
                 "freshIdleAutoStartImplemented": True,
                 "freshSessionShuffleImplemented": True,
                 "defaultShufflePolicy": "new_each_fresh_session",
+                "runtimeDefaultFolderImplemented": self.settings is not None,
                 "controllerPresenceImplemented": False,
             }
 
@@ -923,10 +1009,18 @@ class PassiveSessionPolicy:
             return str(value)
         return "1" if state.get("single") is True else "0"
 
+    def _default_folder(self) -> str:
+        if self.settings is not None:
+            return str(self.settings.snapshot()["passiveDefaultFolder"])
+        return self.default_folder
+
     def _start_default_session(self, mpd: MpdClient) -> None:
-        tracks = mpd.library_files(self.default_folder)
+        # Take one selection at the start of this fresh session. A setting
+        # change after this point belongs to the next fresh session.
+        folder = self._default_folder()
+        tracks = mpd.library_files(folder)
         if not tracks:
-            raise MpdError(f"Default folder {self.default_folder!r} is empty")
+            raise MpdError(f"Default folder {folder!r} is empty")
         self._shuffle(tracks)
         # Explicitly randomize the actual queue as well as enabling MPD Random.
         # Starting item zero is unbiased because the entire list was shuffled.
@@ -947,11 +1041,11 @@ class PassiveSessionPolicy:
         state = mpd.state()
         if state.get("queueLength", 0) == 0:
             raise MpdError(
-                f"Default folder {self.default_folder!r} produced an empty queue"
+                f"Default folder {folder!r} produced an empty queue"
             )
         if state.get("transport") != "play":
             raise MpdError(
-                f"MPD did not start default folder {self.default_folder!r}"
+                f"MPD did not start default folder {folder!r}"
             )
         self._record("started_default_session")
 
@@ -1131,7 +1225,10 @@ class PassiveSessionPolicy:
             self._stop.wait(self.poll_seconds)
 
 
-PASSIVE_SESSION_POLICY = PassiveSessionPolicy(SNAPCAST_MONITOR)
+PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
+PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
+    SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS
+)
 
 
 def parse_mpd_fields(lines: List[str]) -> Dict[str, str]:
@@ -1322,6 +1419,14 @@ class ApiHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         try:
+            if path == "/settings":
+                self._json(200, {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "settings": PASSIVE_DEFAULT_SETTINGS.snapshot(),
+                })
+                return
+
             if path == "/health":
                 snap = SNAPCAST_MONITOR.snapshot()
                 try:
@@ -1461,6 +1566,23 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         try:
             payload = self._read_json()
+
+            if path == "/settings":
+                if set(payload) != {"passiveDefaultFolder"}:
+                    raise ApiError(
+                        400, "invalid_request",
+                        "Provide only passiveDefaultFolder",
+                    )
+                settings = PASSIVE_DEFAULT_SETTINGS.set_default_folder(
+                    payload["passiveDefaultFolder"]
+                )
+                self._json(200, {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "settings": settings,
+                })
+                return
+
             mpd = MpdClient()
 
             if path == "/play":

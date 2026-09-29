@@ -199,5 +199,5 @@ Required behavior:
 - it applies only when the house later enters a genuinely fresh passive-renderer auto-start session;
 - passive-radio arrival into an already-playing or ordinary retained paused session still resumes/joins that session; a completed drain is fresh idle and loads the selected default with a new shuffle.
 
-The existing `PASSIVE_DEFAULT_FOLDER` environment value remains a sensible install-time/default fallback, but controller changes require a runtime persisted setting rather than editing service configuration.
+The existing `PASSIVE_DEFAULT_FOLDER` environment value remains the install-time fallback when no saved setting exists. v0.7.0 implements `GET /settings` and `POST /settings` with a persisted `passiveDefaultFolder` (`MP3s` or `Rap`); see [API.md](API.md). The service reads this value once per fresh passive start. No queue/order/progress is persisted, and setting it does not change any active/retained session or pending drain. The server implementation has local regression coverage; Pi installation/field validation and the Android selector remain pending.
 
