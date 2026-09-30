@@ -349,8 +349,51 @@ These client behaviors preserve the server's existing session authority:
 Android v0.4.1 field testing exposed stale local Now Playing state after Quit and eventual-but-slow return-home recovery (`Socket closed / Retrying in 15s`). These are client-side corrections and do not change the Pi's one-session policy.
 
 
-### v0.4.2 implementation checkpoint
+### v0.4.2 implementation and field checkpoint
 
-Android's service-owned Quit, event-triggered reacquisition and Bluetooth local-output policy are implemented for physical acceptance. Initial silent attachment remains muted even with an existing Bluetooth device; a new media-output connection thereafter unmutes, and deliberate starts while connected unmute. No route event issues MPD transport commands. [Release details](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.2.md).
+Android's service-owned Quit, event-triggered reacquisition, Bluetooth local-output policy and route-specific sync controls are implemented. Physical testing now establishes:
 
-The [HOUSE Country Buffer trial](HOUSE_BUFFER_TRIAL.md) prepares 3000 ms with 20 ms chunks and rollback. Source inspection does **not** establish automatic shared flushing on ordinary MPD/FIFO transport changes; the audible delay is an explicit experimental limitation, not a fulfilled flush requirement. This trial and Android's offset calibration have not been physically accepted. Server v0.8.2 behavior and the outstanding handoff decisions remain unchanged.
+- Bluetooth connect/unmute: **PASS**.
+- Bluetooth disconnect/mute: **PASS**.
+- **+400 ms** timing correction: audibly correct for the currently tested phone/output route; correction remains adjustable pending other routes/devices.
+- HOUSE -> STANDALONE continuation after physical departure: **FAIL / absent**.
+- STANDALONE -> HOUSE live return transition: **FAIL**; close/reopen can then qualify HOUSE successfully.
+- Because live return can fail, private SMB playback and a separately started passive-S3 HOUSE queue can coexist. This split-brain state is a client mode-transition defect; it does not change the server's single-session authority.
+- Existing Bluetooth on HOUSE reattachment: **FAIL** when HOUSE is already playing; the phone can attach muted. Current route state must be evaluated during attachment, not only on future route-change callbacks.
+- Galaxy S8 launch: **FAIL**, app crashes on open; cause is not assigned.
+- HOUSE Quit cleanup still requires its dedicated v0.4.2 field verdict.
+
+The earlier v0.4.2 implementation rule that "initial silent attachment remains muted even with existing Bluetooth" is therefore **superseded for an already-playing HOUSE session**. If Bluetooth is already connected when a phone attaches/reopens into playing HOUSE, treat that existing route as current local-output intent and join unmuted. Existing Bluetooth alone still must not issue Play against deliberately idle/stopped HOUSE.
+
+The [HOUSE Country Buffer trial](HOUSE_BUFFER_TRIAL.md) prepares 3000 ms with 20 ms chunks and rollback. Source inspection does **not** establish automatic shared flushing on ordinary MPD/FIFO transport changes; the audible delay is an explicit experimental limitation, not a fulfilled flush requirement. The trial remains undeployed. Server v0.8.2 behavior is otherwise unchanged.
+
+
+### STANDALONE Bluetooth output-intent parity
+
+The Android standalone SMB player should use the same human-facing Bluetooth intent model while retaining local playback authority:
+
+- Bluetooth disconnect pauses/silences local playback and retains exact queue/song/position.
+- Bluetooth reconnect resumes that retained standalone session.
+- Entering the app or STANDALONE with Bluetooth already connected must evaluate the current route instead of requiring a new connection callback.
+- Explicit Stop/Quit remains authoritative.
+- With no retained standalone session, Bluetooth connection alone starts nothing.
+
+This does not alter server behavior and is not a substitute for the required live STANDALONE -> HOUSE return transition.
+
+## 16. Future source/output expansion
+
+Two next-major-goal directions are now recorded without pretending their detailed behavior is settled.
+
+### Internet radio remains under MPD authority
+
+Internet radio should use the same authoritative source path as library playback:
+
+```text
+Internet stream URL -> MPD -> FIFO -> Snapserver -> HOUSE
+```
+
+Do not add a parallel radio playback authority that bypasses MPD. The existing folder-first rule remains authoritative for local-library playback; radio is a separate MPD source mode. Station management, metadata and source-switch semantics remain to be designed.
+
+### Specialized subwoofer renderer
+
+A future dedicated subwoofer node remains a synchronized HOUSE renderer receiving the authoritative stream. Low-pass/crossover location, mono summing, level control and timing/phase adjustment are intentionally undecided until implementation planning.
