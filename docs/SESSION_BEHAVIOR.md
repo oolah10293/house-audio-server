@@ -100,7 +100,8 @@ Bluetooth route changes are **local phone-output events**, not deliberate house 
 - If the phone was the only audible output, the existing muted-controller rule applies: MPD auto-pauses and retains the exact queue/song/position while that muted phone remains connected as a controller.
 - If that final muted controller later disconnects or expires, the existing last-controller rule ends the retained session without advancing it.
 - Bluetooth audio connect while house music is already playing elsewhere automatically unmutes the phone and joins the current stream, even if the phone had been manually muted before the connection.
-- Bluetooth connect alone does not issue Play against an idle/paused session. If the user subsequently starts music from that phone, the connected Bluetooth route is strong local-output intent and the phone should be unmuted for that deliberate start.
+- **HOUSE attachment/reopen must also evaluate current route state:** if Bluetooth is already connected and the authoritative house session is already playing, treat that existing route as output intent and join unmuted; do not require a new Bluetooth-connect callback.
+- Bluetooth connect or pre-existing Bluetooth alone does not issue Play against an idle/paused session. If the user subsequently starts music from that phone, the connected Bluetooth route is strong local-output intent and the phone should be unmuted for that deliberate start.
 
 This does not change the Pi's one-session policy. The client reports its local output state; the server decides whether zero remaining audible outputs require the existing automatic retained-session pause.
 
