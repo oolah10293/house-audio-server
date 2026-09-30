@@ -20,7 +20,7 @@ The important session distinctions are:
 - All nodes disconnecting during playback means finish the current track, then stop despite Repeat All. A node returning before track end cancels the pending stop and preserves the session.
 - Only a muted phone remaining means **pause and retain the playlist, track, and exact position**, not finish and discard the session. An audible node returning or that phone unmuting resumes the retained session.
 - Every completed drain ends the session. The next passive power-on loads a newly shuffled queue from the currently configured default, even if MPD retained yesterday's CD/Rap queue in `pause @ 0.0`. Do not persist/continue the completed shuffle order or force a different first song; chance repeats are allowed. Only the default folder setting is intended to persist.
-- HOUSE/standalone authority is separate from local output mute. The phone gets a HOUSE-only **Mute output / Unmute output** button. Leaving home while unmuted and playing automatically continues the same song through standalone SMB/Tailscale without sending a stop or queue replacement to MPD; muted/paused phones stay silent.
+- HOUSE/standalone authority is separate from local output mute. The phone gets a HOUSE-only **Mute output / Unmute output** control. Bluetooth route changes are local output events: disconnect mutes the phone without directly pausing/stopping MPD; another audible node keeps the house playing, while a phone that becomes the only remaining muted controller triggers the existing retained-session auto-pause. Bluetooth connect during existing house playback auto-unmutes/rejoins the phone even after manual mute; Bluetooth connection alone does not start idle/paused playback. Leaving home while unmuted and playing automatically continues the same song through standalone SMB/Tailscale without sending a stop or queue replacement to MPD; muted/paused phones stay silent.
 
 The accepted browser interface is another folder-first controller alongside the Android and Windows players. It should share their Pi-side control service rather than introduce a different player or queue. Detailed edge cases and implementation questions are explicitly separated from confirmed decisions in the behavior document.
 
@@ -680,3 +680,15 @@ These client corrections precede the phone/S3 synchronization and muted-controll
 The [correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the first-phone-pass requirements; build/artifact evidence is recorded there. All HOUSE sockets now use normal Android routing after physical direct-route qualification. Loss of that physical route closes phone audio and suspends HOUSE requests/heartbeats; automatic home/away handoff remains later work. Playlist auto-unmute reads pre-command `/state` and, during playback, `/controllers`, excluding the initiating phone's own stale audible report. Unknown audibility preserves mute; no new server endpoint is required.
 
 Next: [Tailscale-on and phone/S3 checklist](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md), including route loss with VPN reachability, audible/inaudible playlist cases, local output icon, background leases, pause/resume/expiry and Quit. No v0.4.1 device pass is implied.
+
+
+### Android v0.4.1 partial phone acceptance
+
+Current real-phone results:
+
+- PASS: HOUSE operation with Tailscale connected.
+- PASS: lower Media3 output icon appearance/location.
+- PASS: muted phone changes song/PLAY LIST without unmuting when an S3 is already audible.
+- FAIL/open: phone/S3 audio synchronization, with the phone approximately one second behind the S3.
+
+New approved Android behavior: Bluetooth connect/disconnect should drive the phone's local HOUSE output state as described in SESSION_BEHAVIOR §7. No server API change is currently implied; existing controller output-muted/output-ready policy remains the authority for whether zero audible outputs auto-pause a retained session.
