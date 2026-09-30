@@ -91,6 +91,19 @@ Starting or replacing the shared playlist uses the **pre-command audible-house s
 
 Deliberate HOUSE Play/Pause/Next/Seek commands control MPD. Local output muting is distinct. Local audio-route selection, volume, and interruption handling must be kept separate from deliberately changing the house transport.
 
+### Bluetooth phone-output policy
+
+Bluetooth route changes are **local phone-output events**, not deliberate house transport commands.
+
+- Bluetooth audio disconnect mutes the phone renderer/output report and must not directly send MPD Pause or Stop.
+- If another house output remains audible, MPD continues playing and those outputs are unaffected.
+- If the phone was the only audible output, the existing muted-controller rule applies: MPD auto-pauses and retains the exact queue/song/position while that muted phone remains connected as a controller.
+- If that final muted controller later disconnects or expires, the existing last-controller rule ends the retained session without advancing it.
+- Bluetooth audio connect while house music is already playing elsewhere automatically unmutes the phone and joins the current stream, even if the phone had been manually muted before the connection.
+- Bluetooth connect alone does not issue Play against an idle/paused session. If the user subsequently starts music from that phone, the connected Bluetooth route is strong local-output intent and the phone should be unmuted for that deliberate start.
+
+This does not change the Pi's one-session policy. The client reports its local output state; the server decides whether zero remaining audible outputs require the existing automatic retained-session pause.
+
 ### Bluetooth-connected phone output
 
 Android Bluetooth routing follows the same separation between local output and shared transport:
@@ -294,3 +307,15 @@ Phone/S3 audible synchronization and the controller pause/resume/expiry lifecycl
 [Android v0.4.1](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the three corrections above. Physical direct-route qualification and departure monitoring are separate from normal-routed HOUSE traffic. Playlist starts use fresh pre-command transport/audible-output state; already-audible other outputs preserve phone mute. Acknowledged explicit starts from pause/stop or otherwise inaudible playback auto-unmute only if no newer local mute intervened. Unknown audibility preserves mute. Mute/Unmute is inside the Media3 bottom strip.
 
 This implements §§7–8 without changing the server contract/session policy. Server v0.8.2 and ESP32 firmware stay unchanged. Physical acceptance is next; automatic home/away same-song handoff and its open choices remain subsequent work.
+
+
+### v0.4.1 first physical results
+
+Android v0.4.1 now has partial device evidence:
+
+- HOUSE works with Tailscale connected;
+- lower-strip local-output control appearance/location is accepted;
+- changing song/PLAY LIST from a muted phone while an S3 is already audible leaves the phone muted and changes shared playback;
+- phone/S3 synchronization is not yet acceptable: phone audio was observed roughly **1 second behind** the S3.
+
+The Bluetooth phone-output policy above was approved after this checkpoint and is not yet an implementation claim.
