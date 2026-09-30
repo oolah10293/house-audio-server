@@ -91,6 +91,20 @@ Starting or replacing the shared playlist uses the **pre-command audible-house s
 
 Deliberate HOUSE Play/Pause/Next/Seek commands control MPD. Local output muting is distinct. Local audio-route selection, volume, and interruption handling must be kept separate from deliberately changing the house transport.
 
+### Bluetooth-connected phone output
+
+Android Bluetooth routing follows the same separation between local output and shared transport:
+
+- an audio-capable Bluetooth connection to the phone always unmutes that phone's HOUSE renderer, including after a prior manual mute;
+- Bluetooth connect does not itself issue MPD Play, so fresh idle and deliberate Pause/Stop remain unchanged;
+- if MPD is playing, the newly unmuted phone joins the current synchronized stream;
+- if MPD is in the server-owned automatic pause caused by that muted phone being the only remaining node, Bluetooth reconnect/unmute resumes the retained session through the existing automatic-pause rule;
+- Bluetooth disconnect mutes the phone renderer but sends no MPD Pause/Stop;
+- another audible house node keeps the shared session playing;
+- if the phone becomes the only remaining muted/inaudible node, the existing muted-controller rule pauses and retains the session.
+
+Thus a Bluetooth route change never directly owns HOUSE transport.
+
 ## 8. Automatic home/away selection and phone handoff
 
 ### Home detection
