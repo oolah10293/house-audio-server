@@ -658,18 +658,7 @@ This is an approved design direction, not yet a deployed configuration change or
 
 ## Next major system goals
 
-After the current Android transition/reliability work is stable, two major expansions are now explicitly planned:
+Future feature details live in their tracking issues rather than being duplicated here:
 
-### Internet radio through MPD
-
-Keep **MPD as the single playback/source authority**. Internet radio should enter the existing digital distribution path through MPD rather than adding a parallel decoder/source path around it:
-
-```text
-online station URL -> MPD -> existing FIFO -> Snapserver -> HOUSE renderers
-```
-
-Local-library playback remains folder-first (`folders are playlists`). Internet radio is an additional MPD source mode, not a replacement for that rule. Station storage/selection UI, metadata handling, queue semantics and source-switch behavior still need design; do not invent them yet.
-
-### Specialized subwoofer renderer
-
-A synchronized subwoofer node is the other next major goal. It should remain a normal participant in the one authoritative HOUSE stream rather than become a second playback authority. Crossover/low-pass implementation, mono handling, level control and per-node timing/phase strategy remain open design work.
+- Internet radio through MPD: [Issue #5](https://github.com/oolah10293/house-audio-server/issues/5).
+- Dedicated synchronized subwoofer renderer: [house-audio-esp32 Issue #4](https://github.com/oolah10293/house-audio-esp32/issues/4).
