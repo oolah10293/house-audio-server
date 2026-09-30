@@ -63,7 +63,7 @@ Muting the phone while other audible nodes remain must not pause those nodes. An
 
 The same rule applies to PC/browser controllers. **If the last controller leaves an already automatically paused session, end the session without advancing the song.** The next passive radio starts a fresh session using the configured default. This choice was confirmed on 2026-09-29.
 
-**Background apps and screen-off phones remain present while heartbeats continue.** The agreed initial timing is one heartbeat every five seconds, expiring after fifteen seconds without renewal. Explicit Quit detaches immediately rather than waiting for expiry. A still-audible renderer can remain an output if its control connection alone is lost; its roles still belong to one device. Android must maintain its background heartbeat through the appropriate service lifecycle. Browser timer suspension is a lost heartbeat, not proof of presence. These choices were confirmed on 2026-09-29.
+**Background apps and screen-off phones remain present while heartbeats continue.** The agreed initial timing is one heartbeat every five seconds, expiring after fifteen seconds without renewal. Explicit Quit detaches immediately rather than waiting for expiry. Quit also clears client-local HOUSE presentation/cache; it does not send global MPD Stop/Clear merely to clean up the client UI. A still-audible renderer can remain an output if its control connection alone is lost; its roles still belong to one device. Android must maintain its background heartbeat through the appropriate service lifecycle. Browser timer suspension is a lost heartbeat, not proof of presence. These choices were confirmed on 2026-09-29.
 
 ## 6. New shuffle for every fresh passive session
 
@@ -93,31 +93,30 @@ Deliberate HOUSE Play/Pause/Next/Seek commands control MPD. Local output muting 
 
 ### Bluetooth phone-output policy
 
-Bluetooth route changes are **local phone-output events**, not deliberate house transport commands.
+Bluetooth route state is **local phone-output intent**, not a deliberate house transport command.
 
-- Bluetooth audio disconnect mutes the phone renderer/output report and must not directly send MPD Pause or Stop.
-- If another house output remains audible, MPD continues playing and those outputs are unaffected.
-- If the phone was the only audible output, the existing muted-controller rule applies: MPD auto-pauses and retains the exact queue/song/position while that muted phone remains connected as a controller.
-- If that final muted controller later disconnects or expires, the existing last-controller rule ends the retained session without advancing it.
-- Bluetooth audio connect while house music is already playing elsewhere automatically unmutes the phone and joins the current stream, even if the phone had been manually muted before the connection.
-- **HOUSE attachment/reopen must also evaluate current route state:** if Bluetooth is already connected and the authoritative house session is already playing, treat that existing route as output intent and join unmuted; do not require a new Bluetooth-connect callback.
-- Bluetooth connect or pre-existing Bluetooth alone does not issue Play against an idle/paused session. If the user subsequently starts music from that phone, the connected Bluetooth route is strong local-output intent and the phone should be unmuted for that deliberate start.
+- Bluetooth audio disconnect mutes the phone renderer/output report and never directly sends MPD Pause/Stop.
+- If another house output remains audible, MPD and those outputs continue.
+- If the phone becomes the only remaining muted controller, the existing server policy auto-pauses and retains the exact queue/song/position.
+- If that final muted controller later disconnects/expires, the existing last-controller rule ends the retained session without advancing it.
+- Bluetooth audio connect while HOUSE is already playing auto-unmutes the phone and joins the current synchronized stream, overriding a prior manual phone mute.
+- HOUSE attach/reopen must evaluate **current route state**. If Bluetooth is already connected and HOUSE is already playing, join unmuted; do not require a new Bluetooth-connect callback.
+- Bluetooth connect or pre-existing Bluetooth alone does not issue Play against fresh idle or deliberate Pause/Stop. If the user subsequently starts music, the connected Bluetooth route is strong local-output intent and the phone should be audible.
+- If the server had automatically paused a retained session because the muted phone was the only remaining node, Bluetooth reconnect/unmute allows the existing automatic-pause rule to resume that retained session.
 
-This does not change the Pi's one-session policy. The client reports its local output state; the server decides whether zero remaining audible outputs require the existing automatic retained-session pause.
+The client reports its local output state; the server remains the authority for zero-audible-output pause/retention.
 
-### Bluetooth-connected phone output
+### STANDALONE Bluetooth output intent
 
-Android Bluetooth routing follows the same separation between local output and shared transport:
+The Android standalone SMB player uses the same human-facing output-intent model while retaining local playback authority:
 
-- an audio-capable Bluetooth connection to the phone always unmutes that phone's HOUSE renderer, including after a prior manual mute;
-- Bluetooth connect does not itself issue MPD Play, so fresh idle and deliberate Pause/Stop remain unchanged;
-- if MPD is playing, the newly unmuted phone joins the current synchronized stream;
-- if MPD is in the server-owned automatic pause caused by that muted phone being the only remaining node, Bluetooth reconnect/unmute resumes the retained session through the existing automatic-pause rule;
-- Bluetooth disconnect mutes the phone renderer but sends no MPD Pause/Stop;
-- another audible house node keeps the shared session playing;
-- if the phone becomes the only remaining muted/inaudible node, the existing muted-controller rule pauses and retains the session.
+- Bluetooth disconnect pauses/silences local playback and retains exact queue/song/position.
+- Bluetooth reconnect resumes that retained standalone session.
+- App start or transition into STANDALONE evaluates an already-connected Bluetooth route instead of requiring a new connection callback.
+- Explicit Stop/Quit remains authoritative.
+- With no retained standalone session, Bluetooth connection alone starts nothing.
 
-Thus a Bluetooth route change never directly owns HOUSE transport.
+This does not alter server behavior and must not mask the required STANDALONE -> HOUSE transition when home returns.
 
 ## 8. Automatic home/away selection and phone handoff
 
@@ -161,6 +160,8 @@ Whether to copy the whole house queue into the away player, rather than just con
 
 Adopt the existing house session without replacing it with the phone's away queue. If the house is playing, an unmuted phone joins that stream and a muted phone remains a silent controller.
 
+Regaining a qualifying physical home LAN must trigger an immediate real identity/control probe rather than waiting for an old retry timer. A network-gain event is only a reason to probe; successful Pi identity still decides HOUSE availability.
+
 The fresh-idle rule still applies: returning with a controller alone must not automatically start a new house track. Handling the phone's still-playing private audio at that exact idle-house boundary needs to respect that rule; do not silently promote it into a new house session.
 
 ### Reconnection status
@@ -183,21 +184,6 @@ Remaining client decisions and settled restart boundary:
 - No pause/drain reconstruction is required after a `house-audio-server` restart: restart is now explicitly a fresh-session boundary (§13).
 
 These gaps do not cancel the confirmed rules. They are intentionally not filled with invented decisions. Source implementation and field-validation status are recorded separately in the API docs and README.
-
-
-## 10. Current proven passive-renderer behavior
-
-The following implementation facts are now proven on the permanent Pi and real hardware; they do not replace the normative rules above:
-
-- a passive ESP32 radio powering on into fresh idle automatically starts the default house music with no phone/controller required;
-- a passive radio joining an already-playing session joins the same song rather than rebuilding/restarting the queue;
-- after a hard power-off lasting more than ten seconds, a renderer can power back on and rejoin the still-active song; one observed return to audible output took about six seconds;
-- two independent XIAO ESP32-S3 + PCM5102A renderers have produced audibly synchronized output through different downstream amplifier/speaker systems;
-- passive-radio arrival now resumes an existing paused MPD session. This was field-proven after a leave-and-return case where both radios were present but v0.5.0 had left MPD paused and silent;
-- effective renderer presence uses Snapcast `lastSeen` freshness, not the raw Snapserver `connected` flag, because a hard-powered-off node can leave a stale TCP connection looking established.
-
-An unresolved reliability issue remains: occasional few-second silence has been heard on one renderer or the other during two-node playback. Both nodes have external antennas installed. The cause is not yet known; v0.6.0 adds unattended diagnostics so the next occurrence can be correlated with Snapcast timing/presence and global stream state.
-
 
 ## 11. MPD boundary artifact; §4 remains authoritative
 
@@ -236,17 +222,6 @@ Required behavior:
 
 The existing `PASSIVE_DEFAULT_FOLDER` environment value remains the install-time fallback when no saved setting exists. v0.7.0 implements `GET /settings` and `POST /settings` with a persisted `passiveDefaultFolder` (`MP3s` or `Rap`); see [API.md](API.md). The service reads this value once per fresh passive start. No queue/order/progress is persisted, and setting it does not change any active/retained session or pending drain. The server setting is field-proven in v0.7.0, as recorded below. Android v0.4.0 implements the selector; its phone acceptance remains pending.
 
-
-
-### v0.7.0 field confirmation
-
-The runtime-selectable passive default in §12 is now proven on the permanent Pi.
-
-A controller-side API write changed the server-owned default from `MP3s` to `Rap` while music was already playing; the current song was not changed or restarted. After the last S3 remained off for roughly ten minutes and the prior session completed, powering an S3 back on started a fresh `Rap` session (first observed track: Ludacris — *Southern Hospitality*).
-
-This validates the intended separation between **current house queue** and **future passive default**.
-
-
 ## 13. Server restart is a fresh-session boundary
 
 A `house-audio-server` restart is intentionally treated as a **hard listening-session boundary**. Do not attempt to reconstruct or resume the previous live house session.
@@ -270,58 +245,6 @@ This decision replaces the earlier idea of restoring the automatic-pause reason 
 
 **Implementation status:** v0.8.1 implements this boundary. Before new playback commands or presence-driven playback, it stops MPD, clears the old queue, disables leftover Single/Consume/Repeat/Random modes, and verifies empty stopped state. A failed reset retries until MPD is available, independently of Snapserver availability. Disabling automatic presence policy does not disable the restart boundary. Once completed, routine MPD/Snapserver reconnections do not repeat the reset. Controller attachment and saved settings remain available while startup is pending; new attachments are not discarded by a delayed reset. See [API.md](API.md) for readiness and command gating. v0.8.1 is installed and the already-present-S3 restart path is field-proven below; the all-radios-off variant and physical controller transitions remain pending.
 
-
-### v0.8.1 field confirmation
-
-The §13 restart rule is now field-proven on the permanent Pi for an already-present passive renderer.
-
-During the v0.8.1 install/restart, one S3 remained powered. The previous live session was not retained; after startup completed, the service started a new randomized `Rap` default session. The resulting session snapshot showed `startup.ready: true`, `lastAction: started_default_session`, one passive/audible renderer, zero controllers, and no automatic-pause or pending-drain state.
-
-This validates restart-as-fresh-session for that hardware path without requiring pause-reason/session reconstruction.
-
-
-## 14. Initial Android HOUSE implementation checkpoint
-
-The 2026-09-29 [release record](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.0.md) identifies final Android v0.4.0 commit `9c89b24` (including heartbeat recovery) and server v0.8.2 commit `9c98973`. The APK is delivered, Android build/3 state tests/native packaging and server CI/90 tests passed. That initial handoff preceded the field pass below: Pi v0.8.2 is now confirmed installed and healthy; phone/S3 acceptance remains pending. This handoff changes no product/session decisions.
-
-Android v0.4.0 implements initial HOUSE selection, the existing Browser/Now Playing control surface, a bundled synchronized receiver, muted attachment, service-owned controller heartbeats, local output interruption handling, and phone-only Quit. Phone/S3 synchronization and controller transitions still need hardware acceptance; source/build success is not audible proof. STANDALONE keeps the existing engine. Live home/away handoff remains later work under the open decisions above.
-
-Server v0.8.2 adds revision-guarded in-place queue reordering for explicit Now Playing Sort. Reordering must not change the current song/position/transport or clear automatic-pause/pending-drain ownership. The §4 completed-drain and §13 startup boundaries remain unchanged, including pre-completion return preserving the existing session. See API.md and the Android HOUSE_VALIDATION checklist.
-
-
-### v0.4.0 phone field findings
-
-The first Android HOUSE field pass refined §§7–8 without changing the Pi's one-session policy:
-
-- Server v0.8.2 is installed and healthy.
-- MPD was initially loopback-only; after adding the configured LAN listener, the phone could complete HOUSE identification.
-- With Tailscale off, Android v0.4.0 entered HOUSE and Now Playing adopted the current MPD track.
-- Turning Tailscale on caused the app's HOUSE updates to stop even though the Pi's HTTP health JSON remained reachable from the phone browser with Tailscale on or off.
-- Therefore Android's delivered explicit-`Network` HOUSE transport is a client-side defect; the required design is physical-network qualification/departure detection plus normal-routed HOUSE traffic.
-- Starting/replacing a playlist uses the pre-command audible-house state: selected-track and PLAY LIST commands preserve phone mute only when another output was already audibly playing; otherwise the initiating muted phone auto-unmutes.
-- The Android Mute/Unmute control belongs in the lower Media3 control strip, not as a separate button.
-
-Phone/S3 audible synchronization and the controller pause/resume/expiry lifecycle are still pending physical acceptance after these client corrections.
-
-### v0.4.1 implementation follow-up
-
-[Android v0.4.1](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the three corrections above. Physical direct-route qualification and departure monitoring are separate from normal-routed HOUSE traffic. Playlist starts use fresh pre-command transport/audible-output state; already-audible other outputs preserve phone mute. Acknowledged explicit starts from pause/stop or otherwise inaudible playback auto-unmute only if no newer local mute intervened. Unknown audibility preserves mute. Mute/Unmute is inside the Media3 bottom strip.
-
-This implements §§7–8 without changing the server contract/session policy. Server v0.8.2 and ESP32 firmware stay unchanged. Physical acceptance is next; automatic home/away same-song handoff and its open choices remain subsequent work.
-
-
-### v0.4.1 first physical results
-
-Android v0.4.1 now has partial device evidence:
-
-- HOUSE works with Tailscale connected;
-- lower-strip local-output control appearance/location is accepted;
-- changing song/PLAY LIST from a muted phone while an S3 is already audible leaves the phone muted and changes shared playback;
-- phone/S3 synchronization is not yet acceptable: phone audio was observed roughly **1 second behind** the S3.
-
-The Bluetooth phone-output policy above was approved after this checkpoint and is not yet an implementation claim.
-
-
 ## 15. HOUSE Country Buffer
 
 The shared house stream should use a deliberately generous **multi-second synchronized playout buffer**. This extends the standalone player's Country Buffer philosophy to LAN playback, but on a much shorter time scale.
@@ -339,62 +262,6 @@ Product/architecture rules:
 Field motivation, not diagnosis: brief S3 dropouts have been noticed around periods of heavier LAN/Internet traffic. Increasing synchronized buffer depth is an approved reliability experiment; it does not establish that network contention is the root cause.
 
 
-### Client-local Quit cleanup and return-home recovery clarification
+## Status and evidence references
 
-These client behaviors preserve the server's existing session authority:
-
-- HOUSE Quit detaches that controller/output but does **not** send global MPD Stop/Clear merely to clean up the phone UI.
-- The quitting client should clear its own cached HOUSE track/queue/position presentation. On a later attachment it freshly adopts current server state; the same song may reappear if it is genuinely still the authoritative MPD track.
-- Regaining a qualifying physical home LAN should cause clients to probe/reconnect promptly rather than wait for an old retry timer. A network-gain event is a trigger to perform the real identity/control check, not proof that the server is healthy.
-
-Android v0.4.1 field testing exposed stale local Now Playing state after Quit and eventual-but-slow return-home recovery (`Socket closed / Retrying in 15s`). These are client-side corrections and do not change the Pi's one-session policy.
-
-
-### v0.4.2 implementation and field checkpoint
-
-Android's service-owned Quit, event-triggered reacquisition, Bluetooth local-output policy and route-specific sync controls are implemented. Physical testing now establishes:
-
-- Bluetooth connect/unmute: **PASS**.
-- Bluetooth disconnect/mute: **PASS**.
-- **+400 ms** timing correction: audibly correct for the currently tested phone/output route; correction remains adjustable pending other routes/devices.
-- HOUSE -> STANDALONE continuation after physical departure: **FAIL / absent**.
-- STANDALONE -> HOUSE live return transition: **FAIL**; close/reopen can then qualify HOUSE successfully.
-- Because live return can fail, private SMB playback and a separately started passive-S3 HOUSE queue can coexist. This split-brain state is a client mode-transition defect; it does not change the server's single-session authority.
-- Existing Bluetooth on HOUSE reattachment: **FAIL** when HOUSE is already playing; the phone can attach muted. Current route state must be evaluated during attachment, not only on future route-change callbacks.
-- Galaxy S8 launch: **FAIL**, app crashes on open; cause is not assigned.
-- HOUSE Quit cleanup still requires its dedicated v0.4.2 field verdict.
-
-The earlier v0.4.2 implementation rule that "initial silent attachment remains muted even with existing Bluetooth" is therefore **superseded for an already-playing HOUSE session**. If Bluetooth is already connected when a phone attaches/reopens into playing HOUSE, treat that existing route as current local-output intent and join unmuted. Existing Bluetooth alone still must not issue Play against deliberately idle/stopped HOUSE.
-
-The [HOUSE Country Buffer trial](HOUSE_BUFFER_TRIAL.md) prepares 3000 ms with 20 ms chunks and rollback. Source inspection does **not** establish automatic shared flushing on ordinary MPD/FIFO transport changes; the audible delay is an explicit experimental limitation, not a fulfilled flush requirement. The trial remains undeployed. Server v0.8.2 behavior is otherwise unchanged.
-
-
-### STANDALONE Bluetooth output-intent parity
-
-The Android standalone SMB player should use the same human-facing Bluetooth intent model while retaining local playback authority:
-
-- Bluetooth disconnect pauses/silences local playback and retains exact queue/song/position.
-- Bluetooth reconnect resumes that retained standalone session.
-- Entering the app or STANDALONE with Bluetooth already connected must evaluate the current route instead of requiring a new connection callback.
-- Explicit Stop/Quit remains authoritative.
-- With no retained standalone session, Bluetooth connection alone starts nothing.
-
-This does not alter server behavior and is not a substitute for the required live STANDALONE -> HOUSE return transition.
-
-## 16. Future source/output expansion
-
-Two next-major-goal directions are now recorded without pretending their detailed behavior is settled.
-
-### Internet radio remains under MPD authority
-
-Internet radio should use the same authoritative source path as library playback:
-
-```text
-Internet stream URL -> MPD -> FIFO -> Snapserver -> HOUSE
-```
-
-Do not add a parallel radio playback authority that bypasses MPD. The existing folder-first rule remains authoritative for local-library playback; radio is a separate MPD source mode. Station management, metadata and source-switch semantics remain to be designed.
-
-### Specialized subwoofer renderer
-
-A future dedicated subwoofer node remains a synchronized HOUSE renderer receiving the authoritative stream. Low-pass/crossover location, mono summing, level control and timing/phase adjustment are intentionally undecided until implementation planning.
+This document is the **normative behavior contract**, not the release/field log. Server implementation/runtime evidence belongs in [README.md](../README.md) and [API.md](API.md). Android device acceptance belongs in the Android repository's `HOUSE_VALIDATION.md`. ESP32 renderer evidence belongs in the ESP32 repository.
