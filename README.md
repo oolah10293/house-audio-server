@@ -1,15 +1,8 @@
 # House Audio Server
 
-
-**2026-09-30 Android v0.4.2 field update:** Bluetooth connect/unmute and disconnect/mute now pass. A **+400 ms** Android timing correction is audibly correct on the currently tested phone/output route and remains adjustable pending other devices. Live HOUSE -> STANDALONE departure continuation and STANDALONE -> HOUSE return transition still fail; reopening can recover HOUSE after a failed live return. Pre-connected Bluetooth is not yet honored correctly on HOUSE reattachment, and v0.4.2 crashes on launch on a Galaxy S8. The [3000 ms shared-buffer trial](https://github.com/oolah10293/house-audio-server/blob/main/docs/HOUSE_BUFFER_TRIAL.md) remains **prepared, not deployed**. Server API/session behavior remains v0.8.2.
-
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source/deployed version: **v0.8.2** — adds guarded queue reordering for the Android HOUSE build; 90 local tests and GitHub CI pass. v0.8.2 is installed on the permanent Pi. Health/startup are good and the saved `Rap` default/passive-S3 session remain correct. Android HOUSE works with Tailscale connected, and the currently tested phone route is audibly synchronized to the S3 at **+400 ms** correction. Physical controller pause/resume/expiry checks remain pending; Android live departure/return mode transitions are currently failing in v0.4.2.
-
-**2026-09-30 Android correction handoff:** [Android v0.4.1](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the three changes from the v0.4.0 phone feedback: physical-route home qualification with normal Android routing, pre-command conditional playlist auto-unmute, and a Mute/Unmute icon inside the lower Media3 strip. v0.8.2 is already installed; **no server code or ESP32 firmware change is required**. Tailscale-on phone behavior, phone/S3 synchronization and physical controller lifecycle still need acceptance.
-
-The core rule is simple: **there is one house playback session**. Devices on the home network do not start separate competing music sessions. A room may be the only active output, or several rooms may be active, but every participating output follows the same queue, track, playback position, shuffle state, and transport state.
+Current source/deployed version: **v0.8.2**. Server behavior, deployment status, and field-proven server milestones are documented here. Android release/acceptance details are intentionally kept in [smb-music-player](https://github.com/oolah10293/smb-music-player), especially its `HOUSE_VALIDATION.md`; ESP32 renderer details are kept in [house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
 
 ## Agreed playback and session behavior
 
@@ -433,13 +426,11 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 **The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is physical validation of controller/output policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. Persisted runtime default-folder selection is field-proven in v0.7.0. Controller/output presence is deployed in v0.8.0 with baseline checks passing; physical controller transitions remain pending. v0.6.0 provides the first unattended diagnostics capture for that investigation.
 
-
 ### Leave-and-return pause edge — v0.5.1
 
 A real leave-the-house test found both renderers reconnecting correctly (`presentCount: 2`) while MPD was paused at 0.0 seconds on the queued track. Snapserver was healthy but idle, so the failure was not renderer connectivity: it was exactly the v0.5.0 policy branch that left paused sessions untouched.
 
 v0.5.1 changes passive-radio arrival to resume the existing paused session. This preserves the queue and avoids a fresh default `MP3s` rebuild while restoring the intended appliance behavior.
-
 
 ### Automatic dropout diagnostics — v0.6.0
 
@@ -455,7 +446,6 @@ curl -s http://127.0.0.1:8787/diagnostics
 
 If one renderer shows a time-sync/presence anomaly while the other stays clean, investigate that renderer's Wi-Fi/client path. If the Snapserver stream changes state, investigate upstream. If neither happens during the audible dropout, instrument the ESP32 decoder/buffer/I2S path next.
 
-
 ### MPD oneshot boundary edge — v0.6.1
 
 The v0.6 diagnostics immediately helped expose another real session-policy edge.
@@ -465,7 +455,6 @@ A passive renderer was plugged in but produced no audio. The renderer itself was
 Root cause: the policy expected MPD `single oneshot` to complete as transport `stop`. On the permanent MPD 0.24 stack, the real observed behavior can instead be a **pause at the next-track boundary**.
 
 v0.6.1 restored output by resuming the retained queue after this boundary. That historical behavior is superseded: a completed drain ends the session, and v0.6.2 starts the configured passive default with fresh randomness on the next radio arrival.
-
 
 ### v0.6.1 runtime proof — final-track boundary return
 
@@ -487,7 +476,6 @@ Runtime result after installing v0.6.1 with the S3 still powered: **music resume
 
 This proved the MPD boundary artifact and restored sound in v0.6.1. It did not validate the corrected fresh-session queue behavior; v0.6.2 has its own initial radio-test results recorded below.
 
-
 ### Runtime-selectable passive default folder — v0.7.0
 
 `GET /settings` reads the passive default; `POST /settings` saves an explicit `passiveDefaultFolder` of `MP3s` or `Rap` on the Pi. The saved choice survives service restarts and upgrades. `PASSIVE_DEFAULT_FOLDER` supplies the fallback only until a choice is saved. The API can read/set the value even when MPD/Snapserver are unavailable.
@@ -506,7 +494,6 @@ curl -fsS -H 'Content-Type: application/json' -d '{"passiveDefaultFolder":"Rap"}
 ```
 
 Use `MP3s` in the same request to select it again. The field check is to save either choice during playback, confirm the current song/queue continues, and confirm a fresh passive session uses that folder. The saved choice should also be readable after a control-service restart. Restart now ends every prior session under SESSION_BEHAVIOR §13; v0.8.1 implements that boundary without reconstructing a drain.
-
 
 ## v0.6.2 — completed drain ends the session
 
@@ -553,7 +540,6 @@ This directly confirms the deployed version and the pre-completion return/cancel
 
 At the time of these v0.6.2 tests, MP3s was the deployment setting and no runtime selector existed. v0.7.0 now provides the field-proven server settings API; the Android button remains pending. Controller/output presence is deployed in v0.8.0 with baseline checks passing; physical controller transitions remain pending. These results do not represent an Android HOUSE build or an ESP32 firmware release.
 
-
 ### v0.7.0 permanent-Pi field validation — PASS
 
 v0.7.0 is now installed on the permanent Raspberry Pi and the persisted passive-default behavior has been exercised with a real S3 renderer.
@@ -589,7 +575,6 @@ The two previously open choices—background presence and ending the last muted 
 Use the existing installer. The current systemd state directory also stores `controllers.json`; no MPD/Snapserver configuration change is needed. See [docs/API.md](docs/API.md) for the complete client contract. The main field check is a controller holding a muted lease while the last radio leaves (pause), an audible radio returning (resume), and the last muted controller detaching/expiring (stop, then fresh default on the next radio).
 
 Restart policy is now explicitly settled: a `house-audio-server` restart is a **hard listening-session boundary**. Do not reconstruct the prior live controller/session state. Live leases, mute/readiness reports, automatic-pause ownership, pending drains, and the old queue/session are disposable across restart. Persist only durable configuration/identity such as the selected `MP3s`/`Rap` passive default and controller-to-renderer ownership. After restart the house should normalize to fresh idle; a controller reconnecting first stays idle, while a passive S3 present/arriving starts a new shuffled configured default. v0.8.1 implements the startup fresh-idle boundary in source/tests; Pi deployment and restart validation remain pending. Authentication/pairing and transport-command deduplication remain open.
-
 
 ### v0.8.0 permanent-Pi deployment baseline — PASS
 
@@ -635,7 +620,6 @@ Implements the settled restart rule in SESSION_BEHAVIOR §13. On each service st
 
 **Next implementation slice:** Android HOUSE backend and synchronized phone output through the existing Browser/Now Playing screens, including the approved Browser polish and MP3s/Rap selector. Preserve STANDALONE. Home/away recovery and final device acceptance follow; the settled restart rule requires no session-recovery subsystem.
 
-
 ### v0.8.1 permanent-Pi restart result — PASS for radio-already-present case
 
 v0.8.1 was installed while one passive S3 remained powered on. The service restart produced a fresh randomized Rap session rather than preserving the prior listening session.
@@ -664,39 +648,6 @@ This server release adds `POST /queue/reorder`: require the expected queue revis
 
 **Next combined checkpoint:** keep the installed Pi v0.8.2, install Android v0.4.1, first repeat Tailscale-on launch/toggle and conditional mute cases, then follow [the phone/S3 checklist](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Validate silent opening, phone/S3 synchronization, sort during pause/play, local mute, background controller presence, audible-return resume, and Quit preserving remaining listeners. Live home/away handoff follows that implementation slice; its open decisions remain unchanged.
 
-
-### Android v0.4.0 first-phone findings
-
-The first phone checkpoint established several integration facts:
-
-- MPD was initially bound only to localhost; Android could not identify HOUSE until a LAN listener was added. Keep localhost plus the configured LAN listener in the deployment.
-- With that fixed and Tailscale off, Android v0.4.0 entered HOUSE and displayed the currently playing MPD track.
-- Turning Tailscale on while HOUSE was active caused the app to stop updating, while the phone browser could still read `house-audio-server` health JSON with Tailscale on or off.
-- Therefore the Pi/server remained reachable; the delivered Android explicit-`Network` HOUSE transport is the client-side defect. Physical network presence should determine HOUSE, while normal Android routing carries HOUSE traffic.
-- Android playlist starts now have a clarified rule: preserve local mute only when MPD was already playing with at least one other audible output; otherwise the initiating muted phone auto-unmutes.
-- The Android Mute/Unmute control belongs in the lower Media3 control strip with transport, Shuffle/Repeat, and time.
-
-These client corrections precede the phone/S3 synchronization and muted-controller lifecycle acceptance tests.
-
-### Android v0.4.1 correction checkpoint
-
-The [correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the first-phone-pass requirements; build/artifact evidence is recorded there. All HOUSE sockets now use normal Android routing after physical direct-route qualification. Loss of that physical route closes phone audio and suspends HOUSE requests/heartbeats; automatic home/away handoff remains later work. Playlist auto-unmute reads pre-command `/state` and, during playback, `/controllers`, excluding the initiating phone's own stale audible report. Unknown audibility preserves mute; no new server endpoint is required.
-
-Next: [Tailscale-on and phone/S3 checklist](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md), including route loss with VPN reachability, audible/inaudible playlist cases, local output icon, background leases, pause/resume/expiry and Quit. No v0.4.1 device pass is implied.
-
-
-### Android v0.4.1 partial phone acceptance
-
-Current real-phone results:
-
-- PASS: HOUSE operation with Tailscale connected.
-- PASS: lower Media3 output icon appearance/location.
-- PASS: muted phone changes song/PLAY LIST without unmuting when an S3 is already audible.
-- FAIL/open: phone/S3 audio synchronization, with the phone approximately one second behind the S3.
-
-New approved Android behavior: Bluetooth connect/disconnect should drive the phone's local HOUSE output state as described in SESSION_BEHAVIOR §7. No server API change is currently implied; existing controller output-muted/output-ready policy remains the authority for whether zero audible outputs auto-pause a retained session.
-
-
 ### HOUSE Country Buffer direction
 
 The synchronized stream is now intended to use a **multi-second playout buffer** rather than treating the current ~1 second as the final target. Keep `chunk_ms` small (currently ~20 ms); buffer depth and chunk size are separate.
@@ -704,7 +655,6 @@ The synchronized stream is now intended to use a **multi-second playout buffer**
 The purpose is resilience to brief LAN/Wi-Fi stalls plus headroom for client-specific latency correction. Exact depth remains a field-tuning choice. Deliberate transport/queue changes should not intentionally wait for the whole stale buffer to drain; verify the real Snapcast reset/discontinuity behavior and invalidate/rebase old audio as promptly as the stack supports.
 
 This is an approved design direction, not yet a deployed configuration change or a diagnosis of the current S3 dropout issue.
-
 
 ## Next major system goals
 
