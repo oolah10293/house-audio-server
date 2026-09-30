@@ -670,7 +670,7 @@ The first phone checkpoint established several integration facts:
 - With that fixed and Tailscale off, Android v0.4.0 entered HOUSE and displayed the currently playing MPD track.
 - Turning Tailscale on while HOUSE was active caused the app to stop updating, while the phone browser could still read `house-audio-server` health JSON with Tailscale on or off.
 - Therefore the Pi/server remained reachable; the delivered Android explicit-`Network` HOUSE transport is the client-side defect. Physical network presence should determine HOUSE, while normal Android routing carries HOUSE traffic.
-- Android playlist starts now have a clarified rule: selecting a song or PLAY LIST must preserve local phone mute.
+- Android playlist starts now have a clarified rule: preserve local mute only when MPD was already playing with at least one other audible output; otherwise the initiating muted phone auto-unmutes.
 - The Android Mute/Unmute control belongs in the lower Media3 control strip with transport, Shuffle/Repeat, and time.
 
 These client corrections precede the phone/S3 synchronization and muted-controller lifecycle acceptance tests.
