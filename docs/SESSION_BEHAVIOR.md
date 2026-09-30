@@ -87,7 +87,7 @@ If MPD is still playing for other rooms, unmuting joins the **current** house po
 
 Preserve the phone's mute choice across a reconnect. A network event must not unexpectedly make a muted remote controller start sounding.
 
-Starting or replacing the shared playlist also **must not change the phone's local mute state**. A muted phone remains muted when it selects a song or uses PLAY LIST, even though that command may start/change MPD playback for the house. The previously agreed explicit Play action while MPD is paused/stopped may still auto-unmute that phone.
+Starting or replacing the shared playlist uses the **pre-command audible-house state**. If MPD is already playing and at least one other house output is audible, a muted phone remains muted when it selects a song or uses PLAY LIST. If nothing is audibly playing—MPD paused/stopped, or `audibleCount == 0` even while MPD is technically still playing—the muted phone auto-unmutes when it deliberately starts a selected track/PLAY LIST. Explicit Play from paused/stopped likewise auto-unmutes.
 
 Deliberate HOUSE Play/Pause/Next/Seek commands control MPD. Local output muting is distinct. Local audio-route selection, volume, and interruption handling must be kept separate from deliberately changing the house transport.
 
@@ -270,7 +270,7 @@ The first Android HOUSE field pass refined §§7–8 without changing the Pi's o
 - With Tailscale off, Android v0.4.0 entered HOUSE and Now Playing adopted the current MPD track.
 - Turning Tailscale on caused the app's HOUSE updates to stop even though the Pi's HTTP health JSON remained reachable from the phone browser with Tailscale on or off.
 - Therefore Android's delivered explicit-`Network` HOUSE transport is a client-side defect; the required design is physical-network qualification/departure detection plus normal-routed HOUSE traffic.
-- Starting/replacing a playlist does not imply local output: selected-track and PLAY LIST commands preserve the phone's mute state.
+- Starting/replacing a playlist uses the pre-command audible-house state: selected-track and PLAY LIST commands preserve phone mute only when another output was already audibly playing; otherwise the initiating muted phone auto-unmutes.
 - The Android Mute/Unmute control belongs in the lower Media3 control strip, not as a separate button.
 
 Phone/S3 audible synchronization and the controller pause/resume/expiry lifecycle are still pending physical acceptance after these client corrections.
