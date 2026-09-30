@@ -347,3 +347,10 @@ These client behaviors preserve the server's existing session authority:
 - Regaining a qualifying physical home LAN should cause clients to probe/reconnect promptly rather than wait for an old retry timer. A network-gain event is a trigger to perform the real identity/control check, not proof that the server is healthy.
 
 Android v0.4.1 field testing exposed stale local Now Playing state after Quit and eventual-but-slow return-home recovery (`Socket closed / Retrying in 15s`). These are client-side corrections and do not change the Pi's one-session policy.
+
+
+### v0.4.2 implementation checkpoint
+
+Android's service-owned Quit, event-triggered reacquisition and Bluetooth local-output policy are implemented for physical acceptance. Initial silent attachment remains muted even with an existing Bluetooth device; a new media-output connection thereafter unmutes, and deliberate starts while connected unmute. No route event issues MPD transport commands. [Release details](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.2.md).
+
+The [HOUSE Country Buffer trial](HOUSE_BUFFER_TRIAL.md) prepares 3000 ms with 20 ms chunks and rollback. Source inspection does **not** establish automatic shared flushing on ordinary MPD/FIFO transport changes; the audible delay is an explicit experimental limitation, not a fulfilled flush requirement. This trial and Android's offset calibration have not been physically accepted. Server v0.8.2 behavior and the outstanding handoff decisions remain unchanged.

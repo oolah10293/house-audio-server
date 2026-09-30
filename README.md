@@ -1,5 +1,8 @@
 # House Audio Server
 
+
+**2026-09-30 v0.4.1 feedback revisions:** [Android v0.4.2](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.2.md) implements HOUSE Quit cleanup, prompt return-home recovery, Bluetooth output intent and measured sync controls. The v0.4.1 Tailscale/icon/muted-playlist passes are retained; phone/S3 timing and all new device behavior still need acceptance. The [3000 ms shared-buffer trial](https://github.com/oolah10293/house-audio-server/blob/main/docs/HOUSE_BUFFER_TRIAL.md) includes a preview-first config helper, backup/rollback and an explicit FIFO flush limitation. **Prepared, not deployed:** no live Pi or ESP32 firmware change was made. Server API/session behavior remains v0.8.2.
+
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
 Current source/deployed version: **v0.8.2** — adds guarded queue reordering for the first Android HOUSE build; 90 local tests and GitHub CI pass. v0.8.2 is installed on the permanent Pi. Health/startup are good, the saved `Rap` default and passive-S3 session remain correct, and Android v0.4.0 has successfully adopted the live MPD track in HOUSE with Tailscale off. Phone/S3 synchronization and physical controller pause/resume/expiry checks remain pending.
