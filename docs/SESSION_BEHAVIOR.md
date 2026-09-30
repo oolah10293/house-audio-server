@@ -336,3 +336,14 @@ Product/architecture rules:
 - Per-client latency compensation is distinct from the shared buffer. The shared buffer supplies timing margin; renderer-specific offsets compensate repeatable output-path latency.
 
 Field motivation, not diagnosis: brief S3 dropouts have been noticed around periods of heavier LAN/Internet traffic. Increasing synchronized buffer depth is an approved reliability experiment; it does not establish that network contention is the root cause.
+
+
+### Client-local Quit cleanup and return-home recovery clarification
+
+These client behaviors preserve the server's existing session authority:
+
+- HOUSE Quit detaches that controller/output but does **not** send global MPD Stop/Clear merely to clean up the phone UI.
+- The quitting client should clear its own cached HOUSE track/queue/position presentation. On a later attachment it freshly adopts current server state; the same song may reappear if it is genuinely still the authoritative MPD track.
+- Regaining a qualifying physical home LAN should cause clients to probe/reconnect promptly rather than wait for an old retry timer. A network-gain event is a trigger to perform the real identity/control check, not proof that the server is healthy.
+
+Android v0.4.1 field testing exposed stale local Now Playing state after Quit and eventual-but-slow return-home recovery (`Socket closed / Retrying in 15s`). These are client-side corrections and do not change the Pi's one-session policy.
