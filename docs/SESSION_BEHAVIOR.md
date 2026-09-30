@@ -151,7 +151,7 @@ Controller arrival must not be used as a blanket override of explicit transport 
 
 Remaining client decisions and settled restart boundary:
 
-- Whole-queue continuation for the phone away from home. Initial HOUSE output mute is settled in the Android requirements: start muted; song/PLAY LIST queue starts preserve local mute; explicit Play from paused/stopped may still auto-unmute.
+- Whole-queue continuation for the phone away from home. Initial HOUSE output mute is settled in the Android requirements: start muted; song/PLAY LIST starts preserve local mute only when MPD was already playing with another audible output; otherwise the initiating muted phone auto-unmutes. Explicit Play from paused/stopped also auto-unmutes.
 - No pause/drain reconstruction is required after a `house-audio-server` restart: restart is now explicitly a fresh-session boundary (§13).
 
 These gaps do not cancel the confirmed rules. They are intentionally not filled with invented decisions. Source implementation and field-validation status are recorded separately in the API docs and README.
