@@ -319,3 +319,20 @@ Android v0.4.1 now has partial device evidence:
 - phone/S3 synchronization is not yet acceptable: phone audio was observed roughly **1 second behind** the S3.
 
 The Bluetooth phone-output policy above was approved after this checkpoint and is not yet an implementation claim.
+
+
+## 15. HOUSE Country Buffer
+
+The shared house stream should use a deliberately generous **multi-second synchronized playout buffer**. This extends the standalone player's Country Buffer philosophy to LAN playback, but on a much shorter time scale.
+
+Product/architecture rules:
+
+- Snapcast source chunk size and renderer playout-buffer depth are independent. Keep small chunks (currently about `20 ms`) for normal stream cadence; a larger playout buffer must not be implemented by making giant packets.
+- Increase the shared HOUSE buffer above the current ~`1000 ms` baseline and tune the final value empirically. "Several seconds" is the approved direction; the exact production number is not yet fixed.
+- The buffer exists to hide short Wi-Fi/LAN contention and to provide timing headroom for client-specific output latency correction.
+- A larger synchronized buffer may increase initial radio join/rejoin time and end-to-end MPD-to-speaker latency. Those costs are acceptable within reason for music playback if continuity improves materially.
+- Deliberate transport/queue actions must remain semantically immediate at the control layer. The desired audible behavior is to discard/rebase obsolete queued audio rather than intentionally play the entire pre-command buffer before honoring a Next/Seek/playlist change.
+- The actual Snapcast discontinuity/flush mechanism must be verified before implementation claims are made. If upstream behavior cannot invalidate stale playout cleanly, the implementation must explicitly account for that tradeoff rather than assuming it away.
+- Per-client latency compensation is distinct from the shared buffer. The shared buffer supplies timing margin; renderer-specific offsets compensate repeatable output-path latency.
+
+Field motivation, not diagnosis: brief S3 dropouts have been noticed around periods of heavier LAN/Internet traffic. Increasing synchronized buffer depth is an approved reliability experiment; it does not establish that network contention is the root cause.
