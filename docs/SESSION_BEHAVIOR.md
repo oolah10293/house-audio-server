@@ -254,7 +254,7 @@ This validates restart-as-fresh-session for that hardware path without requiring
 
 ## 14. Initial Android HOUSE implementation checkpoint
 
-The 2026-09-29 [release record](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.0.md) identifies final Android v0.4.0 commit `9c89b24` (including heartbeat recovery) and server v0.8.2 commit `9c98973`. The APK is delivered, Android build/3 state tests/native packaging and server CI/90 tests passed. Pi v0.8.2 installation and phone/S3 acceptance remain pending; v0.8.1 is still the confirmed installed server. This handoff changes no product/session decisions.
+The 2026-09-29 [release record](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.0.md) identifies final Android v0.4.0 commit `9c89b24` (including heartbeat recovery) and server v0.8.2 commit `9c98973`. The APK is delivered, Android build/3 state tests/native packaging and server CI/90 tests passed. That initial handoff preceded the field pass below: Pi v0.8.2 is now confirmed installed and healthy; phone/S3 acceptance remains pending. This handoff changes no product/session decisions.
 
 Android v0.4.0 implements initial HOUSE selection, the existing Browser/Now Playing control surface, a bundled synchronized receiver, muted attachment, service-owned controller heartbeats, local output interruption handling, and phone-only Quit. Phone/S3 synchronization and controller transitions still need hardware acceptance; source/build success is not audible proof. STANDALONE keeps the existing engine. Live home/away handoff remains later work under the open decisions above.
 
@@ -274,3 +274,9 @@ The first Android HOUSE field pass refined §§7–8 without changing the Pi's o
 - The Android Mute/Unmute control belongs in the lower Media3 control strip, not as a separate button.
 
 Phone/S3 audible synchronization and the controller pause/resume/expiry lifecycle are still pending physical acceptance after these client corrections.
+
+### v0.4.1 implementation follow-up
+
+[Android v0.4.1](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the three corrections above. Physical direct-route qualification and departure monitoring are separate from normal-routed HOUSE traffic. Playlist starts use fresh pre-command transport/audible-output state; already-audible other outputs preserve phone mute. Acknowledged explicit starts from pause/stop or otherwise inaudible playback auto-unmute only if no newer local mute intervened. Unknown audibility preserves mute. Mute/Unmute is inside the Media3 bottom strip.
+
+This implements §§7–8 without changing the server contract/session policy. Server v0.8.2 and ESP32 firmware stay unchanged. Physical acceptance is next; automatic home/away same-song handoff and its open choices remain subsequent work.

@@ -2,7 +2,7 @@
 
 Current source/deployed version: **v0.8.2**, adding guarded in-place queue reordering for Android HOUSE Sort (90 local tests and GitHub CI pass). v0.8.2 is installed on the permanent Pi. Health/startup are good; Android v0.4.0 has successfully adopted the live MPD track in HOUSE after MPD's LAN listener was enabled. Physical controller/mute validation, queue-reorder device testing, and phone/S3 synchronization remain pending.
 
-The companion Android v0.4.0 APK (`9c89b24`, including heartbeat recovery) is delivered and installed. Its first field pass found a Tailscale/explicit-Network transport defect plus playlist-mute and mute-control-placement corrections; see the Android validation docs.
+The companion [Android v0.4.1 correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the Tailscale/routing, conditional playlist-mute and lower-strip output-control corrections found in the v0.4.0 field pass. Device acceptance remains pending; the server API and deployed v0.8.2 are unchanged.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -244,7 +244,7 @@ Implemented now:
 - guarded in-place queue reorder (v0.8.2; deployed, dedicated device sort validation pending)
 - persisted passive-default read/set (v0.7.0; permanent-Pi validation complete)
 - controller attach/heartbeat/detach, output reports, and muted-controller session policy (v0.8.0; deployed baseline passes, physical controller transitions pending)
-- Android local receiver mute/readiness reporting (Android v0.4.0; build passed, phone acceptance pending)
+- Android local receiver mute/readiness reporting (v0.4.1 corrects first-phone-pass behavior; physical acceptance pending)
 
 Implemented:
 

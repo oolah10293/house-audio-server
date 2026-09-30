@@ -4,7 +4,7 @@ Central playback, control, and synchronized-audio service for the whole-house mu
 
 Current source/deployed version: **v0.8.2** — adds guarded queue reordering for the first Android HOUSE build; 90 local tests and GitHub CI pass. v0.8.2 is installed on the permanent Pi. Health/startup are good, the saved `Rap` default and passive-S3 session remain correct, and Android v0.4.0 has successfully adopted the live MPD track in HOUSE with Tailscale off. Phone/S3 synchronization and physical controller pause/resume/expiry checks remain pending.
 
-**2026-09-29 release/field handoff:** Android v0.4.0's final `9c89b24` APK is delivered, including the heartbeat recovery fix, and [Android CI](https://github.com/oolah10293/smb-music-player/actions/runs/36614059665) and [server v0.8.2 CI](https://github.com/oolah10293/house-audio-server/actions/runs/36613448675) passed. v0.8.2 is now installed. The first phone pass found that MPD had been loopback-only, then proved HOUSE state adoption after adding the LAN listener; it also exposed an Android/Tailscale transport-binding defect and two mute/UI corrections documented in the Android repo. No ESP32 firmware change is required.
+**2026-09-30 Android correction handoff:** [Android v0.4.1](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the three changes from the v0.4.0 phone feedback: physical-route home qualification with normal Android routing, pre-command conditional playlist auto-unmute, and a Mute/Unmute icon inside the lower Media3 strip. v0.8.2 is already installed; **no server code or ESP32 firmware change is required**. Tailscale-on phone behavior, phone/S3 synchronization and physical controller lifecycle still need acceptance.
 
 The core rule is simple: **there is one house playback session**. Devices on the home network do not start separate competing music sessions. A room may be the only active output, or several rooms may be active, but every participating output follows the same queue, track, playback position, shuffle state, and transport state.
 
@@ -659,7 +659,7 @@ This server release adds `POST /queue/reorder`: require the expected queue revis
 
 **Validation:** 90 local tests and GitHub CI pass. v0.8.2 is now installed on the permanent Pi; health/startup are good and the existing passive-S3/Rap session is working. Android v0.4.0 successfully entered HOUSE and adopted the current MPD track after MPD's LAN listener was enabled. Queue-reorder behavior and phone/S3 synchronization still need dedicated device checks.
 
-**Next combined checkpoint:** update the Pi using the existing install procedure, install Android v0.4.0, then follow [the phone/S3 checklist](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Validate silent opening, phone/S3 synchronization, sort during pause/play, local mute, background controller presence, audible-return resume, and Quit preserving remaining listeners. Live home/away handoff follows that implementation slice; its open decisions remain unchanged.
+**Next combined checkpoint:** keep the installed Pi v0.8.2, install Android v0.4.1, first repeat Tailscale-on launch/toggle and conditional mute cases, then follow [the phone/S3 checklist](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Validate silent opening, phone/S3 synchronization, sort during pause/play, local mute, background controller presence, audible-return resume, and Quit preserving remaining listeners. Live home/away handoff follows that implementation slice; its open decisions remain unchanged.
 
 
 ### Android v0.4.0 first-phone findings
@@ -674,3 +674,9 @@ The first phone checkpoint established several integration facts:
 - The Android Mute/Unmute control belongs in the lower Media3 control strip with transport, Shuffle/Repeat, and time.
 
 These client corrections precede the phone/S3 synchronization and muted-controller lifecycle acceptance tests.
+
+### Android v0.4.1 correction checkpoint
+
+The [correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the first-phone-pass requirements; build/artifact evidence is recorded there. All HOUSE sockets now use normal Android routing after physical direct-route qualification. Loss of that physical route closes phone audio and suspends HOUSE requests/heartbeats; automatic home/away handoff remains later work. Playlist auto-unmute reads pre-command `/state` and, during playback, `/controllers`, excluding the initiating phone's own stale audible report. Unknown audibility preserves mute; no new server endpoint is required.
+
+Next: [Tailscale-on and phone/S3 checklist](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md), including route loss with VPN reachability, audible/inaudible playlist cases, local output icon, background leases, pause/resume/expiry and Quit. No v0.4.1 device pass is implied.
