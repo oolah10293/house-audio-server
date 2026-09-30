@@ -1,7 +1,7 @@
 # House Audio Server
 
 
-**2026-09-30 v0.4.1 feedback revisions:** [Android v0.4.2](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.2.md) implements HOUSE Quit cleanup, prompt return-home recovery, Bluetooth output intent and measured sync controls. The v0.4.1 Tailscale/icon/muted-playlist passes are retained; phone/S3 timing and all new device behavior still need acceptance. The [3000 ms shared-buffer trial](https://github.com/oolah10293/house-audio-server/blob/main/docs/HOUSE_BUFFER_TRIAL.md) includes a preview-first config helper, backup/rollback and an explicit FIFO flush limitation. **Prepared, not deployed:** no live Pi or ESP32 firmware change was made. Server API/session behavior remains v0.8.2.
+**2026-09-30 Android v0.4.2 field update:** Bluetooth connect/unmute and disconnect/mute now pass. A **+400 ms** Android timing correction is audibly correct on the currently tested phone/output route and remains adjustable pending other devices. Live HOUSE -> STANDALONE departure continuation and STANDALONE -> HOUSE return transition still fail; reopening can recover HOUSE after a failed live return. Pre-connected Bluetooth is not yet honored correctly on HOUSE reattachment, and v0.4.2 crashes on launch on a Galaxy S8. The [3000 ms shared-buffer trial](https://github.com/oolah10293/house-audio-server/blob/main/docs/HOUSE_BUFFER_TRIAL.md) remains **prepared, not deployed**. Server API/session behavior remains v0.8.2.
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
@@ -704,3 +704,22 @@ The synchronized stream is now intended to use a **multi-second playout buffer**
 The purpose is resilience to brief LAN/Wi-Fi stalls plus headroom for client-specific latency correction. Exact depth remains a field-tuning choice. Deliberate transport/queue changes should not intentionally wait for the whole stale buffer to drain; verify the real Snapcast reset/discontinuity behavior and invalidate/rebase old audio as promptly as the stack supports.
 
 This is an approved design direction, not yet a deployed configuration change or a diagnosis of the current S3 dropout issue.
+
+
+## Next major system goals
+
+After the current Android transition/reliability work is stable, two major expansions are now explicitly planned:
+
+### Internet radio through MPD
+
+Keep **MPD as the single playback/source authority**. Internet radio should enter the existing digital distribution path through MPD rather than adding a parallel decoder/source path around it:
+
+```text
+online station URL -> MPD -> existing FIFO -> Snapserver -> HOUSE renderers
+```
+
+Local-library playback remains folder-first (`folders are playlists`). Internet radio is an additional MPD source mode, not a replacement for that rule. Station storage/selection UI, metadata handling, queue semantics and source-switch behavior still need design; do not invent them yet.
+
+### Specialized subwoofer renderer
+
+A synchronized subwoofer node is the other next major goal. It should remain a normal participant in the one authoritative HOUSE stream rather than become a second playback authority. Crossover/low-pass implementation, mono handling, level control and per-node timing/phase strategy remain open design work.
