@@ -1,8 +1,8 @@
 # HTTP control API
 
-Current source version: **v0.8.2**, adding guarded in-place queue reordering for Android HOUSE Sort (90 local tests pass). Latest confirmed Pi deployment: **v0.8.1**. Its restart path with one passive S3 already present is field-proven; v0.8.2 installation and physical controller/mute validation remain pending.
+Current source/deployed version: **v0.8.2**, adding guarded in-place queue reordering for Android HOUSE Sort (90 local tests and GitHub CI pass). v0.8.2 is installed on the permanent Pi. Health/startup are good; Android v0.4.0 has successfully adopted the live MPD track in HOUSE after MPD's LAN listener was enabled. Physical controller/mute validation, queue-reorder device testing, and phone/S3 synchronization remain pending.
 
-The companion Android v0.4.0 APK (`9c89b24`, including heartbeat recovery) is delivered; its CI and server v0.8.2 CI passed. [Exact release builds and downloads](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.0.md). These results establish build/test completion, not Pi installation or phone/S3 synchronization.
+The companion Android v0.4.0 APK (`9c89b24`, including heartbeat recovery) is delivered and installed. Its first field pass found a Tailscale/explicit-Network transport defect plus playlist-mute and mute-control-placement corrections; see the Android validation docs.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -241,7 +241,7 @@ Implemented now:
 - seek
 - Shuffle/Repeat
 - queue clear/replace
-- guarded in-place queue reorder (v0.8.2; CI passed, Pi field validation pending)
+- guarded in-place queue reorder (v0.8.2; deployed, dedicated device sort validation pending)
 - persisted passive-default read/set (v0.7.0; permanent-Pi validation complete)
 - controller attach/heartbeat/detach, output reports, and muted-controller session policy (v0.8.0; deployed baseline passes, physical controller transitions pending)
 - Android local receiver mute/readiness reporting (Android v0.4.0; build passed, phone acceptance pending)
@@ -657,7 +657,7 @@ Settings and controller attach/heartbeat/detach remain available. A lease issued
 
 After the reset, a passive S3 present/arriving starts a freshly shuffled configured default with Repeat All. A controller alone leaves the empty house idle until deliberate playback. Once startup is ready, ordinary dependency outages do not rerun this reset; same-process retained pauses and return-before-drain-completion behavior remain unchanged.
 
-**Validation:** 85 tests passed for v0.8.1. The installed v0.8.1 restart with an already-present S3 is field-proven as recorded below. The all-radios-off restart variant and physical controller transitions remain pending. v0.8.2 adds five reorder tests, bringing the suite to 90.
+**Validation:** 85 tests passed for v0.8.1. v0.8.2 adds five reorder tests, bringing the suite to 90, and is now installed on the permanent Pi. The already-present-S3 restart path remains field-proven; physical controller transitions, queue-reorder device behavior, and the all-radios-off restart variant remain pending.
 
 
 ## v0.8.1 runtime restart validation
@@ -675,3 +675,17 @@ Observed result:
 - no stale automatic-pause or pending-drain state remained.
 
 This validates the restart contract for the **radio already present at service restart** case. Restart with all passive radios off, followed by a later radio arrival, remains a separate field check. Controller attach/heartbeat/detach and muted-controller transition behavior are still awaiting physical/API acceptance tests.
+
+
+## v0.8.2 deployment / Android integration note
+
+v0.8.2 is installed on the permanent Pi and reports healthy startup/session state.
+
+The first Android HOUSE field pass revealed an operational prerequisite and a client-side transport issue:
+
+- MPD was initially bound only to loopback. HOUSE identity checks from LAN clients require MPD to listen on the configured home-LAN interface/address as well as localhost. The private deployment address remains local configuration.
+- After the LAN listener was enabled, Android v0.4.0 entered HOUSE with Tailscale off and displayed the current MPD track.
+- Enabling Tailscale caused the delivered app's HOUSE updates to stop, while the phone browser could still read this HTTP API over the Pi's LAN address.
+- Therefore normal server reachability is intact; the Android explicit-`Network` transport binding is the blocker. The client will use physical non-VPN routes for HOME/HOUSE qualification and departure detection while ordinary HOUSE traffic uses normal Android routing.
+
+The server API contract itself is unchanged by that client correction.
