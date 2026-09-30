@@ -692,3 +692,12 @@ Current real-phone results:
 - FAIL/open: phone/S3 audio synchronization, with the phone approximately one second behind the S3.
 
 New approved Android behavior: Bluetooth connect/disconnect should drive the phone's local HOUSE output state as described in SESSION_BEHAVIOR §7. No server API change is currently implied; existing controller output-muted/output-ready policy remains the authority for whether zero audible outputs auto-pause a retained session.
+
+
+### HOUSE Country Buffer direction
+
+The synchronized stream is now intended to use a **multi-second playout buffer** rather than treating the current ~1 second as the final target. Keep `chunk_ms` small (currently ~20 ms); buffer depth and chunk size are separate.
+
+The purpose is resilience to brief LAN/Wi-Fi stalls plus headroom for client-specific latency correction. Exact depth remains a field-tuning choice. Deliberate transport/queue changes should not intentionally wait for the whole stale buffer to drain; verify the real Snapcast reset/discontinuity behavior and invalidate/rebase old audio as promptly as the stack supports.
+
+This is an approved design direction, not yet a deployed configuration change or a diagnosis of the current S3 dropout issue.
