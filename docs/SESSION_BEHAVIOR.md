@@ -106,17 +106,7 @@ Bluetooth route state is **local phone-output intent**, not a deliberate house t
 
 The client reports its local output state; the server remains the authority for zero-audible-output pause/retention.
 
-### STANDALONE Bluetooth output intent
-
-The Android standalone SMB player uses the same human-facing output-intent model while retaining local playback authority:
-
-- Bluetooth disconnect pauses/silences local playback and retains exact queue/song/position.
-- Bluetooth reconnect resumes that retained standalone session.
-- App start or transition into STANDALONE evaluates an already-connected Bluetooth route instead of requiring a new connection callback.
-- Explicit Stop/Quit remains authoritative.
-- With no retained standalone session, Bluetooth connection alone starts nothing.
-
-This does not alter server behavior and must not mask the required STANDALONE -> HOUSE transition when home returns.
+Standalone Bluetooth output behavior is Android-local and is defined in [smb-music-player/docs/CENTRAL_PLAYBACK.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/CENTRAL_PLAYBACK.md). It does not alter server policy.
 
 ## 8. Automatic home/away selection and phone handoff
 
