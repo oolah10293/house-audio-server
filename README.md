@@ -5,7 +5,7 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source/deployed version: **v0.8.2** — adds guarded queue reordering for the first Android HOUSE build; 90 local tests and GitHub CI pass. v0.8.2 is installed on the permanent Pi. Health/startup are good, the saved `Rap` default and passive-S3 session remain correct, and Android v0.4.0 has successfully adopted the live MPD track in HOUSE with Tailscale off. Phone/S3 synchronization and physical controller pause/resume/expiry checks remain pending.
+Current source/deployed version: **v0.8.2** — adds guarded queue reordering for the Android HOUSE build; 90 local tests and GitHub CI pass. v0.8.2 is installed on the permanent Pi. Health/startup are good and the saved `Rap` default/passive-S3 session remain correct. Android HOUSE works with Tailscale connected, and the currently tested phone route is audibly synchronized to the S3 at **+400 ms** correction. Physical controller pause/resume/expiry checks remain pending; Android live departure/return mode transitions are currently failing in v0.4.2.
 
 **2026-09-30 Android correction handoff:** [Android v0.4.1](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the three changes from the v0.4.0 phone feedback: physical-route home qualification with normal Android routing, pre-command conditional playlist auto-unmute, and a Mute/Unmute icon inside the lower Media3 strip. v0.8.2 is already installed; **no server code or ESP32 firmware change is required**. Tailscale-on phone behavior, phone/S3 synchronization and physical controller lifecycle still need acceptance.
 
