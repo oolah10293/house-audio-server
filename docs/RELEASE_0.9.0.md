@@ -19,6 +19,8 @@ The [API contract](API.md#return-home-handoff-v090) is authoritative for schemas
 
 ## Verification
 
+Implementation commit: [`d19e2694`](https://github.com/oolah10293/house-audio-server/commit/d19e2694e9c1222e5eadf88607511130a4a0cb7a). [GitHub CI run 36814563574](https://github.com/oolah10293/house-audio-server/actions/runs/36814563574) passed compilation and all 119 tests.
+
 `python -m py_compile house_audio_server.py` and `python -m unittest discover -s tests -q`: **119 tests pass**. Coverage includes queue/order/selection/position/options, passive arrival during transfer, existing-session protection, long-operation lock serialization, acknowledgement loss, repeat commit, invalid/indexed-path validation, renew/expiry, partial failures/cancel, explicit Pause, muted-only retention, final-controller departure, and startup reset guarding.
 
 This release has not been tested on the permanent Pi or Android/S3 hardware.
