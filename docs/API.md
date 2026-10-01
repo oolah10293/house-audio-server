@@ -4,6 +4,8 @@ Current source/deployed version: **v0.8.2**, adding guarded in-place queue reord
 
 The companion [Android v0.4.1 correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the Tailscale/routing, conditional playlist-mute and lower-strip output-control corrections found in the v0.4.0 field pass. Device acceptance remains pending; the server API and deployed v0.8.2 are unchanged.
 
+**Requirements clarification, 2026-09-30:** [SESSION_BEHAVIOR.md §7](SESSION_BEHAVIOR.md) now requires Bluetooth-gated Android output; Play/Resume and queue commands must not independently unmute the phone. The older conditional auto-unmute rule is superseded. The deployed API schemas and server pause/retention policy are unchanged. Current Android field results live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
+
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
 The service listens on port `8787` by default and talks to MPD locally on `127.0.0.1:6600`.
@@ -566,7 +568,7 @@ The response includes service/version and:
 
 A new attachment replaces that controller's previous lease. An old token cannot update or detach the replacement. A renderer already owned by another controller returns 409 `renderer_already_owned`.
 
-On a new Android HOUSE attachment, start locally muted. On a connection recovery, preserve the current local mute choice and report it explicitly; do not replay queued old output changes. Neither muted nor unmuted attachment starts a fresh session or overrides an ordinary explicit Pause.
+Android must evaluate current Bluetooth audio eligibility on attachment/recovery and report effective local output state. No Bluetooth means muted; an already-connected Bluetooth output joins an already-playing HOUSE session without waiting for another route callback. Preserve local mute across ordinary network recovery, subject to the explicit Bluetooth-route rules in SESSION_BEHAVIOR §7; do not replay queued old output changes. Neither muted nor unmuted attachment starts a fresh session or overrides an ordinary explicit Pause.
 
 ### Heartbeat/output report: `POST /controllers/heartbeat`
 
@@ -584,7 +586,7 @@ Send every five seconds and immediately when output state changes:
 
 All five fields are required. Sequence is a positive integer strictly greater than the last accepted sequence for this lease. Out-of-order/duplicate reports return 409 `stale_controller_sequence` without renewing presence or changing output state. Old tokens return 409 `stale_controller_lease`; expired/detached leases return 409 `expired_controller_lease`. After expiry, attach again and use a new sequence starting at 1. These tokens prevent stale lifecycle writes; they are not authentication/pairing credentials.
 
-`outputMuted` is the user's local mute choice. `outputReady` says the receiver/output path is available to render, including while MPD is paused; it is not a claim that music is currently playing. A call, route failure, or receiver failure can report not-ready without discarding the mute preference. This API reports output state; the client must actually mute/unmute its own receiver.
+`outputMuted` reports the effective local mute state, including user mute and enforced route ineligibility. `outputReady` says the receiver/output path is available to render, including while MPD is paused; it is not a claim that music is currently playing. A call, route failure, or receiver failure can report not-ready without discarding the mute preference. This API reports output state; the client must actually mute/unmute its own receiver. Under the approved Android rule, no Bluetooth audio means muted/ineligible even after Play/Resume; a transport command is not evidence of an eligible output.
 
 A controlling output counts as audible only when it is reported unmuted/ready and its associated Snapcast renderer is effectively present and audible. An unmute report without a live receiver cannot resume an automatic pause. A real renderer can remain audible after its control lease expires; it remains a controlling output and never becomes a passive auto-starter.
 
