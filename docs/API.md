@@ -6,6 +6,8 @@ The companion [Android v0.4.1 correction release](https://github.com/oolah10293/
 
 **Requirements clarification, 2026-09-30:** [SESSION_BEHAVIOR.md §7](SESSION_BEHAVIOR.md) now requires Bluetooth-gated Android output; Play/Resume and queue commands must not independently unmute the phone. The older conditional auto-unmute rule is superseded. The deployed API schemas and server pause/retention policy are unchanged. Current Android field results live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
 
+**Return-home requirement, 2026-09-30:** a phone actively playing SMB must transfer its current session into idle HOUSE, preserving queue/track/position and playback settings. A later or concurrently joining S3 must join that session rather than trigger a separate passive default. This is a live-session transfer under SESSION_BEHAVIOR §8, not a side effect of `/controllers/attach`. Existing presence calls and API schemas do not by themselves establish a coordinated handoff; concurrency, acknowledgement recovery, and device validation remain implementation work.
+
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
 The service listens on port `8787` by default and talks to MPD locally on `127.0.0.1:6600`.
@@ -604,7 +606,7 @@ Stop this device's receiver, stop its heartbeat loop, then detach. The response 
 
 | Event | Policy result |
 | --- | --- |
-| Controller joins fresh idle, even unmuted | Stay stopped; wait for explicit Play/selection. |
+| Controller merely attaches to fresh idle, even unmuted | Stay stopped; wait for explicit Play/selection. Active standalone transfer is a separate operation under SESSION_BEHAVIOR §8, not attach behavior. |
 | Controller joins/quits while a radio remains audible | Preserve shared queue, track, position, and transport. |
 | Only controllers with muted/unavailable outputs remain | Pause exactly where playback is, retain queue, mark `autoPaused: true`. |
 | Output becomes audible during that automatic pause | Resume retained playback. |
@@ -616,6 +618,8 @@ Stop this device's receiver, stop its heartbeat loop, then detach. The response 
 | Passive radio returns after completed drain | Start the saved MP3s/Rap default with fresh randomness. |
 
 Session snapshots now use `mode: "controllers_and_renderers"`, combined `presentCount`, separate `controllerCount`/`passiveCount`/`audibleCount`, `controllerPresenceImplemented: true`, and `autoPaused`/`pauseReason` (null or `no_audible_output`). These reflect the last successful policy poll.
+
+The table above describes presence-driven behavior. The approved active-SMB return-home transfer must also be coordinated with passive auto-start: it must create one authoritative continuation before a new default can race in. A simple read-idle followed by an unguarded queue replacement is not proof that this requirement is implemented. Preserve an already-active HOUSE session and reconcile uncertain acknowledgements instead of replaying stale writes.
 
 ### Persistence and remaining boundaries
 

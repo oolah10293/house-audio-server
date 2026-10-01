@@ -6,6 +6,8 @@ The 2026-09-29 clarification makes §4 authoritative over the former §11 resume
 
 The 2026-09-30 clarification makes Bluetooth audio a requirement for Android phone renderer eligibility (§7). Play/Resume and queue commands do not independently unmute the phone. This supersedes the former pre-command auto-unmute rule; the existing server pause/retention and final-node rules remain in force. It records approved behavior, not a new release or a claim of implementation.
 
+The later 2026-09-30 return-home clarification settles §8: a phone actively playing SMB when it returns to an idle HOUSE transfers that live session to the Pi, creating the authoritative HOUSE session. A subsequently powered S3 joins that session; it must not start a second/default session. This supersedes the earlier prohibition on promoting active standalone playback into idle HOUSE.
+
 These rules supersede earlier suggestions of an always-playing private radio station, starting music whenever any controller opens, and treating every failed server request as permission to switch to standalone playback.
 
 ## 1. One house session; separate control and sound
@@ -26,9 +28,9 @@ The browser controller is an accepted part of the plan, alongside the two existi
 
 With no nodes connected and no final track still finishing, nothing is playing. The Pi waits rather than advancing a playlist through an empty house.
 
-**Only a passive node automatically starts music from this idle state.** A radio being powered on should start the currently configured passive default folder (`MP3s` or `Rap`) with **Shuffle and Repeat All**, using a newly randomized order for this fresh session (§6).
+**Only a passive node automatically starts a new default session from this idle state.** A radio being powered on should start the currently configured passive default folder (`MP3s` or `Rap`) with **Shuffle and Repeat All**, using a newly randomized order for this fresh session (§6), unless the returning phone is transferring its already-playing session under §8.
 
-A phone, PC player, or browser connecting first does **not** automatically start a track, even when its output is unmuted. It waits for an explicit Play action. Do not restore a controller's former private queue into MPD merely because the controller connected.
+A phone, PC player, or browser merely connecting first does **not** automatically start a track, even when its output is unmuted. It waits for an explicit Play action. Do not restore a controller's stale former private queue merely because it connected. A returning phone's currently playing SMB session is different: §8 transfers that ongoing playback into idle HOUSE automatically, preserving the user's existing play intent.
 
 This fresh-session rule is different from a paused retained/active session. **A passive radio arriving into an ordinary paused/retained session resumes that session.** A completed-drain boundary pause is excluded: it is fresh idle under §4/§11. Passive-node arrival is therefore allowed to override Pause; controller arrival alone is not.
 
@@ -152,11 +154,19 @@ Whether to copy the whole house queue into the away player, rather than just con
 
 ### Returning home
 
-Adopt the existing house session without replacing it with the phone's away queue. If the house is playing, an unmuted phone joins that stream and a muted phone remains a silent controller.
+**Confirmed 2026-09-30: if the phone is actively playing SMB and HOUSE is idle, automatically transfer that phone session to the Pi and make it the authoritative HOUSE session.** Preserve the current playlist/queue order, track, playback position, and Shuffle/Repeat settings. Continue the song instead of restarting it or choosing a passive default. The phone then controls/renders the shared session according to its Bluetooth eligibility; its private SMB playback must stop as authority transfers.
+
+The reported sequence is not correctly resolved by leaving the phone on SMB until an S3 starts a different HOUSE queue and then switching the phone to that queue. The second/default session must never be started in this return-home case. An S3 powered on after return joins the transferred phone session at its current track/position without replacing or reshuffling it.
 
 Regaining a qualifying physical home LAN must trigger an immediate real identity/control probe rather than waiting for an old retry timer. A network-gain event is only a reason to probe; successful Pi identity still decides HOUSE availability.
 
-The fresh-idle rule still applies: returning with a controller alone must not automatically start a new house track. Handling the phone's still-playing private audio at that exact idle-house boundary needs to respect that rule; do not silently promote it into a new house session.
+Keep the existing distinctions:
+
+- A HOUSE session already active before the phone returns remains authoritative under §3. Adopt it without overwriting its queue; the failed handoff's newly spawned default is not evidence of such a pre-existing session.
+- Merely opening/attaching a controller, connecting Bluetooth, or returning with paused/stopped playback does not create Playing intent or revive a stale queue.
+- Bluetooth eligibility, explicit Pause/Stop/Quit, muted-controller retention, final-node drain, and server-restart rules still apply. Transferring the session is not permission to unmute an ineligible phone.
+
+The implementation must coordinate return-home transfer with passive-node auto-start so an S3 arriving during the handoff cannot start a competing default queue. Reconcile server state if a transfer acknowledgement is lost; do not blindly replay a queue replacement. The exact concurrency/API mechanism and transition timing remain implementation work. Automatic continuation is required; gapless switching is not promised.
 
 ### Reconnection status
 
@@ -174,7 +184,7 @@ Controller arrival must not be used as a blanket override of explicit transport 
 
 Remaining client decisions and settled restart boundary:
 
-- Whole-queue continuation for the phone away from home remains undecided. Phone output follows the Bluetooth eligibility rule in §7; Play/Resume/PLAY LIST never independently unmute it or bypass that rule.
+- Whole-queue HOUSE -> away continuation remains undecided. The reverse direction is now settled in §8: the phone's currently playing standalone session transfers into idle HOUSE. Phone output follows the Bluetooth eligibility rule in §7; Play/Resume/PLAY LIST never independently unmute it or bypass that rule.
 - No pause/drain reconstruction is required after a `house-audio-server` restart: restart is now explicitly a fresh-session boundary (§13).
 
 These gaps do not cancel the confirmed rules. They are intentionally not filled with invented decisions. Source implementation and field-validation status are recorded separately in the API docs and README.
@@ -231,7 +241,7 @@ On restart:
 
 After restart:
 
-- a phone/PC/browser reconnecting first does not auto-start playback;
+- a phone/PC/browser merely reconnecting first does not auto-start playback; once startup is ready, a distinct live standalone handoff follows §8 and must not be confused with restoring the discarded HOUSE session;
 - a passive S3 that is already present or subsequently arrives may start a genuinely fresh session from the configured `MP3s`/`Rap` default with a new shuffle;
 - no attempt is made to infer whether an old MPD Pause was deliberate or automatic.
 
