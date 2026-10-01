@@ -1,12 +1,14 @@
 # HTTP control API
 
-Current source version: **v0.9.0**, adding the coordinated return-home handoff below (119 local tests pass). Last confirmed Pi deployment is **v0.8.2**, which added guarded in-place queue reordering for Android HOUSE Sort. Health/startup are good; Android v0.4.0 has successfully adopted the live MPD track in HOUSE after MPD's LAN listener was enabled. Physical controller/mute validation, queue-reorder device testing, and phone/S3 synchronization remain pending.
+Current source and confirmed Pi deployment: **v0.9.0** (119 local tests pass). The 2026-10-01 health output reports service OK, startup ready, and MPD/Snapserver reachable. Android field evidence, including successful S8/synchronization and failed handoffs, is tracked in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
 
-The companion [Android v0.4.1 correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the Tailscale/routing, conditional playlist-mute and lower-strip output-control corrections found in the v0.4.0 field pass. Device acceptance remains pending; the server API and deployed v0.8.2 are unchanged.
+**Current product direction, 2026-10-01:** separate independent Android SMB Music and HOUSE Music apps, with no automatic/manual transfer or shared playback state. The handoff endpoints below remain documented because they are implemented in shipped v0.9.0; they are legacy functionality and must not be used by the independent apps. No endpoint or runtime behavior changes in this documentation update. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) supersedes earlier transfer requirements in the dated implementation notes below.
+
+**Historical v0.8.2 integration note:** the companion [Android v0.4.1 correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the Tailscale/routing, conditional playlist-mute and lower-strip output-control corrections found in the v0.4.0 field pass. Device acceptance remains pending; the server API and deployed v0.8.2 are unchanged.
 
 **Requirements clarification, 2026-09-30:** [SESSION_BEHAVIOR.md §7](SESSION_BEHAVIOR.md) now requires Bluetooth-gated Android output; Play/Resume and queue commands must not independently unmute the phone. The older conditional auto-unmute rule is superseded. The deployed API schemas and server pause/retention policy are unchanged. Current Android field results live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
 
-**Return-home requirement, 2026-09-30:** a phone actively playing SMB must transfer its current session into idle HOUSE, preserving queue/track/position and playback settings. A later or concurrently joining S3 must join that session rather than trigger a separate passive default. This is a live-session transfer under SESSION_BEHAVIOR §8, not a side effect of `/controllers/attach`. v0.9.0 implements the coordinated handoff below; deployment and device validation remain pending. Existing presence calls alone do not transfer a session.
+**Superseded return-home requirement, 2026-09-30:** the former combined Android design required an active SMB session to transfer into idle HOUSE before a passive default could start. v0.9.0 implements the corresponding API below. The 2026-10-01 independent-app decision withdraws that integration; ordinary presence calls continue not to transfer any session.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -606,7 +608,7 @@ Stop this device's receiver, stop its heartbeat loop, then detach. The response 
 
 | Event | Policy result |
 | --- | --- |
-| Controller merely attaches to fresh idle, even unmuted | Stay stopped; wait for explicit Play/selection. Active standalone transfer is a separate operation under SESSION_BEHAVIOR §8, not attach behavior. |
+| Controller merely attaches to fresh idle, even unmuted | Stay stopped; wait for explicit Play/selection. The legacy handoff API is a separate operation, not attach behavior or an independent-app requirement. |
 | Controller joins/quits while a radio remains audible | Preserve shared queue, track, position, and transport. |
 | Only controllers with muted/unavailable outputs remain | Pause exactly where playback is, retain queue, mark `autoPaused: true`. |
 | Output becomes audible during that automatic pause | Resume retained playback. |
@@ -619,7 +621,7 @@ Stop this device's receiver, stop its heartbeat loop, then detach. The response 
 
 Session snapshots now use `mode: "controllers_and_renderers"`, combined `presentCount`, separate `controllerCount`/`passiveCount`/`audibleCount`, `controllerPresenceImplemented: true`, and `autoPaused`/`pauseReason` (null or `no_audible_output`). These reflect the last successful policy poll.
 
-The table above describes presence-driven behavior. The approved active-SMB return-home transfer must also be coordinated with passive auto-start: it must create one authoritative continuation before a new default can race in. A simple read-idle followed by an unguarded queue replacement is not proof that this requirement is implemented. Preserve an already-active HOUSE session and reconcile uncertain acknowledgements instead of replaying stale writes.
+The table above describes presence-driven behavior. The legacy v0.9.0 handoff implementation also serializes transfers with passive auto-start, preserves an already-active HOUSE session, and reconciles uncertain acknowledgements. Those safeguards remain part of the shipped endpoint contract, not a requirement to integrate the independent apps.
 
 ### Persistence and remaining boundaries
 
@@ -698,6 +700,8 @@ The server API contract itself is unchanged by that client correction.
 
 
 ## Return-home handoff (v0.9.0)
+
+**Legacy API, still implemented:** the 2026-10-01 independent Android apps decision supersedes the product requirement for these calls. This section documents shipped v0.9.0 behavior for compatibility; independent SMB Music and HOUSE Music must not invoke this transfer flow.
 
 These four **POST** endpoints use the same server write lock as passive-session policy and all deliberate MPD commands. They transfer already-playing standalone intent into stopped/idle HOUSE. They do not alter `/controllers/attach`, revive paused SMB playback, or overwrite playing/retained-paused HOUSE.
 
