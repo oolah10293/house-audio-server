@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from collections import deque
 import os
 import random
@@ -31,7 +32,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.8.2"
+SERVICE_VERSION = "0.9.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -321,6 +322,24 @@ class ControllerRegistry:
             lease.update(detached=True, expires=0, outputMuted=True, outputReady=False)
             return {"controllerId": controller_id, "detached": True}
 
+    def handoff_lease(self, controller_id):
+        """Capture existing live presence before a write that blocks heartbeats."""
+        with self._lock:
+            lease = self._leases.get(controller_id)
+            if lease is None or lease["detached"] or self.clock() >= lease["expires"]:
+                return None
+            return lease["leaseId"]
+
+    def renew_handoff_lease(self, controller_id, lease_id):
+        # Commit and heartbeat share MPD_WRITE_LOCK. Give this genuinely live
+        # controller its normal lease window after a long blocking commit, not
+        # a lease that expired while the server prevented renewal. Never create
+        # a controller, revive a detach, or change actual mute/readiness state.
+        with self._lock:
+            lease = self._leases.get(controller_id)
+            if lease is not None and lease["leaseId"] == lease_id and not lease["detached"]:
+                lease["expires"] = self.clock() + self.lease_seconds
+
     def snapshot(self, snap):
         with self._lock:
             now = self.clock()
@@ -473,7 +492,7 @@ class MpdClient:
         records = parse_mpd_records(responses[0].lines, {"file"})
         return [normalize_song(record) for record in records if record.get("file")]
 
-    def reorder_queue(self, song_ids, queue_version):
+    def reorder_queue(self, song_ids, queue_version, before_write=None):
         """Reorder existing MPD IDs without clearing, playing, pausing, or seeking.
 
         The API write lock serializes normal house writers. The revision/ID
@@ -491,6 +510,8 @@ class MpdClient:
                 raise ApiError(409, "stale_queue", "Queue changed; refresh before sorting")
             if len(current) != len(song_ids) or set(current) != set(song_ids):
                 raise ApiError(409, "stale_queue", "songIds must contain every current queue entry exactly once")
+            if before_write is not None:
+                before_write()
             commands = []
             for destination, song_id in enumerate(song_ids):
                 source = current.index(song_id)
@@ -1239,6 +1260,7 @@ class PassiveSessionPolicy:
         self._saved_single_mode = "0"
         self._last_action = "waiting_for_presence_baseline"
         self._last_action_epoch = time.time()
+        self.handoffs = None
 
     def start(self) -> None:
         if not self.enabled and self.startup is None:
@@ -1464,6 +1486,11 @@ class PassiveSessionPolicy:
         # ownership. New controller registrations are allowed while this retries.
         if self.startup is not None:
             self.startup.ensure_ready(self.mpd_factory())
+        if self.handoffs is not None and self.handoffs.blocks_policy():
+            # Keep the last presence sample: radios arriving during a reservation
+            # must still count as arrivals after an expired/cancelled transfer.
+            self._record("return_home_handoff_pending")
+            return
         if not self.enabled:
             self._record("disabled")
             return
@@ -1523,12 +1550,185 @@ class PassiveSessionPolicy:
             self._stop.wait(self.poll_seconds)
 
 
+class ReturnHomeHandoffs:
+    """Transient, idempotent ownership transfer serialized with every MPD writer.
+
+    A reservation only protects idle HOUSE. It does not supply playing intent,
+    renderer presence, or a silent-playback exception. Failed MPD writes remain
+    quarantined until cancellation/explicit transport, rather than retrying clear.
+    Records live for this service process; unknown after restart means reconcile,
+    never automatically prepare/commit the old snapshot again.
+    """
+
+    def __init__(self, policy, clock=time.monotonic, lease_seconds=15):
+        self.policy = policy
+        self.clock = clock
+        self.lease_seconds = lease_seconds
+        self.records = {}
+        self.active = None
+        policy.handoffs = self
+
+    @staticmethod
+    def _key(payload, commit=False):
+        fields = {"controllerId", "handoffId"}
+        if commit:
+            fields |= {"tracks", "startIndex", "positionSeconds", "shuffle", "repeat"}
+        if set(payload) != fields:
+            raise ApiError(400, "invalid_handoff", "Unexpected or missing handoff fields")
+        return (ControllerRegistry._id(payload.get("controllerId"), "controllerId"),
+                ControllerRegistry._id(payload.get("handoffId"), "handoffId"))
+
+    def blocks_policy(self):
+        # Caller holds MPD_WRITE_LOCK, including the policy tick.
+        if self.active is None:
+            return False
+        record = self.records[self.active]
+        if record["status"] == "reserved" and self.clock() >= record["expires"]:
+            record["status"] = "expired"
+            self.active = None
+            return False
+        return True
+
+    def _reply(self, key, mpd):
+        self.blocks_policy()
+        record = self.records.get(key, {"status": "unknown"})
+        view = {"controllerId": key[0], "handoffId": key[1], "status": record["status"],
+                "leaseRemainingSeconds": round(max(0, record.get("expires", 0) - self.clock()), 3)
+                    if record["status"] == "reserved" else 0}
+        if "detail" in record:
+            view["detail"] = record["detail"]
+        result = {"handoff": view, "mpd": None}
+        try:
+            result["mpd"] = mpd.state()
+        except (OSError, MpdError) as exc:
+            # A failed state read must not hide a successful commit and invite
+            # replay of clear/add/seek. The receipt remains authoritative.
+            result["mpdError"] = str(exc)
+        return result
+
+    def prepare(self, payload, mpd):
+        key = self._key(payload)
+        self.blocks_policy()
+        record = self.records.get(key)
+        if record is not None:
+            if record["status"] == "reserved":
+                record["expires"] = self.clock() + self.lease_seconds
+            return self._reply(key, mpd)
+        if self.active is not None:
+            raise ApiError(409, "handoff_in_progress", "Another handoff is reserved or awaiting recovery")
+        # A completed drain is fresh idle even if MPD paused at the next track.
+        state = mpd.state()
+        policy = self.policy
+        if policy._pending_final_stop and (state.get("transport") == "stop" or
+                (state.get("transport") == "pause" and policy._pending_song_id is not None
+                 and state.get("songId") != policy._pending_song_id)):
+            policy._complete_final_stop(mpd)
+            state = mpd.state()
+        record = {"status": "adopt_existing"}
+        if state.get("transport") == "stop":
+            record.update(status="reserved", expires=self.clock() + self.lease_seconds,
+                          queueVersion=state.get("queueVersion"))
+            self.active = key
+        self.records[key] = record
+        return self._reply(key, mpd)
+
+    def status(self, payload, mpd):
+        return self._reply(self._key(payload), mpd)
+
+    def cancel(self, payload, mpd):
+        key = self._key(payload)
+        self.blocks_policy()
+        record = self.records.get(key)
+        if record is not None and self.active == key:
+            if record["status"] == "failed":
+                # A partial or unacknowledged play may have reached MPD. Keep
+                # quarantine if stop itself cannot be acknowledged.
+                mpd.command("stop")
+            record["status"] = "cancelled"
+            self.active = None
+        return self._reply(key, mpd)
+
+    def explicit_command(self):
+        self.blocks_policy()
+        if self.active is not None:
+            self.records[self.active]["status"] = "cancelled"
+            self.active = None
+
+    def commit(self, payload, mpd):
+        key = self._key(payload, commit=True)
+        self.blocks_policy()
+        record = self.records.get(key)
+        if record is None or record["status"] != "reserved":
+            return self._reply(key, mpd)
+        tracks = payload["tracks"]
+        if not isinstance(tracks, list) or not tracks or len(tracks) > 10000:
+            raise ApiError(400, "invalid_handoff", "Provide 1 to 10000 track paths")
+        safe = []
+        for track in tracks:
+            path = validate_relative_path(track)
+            if not path or any(character in path for character in "\r\n\x00"):
+                raise ApiError(400, "invalid_handoff", "Invalid track path")
+            safe.append(path)
+        index, position = payload["startIndex"], payload["positionSeconds"]
+        if type(index) is not int or not 0 <= index < len(safe):
+            raise ApiError(400, "invalid_handoff", "startIndex is outside tracks")
+        try:
+            valid_position = type(position) in (int, float) and math.isfinite(position) and position >= 0
+        except OverflowError:
+            valid_position = False
+        if (not valid_position
+                or type(payload["shuffle"]) is not bool or type(payload["repeat"]) is not bool):
+            raise ApiError(400, "invalid_handoff", "Finite position and boolean playback settings required")
+        # The phone must attach before committing. This is genuine controller
+        # presence, never a fabricated ready/audible renderer report.
+        controller_lease = self.policy.controllers.handoff_lease(key[0])
+        if controller_lease is None:
+            raise ApiError(409, "handoff_controller_required", "Attach the controller before committing")
+        state = mpd.state()
+        if state.get("transport") != "stop" or state.get("queueVersion") != record["queueVersion"]:
+            record["status"] = "adopt_existing"
+            self.active = None
+            return self._reply(key, mpd)
+        # Validate file identities before destructive writes. In particular an
+        # SMB folder path must never expand recursively through MPD's add.
+        indexed = set(mpd.library_files(""))
+        if any(track not in indexed for track in safe):
+            raise ApiError(400, "handoff_track_unavailable", "A track is not an indexed MPD file")
+        # Never repeat the write sequence, even after partial failure or lost
+        # HTTP acknowledgement. Committed receipts survive further transport.
+        record["status"] = "applying"
+        commands = ["clear", *(f"add {mpd_quote(track)}" for track in safe),
+                    f"random {int(payload['shuffle'])}", f"repeat {int(payload['repeat'])}",
+                    "single 0", "consume 0", f"play {index}", f"seekcur {position:.3f}"]
+        try:
+            self.policy.explicit_transport(mpd)
+            mpd.run(*commands)
+        except (OSError, MpdError) as exc:
+            record.update(status="failed", detail=str(exc))
+            return self._reply(key, mpd)
+        finally:
+            self.policy.controllers.renew_handoff_lease(key[0], controller_lease)
+        record["status"] = "committed"
+        self.active = None
+        # Existing policy immediately retains a muted-only controller session.
+        # Do not require or invent a silent-playback exception during handoff.
+        presence = self.policy.controllers.snapshot(self.policy.monitor.snapshot())
+        if presence["snapserverReachable"]:
+            try:
+                self.policy._apply_controller_pause(mpd, presence)
+            except (OSError, MpdError):
+                pass  # The normal policy poll retries; installation succeeded.
+        self.policy._record("return_home_handoff_committed")
+        return self._reply(key, mpd)
+
+
 PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
 CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE)
 PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
     SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS,
     startup=MPD_STARTUP,
 )
+RETURN_HOME_HANDOFFS = ReturnHomeHandoffs(PASSIVE_SESSION_POLICY)
 
 
 def parse_mpd_fields(lines: List[str]) -> Dict[str, str]:
@@ -1876,162 +2076,185 @@ class ApiHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
 
-            controller_commands = {
-                "/controllers/attach": CONTROLLERS.attach,
-                "/controllers/heartbeat": CONTROLLERS.heartbeat,
-                "/controllers/detach": CONTROLLERS.detach,
-            }
-            if path in controller_commands:
-                with MPD_WRITE_LOCK:
-                    result = controller_commands[path](payload)
-                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, **result})
-                return
+            with MPD_WRITE_LOCK:
+                handoff_commands = {
+                    "/session/handoff/prepare": RETURN_HOME_HANDOFFS.prepare,
+                    "/session/handoff/commit": RETURN_HOME_HANDOFFS.commit,
+                    "/session/handoff/status": RETURN_HOME_HANDOFFS.status,
+                    "/session/handoff/cancel": RETURN_HOME_HANDOFFS.cancel,
+                }
+                if path in handoff_commands:
+                    MPD_STARTUP.require_ready()
+                    result = handoff_commands[path](payload, MpdClient())
+                    self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, **result})
+                    return
 
-            if path == "/settings":
-                if set(payload) != {"passiveDefaultFolder"}:
-                    raise ApiError(
-                        400, "invalid_request",
-                        "Provide only passiveDefaultFolder",
+                controller_commands = {
+                    "/controllers/attach": CONTROLLERS.attach,
+                    "/controllers/heartbeat": CONTROLLERS.heartbeat,
+                    "/controllers/detach": CONTROLLERS.detach,
+                }
+                if path in controller_commands:
+                    with MPD_WRITE_LOCK:
+                        result = controller_commands[path](payload)
+                    self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, **result})
+                    return
+
+                if path == "/settings":
+                    if set(payload) != {"passiveDefaultFolder"}:
+                        raise ApiError(
+                            400, "invalid_request",
+                            "Provide only passiveDefaultFolder",
+                        )
+                    settings = PASSIVE_DEFAULT_SETTINGS.set_default_folder(
+                        payload["passiveDefaultFolder"]
                     )
-                settings = PASSIVE_DEFAULT_SETTINGS.set_default_folder(
-                    payload["passiveDefaultFolder"]
-                )
-                self._json(200, {
-                    "service": SERVICE_NAME,
-                    "version": SERVICE_VERSION,
-                    "settings": settings,
-                })
-                return
+                    self._json(200, {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "settings": settings,
+                    })
+                    return
 
-            if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
-                        "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder"}:
-                # Readiness is monotonic for this process. A pending reset may
-                # not acknowledge a new queue/command and later erase it.
-                MPD_STARTUP.require_ready()
-            mpd = MpdClient()
+                if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
+                            "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder"}:
+                    # Readiness is monotonic for this process. A pending reset may
+                    # not acknowledge a new queue/command and later erase it.
+                    MPD_STARTUP.require_ready()
+                mpd = MpdClient()
 
-            if path == "/queue/reorder":
-                if set(payload) != {"songIds", "queueVersion"}:
-                    raise ApiError(400, "invalid_request", "Provide only songIds and queueVersion")
-                state = mpd.reorder_queue(payload["songIds"], payload["queueVersion"])
-                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, "mpd": state})
-                return
-
-            if path == "/play":
-                with MPD_WRITE_LOCK:
+                def explicit_transport():
+                    RETURN_HOME_HANDOFFS.explicit_command()
                     PASSIVE_SESSION_POLICY.explicit_transport(mpd)
-                    mpd.command("play")
-                self._mpd_state_response()
-                return
 
-            if path == "/pause":
-                with MPD_WRITE_LOCK:
-                    PASSIVE_SESSION_POLICY.explicit_transport(mpd)
-                    mpd.command("pause 1")
-                self._mpd_state_response()
-                return
+                if path == "/queue/reorder":
+                    if set(payload) != {"songIds", "queueVersion"}:
+                        raise ApiError(400, "invalid_request", "Provide only songIds and queueVersion")
+                    state = mpd.reorder_queue(payload["songIds"], payload["queueVersion"],
+                                              before_write=RETURN_HOME_HANDOFFS.explicit_command)
+                    self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, "mpd": state})
+                    return
 
-            if path == "/stop":
-                with MPD_WRITE_LOCK:
-                    PASSIVE_SESSION_POLICY.explicit_transport(mpd)
-                    mpd.command("stop")
-                self._mpd_state_response()
-                return
+                if path == "/play":
+                    with MPD_WRITE_LOCK:
+                        explicit_transport()
+                        mpd.command("play")
+                    self._mpd_state_response()
+                    return
 
-            if path == "/next":
-                with MPD_WRITE_LOCK:
-                    mpd.command("next")
-                self._mpd_state_response()
-                return
+                if path == "/pause":
+                    with MPD_WRITE_LOCK:
+                        explicit_transport()
+                        mpd.command("pause 1")
+                    self._mpd_state_response()
+                    return
 
-            if path == "/previous":
-                with MPD_WRITE_LOCK:
-                    mpd.command("previous")
-                self._mpd_state_response()
-                return
+                if path == "/stop":
+                    with MPD_WRITE_LOCK:
+                        explicit_transport()
+                        mpd.command("stop")
+                    self._mpd_state_response()
+                    return
 
-            if path == "/seek":
-                seconds = payload.get("seconds")
-                if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
-                    raise ApiError(400, "invalid_request", "seconds must be a number")
-                if seconds < 0:
-                    raise ApiError(400, "invalid_request", "seconds cannot be negative")
-                with MPD_WRITE_LOCK:
-                    mpd.command(f"seekcur {float(seconds):.3f}")
-                self._mpd_state_response()
-                return
+                if path == "/next":
+                    with MPD_WRITE_LOCK:
+                        RETURN_HOME_HANDOFFS.explicit_command()
+                        mpd.command("next")
+                    self._mpd_state_response()
+                    return
 
-            if path == "/shuffle":
-                enabled = bool_field(payload, "enabled")
-                with MPD_WRITE_LOCK:
-                    mpd.command(f"random {1 if enabled else 0}")
-                self._mpd_state_response()
-                return
+                if path == "/previous":
+                    with MPD_WRITE_LOCK:
+                        RETURN_HOME_HANDOFFS.explicit_command()
+                        mpd.command("previous")
+                    self._mpd_state_response()
+                    return
 
-            if path == "/repeat":
-                enabled = bool_field(payload, "enabled")
-                with MPD_WRITE_LOCK:
-                    mpd.command(f"repeat {1 if enabled else 0}")
-                self._mpd_state_response()
-                return
+                if path == "/seek":
+                    seconds = payload.get("seconds")
+                    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+                        raise ApiError(400, "invalid_request", "seconds must be a number")
+                    if seconds < 0:
+                        raise ApiError(400, "invalid_request", "seconds cannot be negative")
+                    with MPD_WRITE_LOCK:
+                        RETURN_HOME_HANDOFFS.explicit_command()
+                        mpd.command(f"seekcur {float(seconds):.3f}")
+                    self._mpd_state_response()
+                    return
 
-            if path == "/queue/clear":
-                with MPD_WRITE_LOCK:
-                    PASSIVE_SESSION_POLICY.explicit_transport(mpd)
-                    mpd.command("clear")
-                self._mpd_state_response()
-                return
+                if path == "/shuffle":
+                    enabled = bool_field(payload, "enabled")
+                    with MPD_WRITE_LOCK:
+                        RETURN_HOME_HANDOFFS.explicit_command()
+                        mpd.command(f"random {1 if enabled else 0}")
+                    self._mpd_state_response()
+                    return
 
-            if path == "/queue/replace":
-                tracks = payload.get("tracks")
-                if not isinstance(tracks, list) or not all(
-                    isinstance(item, str) for item in tracks
-                ):
-                    raise ApiError(
-                        400, "invalid_request", "tracks must be an array of strings"
+                if path == "/repeat":
+                    enabled = bool_field(payload, "enabled")
+                    with MPD_WRITE_LOCK:
+                        RETURN_HOME_HANDOFFS.explicit_command()
+                        mpd.command(f"repeat {1 if enabled else 0}")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/queue/clear":
+                    with MPD_WRITE_LOCK:
+                        explicit_transport()
+                        mpd.command("clear")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/queue/replace":
+                    tracks = payload.get("tracks")
+                    if not isinstance(tracks, list) or not all(
+                        isinstance(item, str) for item in tracks
+                    ):
+                        raise ApiError(
+                            400, "invalid_request", "tracks must be an array of strings"
+                        )
+
+                    start_index = payload.get("startIndex", 0)
+                    if not isinstance(start_index, int) or isinstance(start_index, bool):
+                        raise ApiError(400, "invalid_request", "startIndex must be an integer")
+
+                    play = payload.get("play", True)
+                    if not isinstance(play, bool):
+                        raise ApiError(400, "invalid_request", "play must be true or false")
+
+                    position_seconds = payload.get("positionSeconds", 0.0)
+                    if not isinstance(position_seconds, (int, float)) or isinstance(
+                        position_seconds, bool
+                    ):
+                        raise ApiError(
+                            400, "invalid_request", "positionSeconds must be a number"
+                        )
+
+                    state = mpd.replace_queue(
+                        tracks=tracks,
+                        start_index=start_index,
+                        play=play,
+                        position_seconds=float(position_seconds),
+                        before_write=explicit_transport,
                     )
-
-                start_index = payload.get("startIndex", 0)
-                if not isinstance(start_index, int) or isinstance(start_index, bool):
-                    raise ApiError(400, "invalid_request", "startIndex must be an integer")
-
-                play = payload.get("play", True)
-                if not isinstance(play, bool):
-                    raise ApiError(400, "invalid_request", "play must be true or false")
-
-                position_seconds = payload.get("positionSeconds", 0.0)
-                if not isinstance(position_seconds, (int, float)) or isinstance(
-                    position_seconds, bool
-                ):
-                    raise ApiError(
-                        400, "invalid_request", "positionSeconds must be a number"
+                    self._json(
+                        200,
+                        {
+                            "service": SERVICE_NAME,
+                            "version": SERVICE_VERSION,
+                            "mpd": state,
+                        },
                     )
+                    return
 
-                state = mpd.replace_queue(
-                    tracks=tracks,
-                    start_index=start_index,
-                    play=play,
-                    position_seconds=float(position_seconds),
-                    before_write=lambda: PASSIVE_SESSION_POLICY.explicit_transport(mpd),
-                )
                 self._json(
-                    200,
+                    404,
                     {
                         "service": SERVICE_NAME,
                         "version": SERVICE_VERSION,
-                        "mpd": state,
+                        "error": "not_found",
                     },
                 )
-                return
-
-            self._json(
-                404,
-                {
-                    "service": SERVICE_NAME,
-                    "version": SERVICE_VERSION,
-                    "error": "not_found",
-                },
-            )
         except ApiError as exc:
             self._json(
                 exc.status,

@@ -166,7 +166,7 @@ Keep the existing distinctions:
 - Merely opening/attaching a controller, connecting Bluetooth, or returning with paused/stopped playback does not create Playing intent or revive a stale queue.
 - Bluetooth eligibility, explicit Pause/Stop/Quit, muted-controller retention, final-node drain, and server-restart rules still apply. Transferring the session is not permission to unmute an ineligible phone.
 
-The implementation must coordinate return-home transfer with passive-node auto-start so an S3 arriving during the handoff cannot start a competing default queue. Reconcile server state if a transfer acknowledgement is lost; do not blindly replay a queue replacement. The exact concurrency/API mechanism and transition timing remain implementation work. Automatic continuation is required; gapless switching is not promised.
+The implementation must coordinate return-home transfer with passive-node auto-start so an S3 arriving during the handoff cannot start a competing default queue. Reconcile server state if a transfer acknowledgement is lost; do not blindly replay a queue replacement. Server v0.9.0 implements a renewable reservation followed by an idempotent commit, serialized with passive policy and deliberate transport; see [API.md](API.md#return-home-handoff-v090). The reservation begins at the first successful prepare request, so the phone must send it immediately after qualifying home identity rather than waiting for its normal attach/poll cycle. Device transition timing and end-to-end validation remain pending. Automatic continuation is required; gapless switching is not promised.
 
 ### Reconnection status
 

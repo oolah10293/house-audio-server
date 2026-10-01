@@ -1,12 +1,12 @@
 # HTTP control API
 
-Current source/deployed version: **v0.8.2**, adding guarded in-place queue reordering for Android HOUSE Sort (90 local tests and GitHub CI pass). v0.8.2 is installed on the permanent Pi. Health/startup are good; Android v0.4.0 has successfully adopted the live MPD track in HOUSE after MPD's LAN listener was enabled. Physical controller/mute validation, queue-reorder device testing, and phone/S3 synchronization remain pending.
+Current source version: **v0.9.0**, adding the coordinated return-home handoff below (119 local tests pass). Last confirmed Pi deployment is **v0.8.2**, which added guarded in-place queue reordering for Android HOUSE Sort. Health/startup are good; Android v0.4.0 has successfully adopted the live MPD track in HOUSE after MPD's LAN listener was enabled. Physical controller/mute validation, queue-reorder device testing, and phone/S3 synchronization remain pending.
 
 The companion [Android v0.4.1 correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the Tailscale/routing, conditional playlist-mute and lower-strip output-control corrections found in the v0.4.0 field pass. Device acceptance remains pending; the server API and deployed v0.8.2 are unchanged.
 
 **Requirements clarification, 2026-09-30:** [SESSION_BEHAVIOR.md §7](SESSION_BEHAVIOR.md) now requires Bluetooth-gated Android output; Play/Resume and queue commands must not independently unmute the phone. The older conditional auto-unmute rule is superseded. The deployed API schemas and server pause/retention policy are unchanged. Current Android field results live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
 
-**Return-home requirement, 2026-09-30:** a phone actively playing SMB must transfer its current session into idle HOUSE, preserving queue/track/position and playback settings. A later or concurrently joining S3 must join that session rather than trigger a separate passive default. This is a live-session transfer under SESSION_BEHAVIOR §8, not a side effect of `/controllers/attach`. Existing presence calls and API schemas do not by themselves establish a coordinated handoff; concurrency, acknowledgement recovery, and device validation remain implementation work.
+**Return-home requirement, 2026-09-30:** a phone actively playing SMB must transfer its current session into idle HOUSE, preserving queue/track/position and playback settings. A later or concurrently joining S3 must join that session rather than trigger a separate passive default. This is a live-session transfer under SESSION_BEHAVIOR §8, not a side effect of `/controllers/attach`. v0.9.0 implements the coordinated handoff below; deployment and device validation remain pending. Existing presence calls alone do not transfer a session.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -695,3 +695,77 @@ The first Android HOUSE field pass revealed an operational prerequisite and a cl
 - Therefore normal server reachability is intact; the Android explicit-`Network` transport binding is the blocker. The client will use physical non-VPN routes for HOME/HOUSE qualification and departure detection while ordinary HOUSE traffic uses normal Android routing.
 
 The server API contract itself is unchanged by that client correction.
+
+
+## Return-home handoff (v0.9.0)
+
+These four **POST** endpoints use the same server write lock as passive-session policy and all deliberate MPD commands. They transfer already-playing standalone intent into stopped/idle HOUSE. They do not alter `/controllers/attach`, revive paused SMB playback, or overwrite playing/retained-paused HOUSE.
+
+### Prepare, status, and cancel
+
+Send exactly:
+
+```json
+{"controllerId":"android-phone","handoffId":"unique-id-for-this-return"}
+```
+
+- `POST /session/handoff/prepare`: inspect HOUSE and reserve it only when stopped. Returns `reserved`, or `adopt_existing` for a playing/retained-paused HOUSE. A known completed final-drain boundary is normalized to stopped first. Repeat Prepare with the same reserved ID renews its 15-second lease; terminal IDs never create another reservation.
+- `POST /session/handoff/status`: read the receipt and current MPD state. This endpoint never replaces or seeks the queue.
+- `POST /session/handoff/cancel`: cancel a reserved transfer. A failed transfer must acknowledge MPD Stop before releasing its quarantine. Repeated Cancel is safe. Cancel of an already committed transfer preserves shared playback; it is not a global Stop.
+
+Send Prepare immediately after confirming physical home and Pi identity, before ordinary attach/state polling. Passive default startup is blocked from successful reservation until Commit/Cancel/expiry. A session already active when Prepare acquires the lock remains authoritative. Server time starts at the first transfer request; it cannot infer the phone's earlier physical network arrival.
+
+### Commit
+
+After reservation, attach the controller and maintain its lease, prepare the mapped library-relative queue, then pause/snapshot the private player at the transfer boundary and send:
+
+```json
+{
+  "controllerId":"android-phone",
+  "handoffId":"unique-id-for-this-return",
+  "tracks":["Rap/C.mp3","MP3s/A.mp3","Rap/A.mp3"],
+  "startIndex":1,
+  "positionSeconds":47.125,
+  "shuffle":false,
+  "repeat":true
+}
+```
+
+`POST /session/handoff/commit` requires exactly those fields. The queue order and zero-based selection are preserved. `shuffle` maps to MPD Random; `repeat` maps to Repeat All. Single and Consume are disabled. Position must be finite and nonnegative; it is applied at millisecond precision without adding network elapsed time. The caller pauses private playback before Commit, so the saved position represents its last private playback point. Duplicate files are allowed. All paths must name exact MPD-indexed files, not folders; validation occurs before destructive writes. Limits are 10,000 tracks and the existing 2 MiB JSON body limit.
+
+The controller must already hold a live attachment. No renderer is claimed audible unless it is actually ready. Muted-only transfer applies the normal server automatic pause and retains the transferred position until real output returns. Existing final-node/restart rules remain unchanged.
+
+The reservation is checked at the beginning of Commit. Once installation begins, its write lock prevents lease expiry or passive startup from interrupting the operation, even when a large queue takes more than 15 seconds. Because heartbeats use that same lock, the genuinely live controller lease captured at Commit entry is renewed once on completion, preserving its existing mute/readiness and sequence. This compensates for the server blocking renewals; it cannot create presence, revive a detach, or overwrite a newer attachment. Ordinary expiry resumes afterward. Allow a longer HTTP timeout and reconcile timeout/lost acknowledgement with Status; never resend a fresh queue operation based solely on a timeout.
+
+### Response and recovery
+
+All successful protocol responses use HTTP 200:
+
+```json
+{
+  "service":"house-audio-server",
+  "version":"0.9.0",
+  "handoff":{
+    "controllerId":"android-phone",
+    "handoffId":"unique-id-for-this-return",
+    "status":"committed",
+    "leaseRemainingSeconds":0
+  },
+  "mpd":{"transport":"pause","elapsedSeconds":47.125}
+}
+```
+
+`mpd` contains the ordinary full MPD state; the example is abbreviated. A state-read failure returns `mpd: null` with `mpdError` while preserving the receipt. `handoff.detail` may describe an MPD failure.
+
+| Status | Client action |
+| --- | --- |
+| `reserved` | Keep/renew the reservation, attach, then commit the stopped private snapshot once. |
+| `committed` | Adopt HOUSE; never repeat clear/add/seek. Further Status returns current HOUSE position, not the old transfer position. |
+| `adopt_existing` | Adopt the pre-existing HOUSE without replacing its queue. |
+| `expired` / `cancelled` | The old ID can no longer commit. Reconcile current mode and explicit play intent before any new transition. |
+| `failed` | Private audio stays paused. MPD may have partially applied the transfer; do not retry it. Automatic policy is quarantined until successful Cancel or a deliberate server transport/queue command. |
+| `unknown` | No receipt exists, including after service restart. Do not prepare/replay an old attempted Commit automatically. Reconcile HOUSE and the current user intent. |
+
+Receipts are process-local and remain terminal for that service process. Startup reset still discards the previous HOUSE session; all handoff endpoints return `503 startup_pending` until that boundary completes. Controller registration itself remains available during startup. Explicit MPD transport/queue/settings commands cancel a pending handoff before taking effect; passive default-folder setting changes do not cancel it. Out-of-band native MPD writers remain outside the HTTP concurrency boundary; Commit additionally rejects a changed queue revision or non-stopped transport by returning `adopt_existing`.
+
+Malformed payloads/values return HTTP 400 (`invalid_handoff`, `invalid_controller_request`, or `invalid_path`); absent indexed tracks return `400 handoff_track_unavailable`. Competing reservations or an unrecovered failed transfer return `409 handoff_in_progress`; missing live controller registration returns `409 handoff_controller_required`. MPD errors before mutation use the normal `503 mpd_unavailable` response; a mutation whose outcome is uncertain is recorded as `failed` instead of inviting replay.

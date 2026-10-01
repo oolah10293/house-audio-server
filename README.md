@@ -2,7 +2,7 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source/deployed version: **v0.8.2**. Server behavior, deployment status, and field-proven server milestones are documented here. Android release/acceptance details are intentionally kept in [smb-music-player](https://github.com/oolah10293/smb-music-player), especially its `HOUSE_VALIDATION.md`; ESP32 renderer details are kept in [house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
+Current source version: **v0.9.0**. Last confirmed Pi deployment: **v0.8.2**. v0.9.0 adds coordinated return-home transfer and requires deployment before the matching Android handoff can be tested. Server behavior, deployment status, and field-proven server milestones are documented here. Android release/acceptance details are intentionally kept in [smb-music-player](https://github.com/oolah10293/smb-music-player), especially its `HOUSE_VALIDATION.md`; ESP32 renderer details are kept in [house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
 
 ## Agreed playback and session behavior
 
@@ -18,7 +18,7 @@ The important session distinctions are:
 - Every completed drain ends the session. The next passive power-on loads a newly shuffled queue from the currently configured default, even if MPD retained yesterday's CD/Rap queue in `pause @ 0.0`. Do not persist/continue the completed shuffle order or force a different first song; chance repeats are allowed. Only the default folder setting is intended to persist.
 - HOUSE/standalone authority is separate from local output mute. Android HOUSE rendering requires Bluetooth audio: no Bluetooth means a muted phone, including after Play/Resume and queue changes. Route disconnect mutes the phone; the existing server policy pauses/retains only when no audible output remains. Route connection joins existing playback and may resume a server-owned automatic pause, but does not start fresh idle or override deliberate Pause/Stop. Full output, Quit, and home/away rules are in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md); Android-local SMB Bluetooth lifecycle is defined in its linked Android contract.
 
-**2026-09-30 requirement clarifications:** phone Bluetooth eligibility supersedes transport-driven auto-unmute, and active SMB return-home playback must become the HOUSE session when HOUSE is idle. Coordinate that transfer with passive auto-start so a later S3 never creates a competing default queue. Existing pause/retention and final-node rules remain in force. These are requirements updates, not a new server release; transfer implementation and Android acceptance remain pending. Regression evidence and checks live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Dated release sections below describe their historical implementations.
+**2026-09-30 requirement clarifications:** phone Bluetooth eligibility supersedes transport-driven auto-unmute, and active SMB return-home playback must become the HOUSE session when HOUSE is idle. Coordinate that transfer with passive auto-start so a later S3 never creates a competing default queue. Existing pause/retention and final-node rules remain in force. These product requirements are implemented by the v0.9.0 server handoff API; deployment and Android/S3 field acceptance remain pending. Regression evidence and checks live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Dated release sections below describe their historical implementations.
 
 The accepted browser interface is another folder-first controller alongside the Android and Windows players. It should share their Pi-side control service rather than introduce a different player or queue. Detailed edge cases and implementation questions are explicitly separated from confirmed decisions in the behavior document.
 
@@ -211,6 +211,7 @@ Implemented write endpoints:
 - `POST /queue/clear`
 - `POST /queue/replace` — accepts an ordered list of relative library paths, start index, optional start position, and play flag.
 - `POST /queue/reorder` — v0.8.2: guarded ID/revision-based reordering that preserves the current track, position, transport, and policy state.
+- `POST /session/handoff/{prepare,commit,status,cancel}` — v0.9.0: reserve idle HOUSE, transfer live SMB playback once, and reconcile acknowledgements without replaying a queue replacement.
 
 The API does not expose an arbitrary MPD-command passthrough. Queue/library paths are validated as relative paths before being sent to MPD. See [docs/API.md](docs/API.md) for the current contract.
 
@@ -664,3 +665,14 @@ Future feature details live in their tracking issues rather than being duplicate
 
 - Internet radio through MPD: [Issue #5](https://github.com/oolah10293/house-audio-server/issues/5).
 - Dedicated synchronized subwoofer renderer: [house-audio-esp32 Issue #4](https://github.com/oolah10293/house-audio-esp32/issues/4).
+
+
+## v0.9.0 — coordinated active-SMB return home
+
+A currently playing phone can reserve idle HOUSE before joining its controller/renderer, then transfer its queue order, selected track, exact paused-at-transfer position, Shuffle, and Repeat All state. Passive radios cannot start the default folder while that reservation or transfer owns the server write lock. Radios arriving afterward join the transferred session. Existing playing or retained-paused HOUSE remains authoritative; ordinary controller attach still never starts a playlist.
+
+Prepare uses a renewable 15-second reservation. Commit runs only once per controller/handoff ID. Status reconciles lost acknowledgements; repeating Commit cannot rewind a successful transfer. A partial/unacknowledged MPD write enters a failure quarantine until cancellation stops the partial playback or an explicit controller command takes over. A missing record after server restart is **unknown**, not permission to replay the old queue.
+
+The existing muted-controller pause/retention, final-track drain, passive startup, and restart rules still apply. A controller must be attached before Commit and report real receiver readiness: no synthetic audible phone, silent-playback exception, or Bluetooth bypass. A muted-only transfer pauses and retains its exact position until eligible audio returns.
+
+**Validation:** Python compilation and **119 local tests pass**, including transfer order/position/settings, passive arrival during a long commit, current HOUSE preservation, lost acknowledgements, lease renewal/expiry, stale/repeated commits, invalid/missing files, partial-write quarantine, explicit Pause cancellation, muted-only retention, final-controller departure, and startup guarding. No Pi or Android hardware test has been performed for this release. See [the API contract](docs/API.md#return-home-handoff-v090) and [release/deployment checks](docs/RELEASE_0.9.0.md).
