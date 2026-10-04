@@ -273,6 +273,61 @@ class StartupHttpTests(StartupFixture):
             "leaseId": lease["leaseId"], "sequence": 1, "outputMuted": True, "outputReady": False})[0], 200)
         self.assertEqual(self.controllers.snapshot(self.monitor.snapshot())["controllerCount"], 1)
 
+    def test_removed_endpoints_cannot_write_or_reserve_house_before_or_after_startup(self):
+        for ready in (False, True):
+            if ready:
+                self.policy._tick()
+            before = copy.deepcopy((self.mpd.commands, self.mpd.queue_files, self.mpd.state_data))
+            for action in ("prepare", "commit", "status", "cancel"):
+                status, body = self.request("/session/handoff/" + action, {
+                    "controllerId": "old-phone", "handoffId": "old-transfer",
+                    "tracks": ["Rap/A.mp3"], "startIndex": 0,
+                    "positionSeconds": 12, "shuffle": True, "repeat": True,
+                })
+                self.assertEqual((status, body["error"]), (404, "not_found"))
+            for path in ("/diagnostics", "/diagnostics?limit=50"):
+                status, body = self.request(path)
+                self.assertEqual((status, body["error"]), (404, "not_found"))
+            self.assertEqual((self.mpd.commands, self.mpd.queue_files, self.mpd.state_data), before)
+        self.monitor.set("radio")
+        self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "play")
+        self.assertEqual(self.mpd.queue_files, list(reversed(self.mpd.library["MP3s"])))
+
+    def test_transport_commands_and_reorder_still_work_without_transfer_hooks(self):
+        self.monitor.set("radio")
+        self.policy._tick()
+        for path, payload, command in (
+            ("/pause", {}, "pause 1"), ("/play", {}, "play"),
+            ("/next", {}, "next"), ("/previous", {}, "previous"),
+            ("/seek", {"seconds": 12.5}, "seekcur 12.500"),
+            ("/shuffle", {"enabled": False}, "random 0"),
+            ("/repeat", {"enabled": False}, "repeat 0"),
+            ("/stop", {}, "stop"),
+        ):
+            with self.subTest(path=path):
+                before = len(self.mpd.commands)
+                self.assertEqual(self.request(path, payload)[0], 200)
+                self.assertEqual(self.mpd.commands[before:], [command])
+        self.mpd.state_data["queueVersion"] = 7
+        self.mpd.queue = lambda: [{"id": i} for i in (1, 2, 3)]
+        self.mpd.reorder_queue = lambda *args: REAL_MPD_CLIENT.reorder_queue(self.mpd, *args)
+        before = len(self.mpd.commands)
+        self.assertEqual(self.request("/queue/reorder", {"songIds": [3, 1, 2], "queueVersion": 7})[0], 200)
+        self.assertEqual(self.mpd.commands[before:], ["moveid 3 0"])
+
+    def test_explicit_pause_still_cancels_final_drain_via_http(self):
+        self.monitor.set("radio")
+        self.policy._tick()
+        self.monitor.set("radio", present=False)
+        self.policy._tick()
+        self.assertTrue(self.policy.snapshot()["pendingFinalStop"])
+        self.assertEqual(self.request("/pause", {})[0], 200)
+        self.assertFalse(self.policy.snapshot()["pendingFinalStop"])
+        self.assertEqual(self.mpd.state_data["transport"], "pause")
+        self.assertTrue(self.mpd.state_data["repeat"])
+        self.assertEqual(self.mpd.state_data["singleMode"], "0")
+
 
 if __name__ == "__main__":
     unittest.main()

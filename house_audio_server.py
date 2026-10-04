@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import copy
 import json
-import math
-from collections import deque
 import os
 import random
 import re
@@ -32,7 +30,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.9.1"
+SERVICE_VERSION = "0.9.2"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -72,19 +70,6 @@ CONTROLLER_BINDINGS_FILE = os.environ.get(
 )
 CONTROLLER_HEARTBEAT_SECONDS = float(os.environ.get("CONTROLLER_HEARTBEAT_SECONDS", "5"))
 CONTROLLER_LEASE_SECONDS = float(os.environ.get("CONTROLLER_LEASE_SECONDS", "15"))
-
-DIAGNOSTICS_ENABLED = os.environ.get(
-    "DIAGNOSTICS_ENABLED", "true"
-).strip().lower() in {"1", "true", "yes", "on"}
-DIAGNOSTICS_POLL_SECONDS = float(
-    os.environ.get("DIAGNOSTICS_POLL_SECONDS", "1.0")
-)
-DIAGNOSTICS_STALL_WARN_SECONDS = float(
-    os.environ.get("DIAGNOSTICS_STALL_WARN_SECONDS", "2.5")
-)
-DIAGNOSTICS_HISTORY_LIMIT = int(
-    os.environ.get("DIAGNOSTICS_HISTORY_LIMIT", "200")
-)
 
 MAX_JSON_BODY = 2 * 1024 * 1024
 MPD_WRITE_LOCK = threading.RLock()
@@ -322,24 +307,6 @@ class ControllerRegistry:
             lease.update(detached=True, expires=0, outputMuted=True, outputReady=False)
             return {"controllerId": controller_id, "detached": True}
 
-    def handoff_lease(self, controller_id):
-        """Capture existing live presence before a write that blocks heartbeats."""
-        with self._lock:
-            lease = self._leases.get(controller_id)
-            if lease is None or lease["detached"] or self.clock() >= lease["expires"]:
-                return None
-            return lease["leaseId"]
-
-    def renew_handoff_lease(self, controller_id, lease_id):
-        # Commit and heartbeat share MPD_WRITE_LOCK. Give this genuinely live
-        # controller its normal lease window after a long blocking commit, not
-        # a lease that expired while the server prevented renewal. Never create
-        # a controller, revive a detach, or change actual mute/readiness state.
-        with self._lock:
-            lease = self._leases.get(controller_id)
-            if lease is not None and lease["leaseId"] == lease_id and not lease["detached"]:
-                lease["expires"] = self.clock() + self.lease_seconds
-
     def snapshot(self, snap):
         with self._lock:
             now = self.clock()
@@ -492,7 +459,7 @@ class MpdClient:
         records = parse_mpd_records(responses[0].lines, {"file"})
         return [normalize_song(record) for record in records if record.get("file")]
 
-    def reorder_queue(self, song_ids, queue_version, before_write=None):
+    def reorder_queue(self, song_ids, queue_version):
         """Reorder existing MPD IDs without clearing, playing, pausing, or seeking.
 
         The API write lock serializes normal house writers. The revision/ID
@@ -510,8 +477,6 @@ class MpdClient:
                 raise ApiError(409, "stale_queue", "Queue changed; refresh before sorting")
             if len(current) != len(song_ids) or set(current) != set(song_ids):
                 raise ApiError(409, "stale_queue", "songIds must contain every current queue entry exactly once")
-            if before_write is not None:
-                before_write()
             commands = []
             for destination, song_id in enumerate(song_ids):
                 source = current.index(song_id)
@@ -877,295 +842,6 @@ class SnapcastMonitor:
 SNAPCAST_MONITOR = SnapcastMonitor()
 
 
-class DiagnosticsRecorder:
-    """Keep a small in-memory history of renderer/Snapserver anomalies.
-
-    This is intentionally event-driven rather than a giant sample log. It lets
-    the system run unattended; after an audible dropout, /diagnostics shows
-    whether the affected renderer stopped refreshing Snapcast time-sync state,
-    changed effective presence/audibility, disconnected/reconnected, or
-    whether the Snapserver stream itself changed state.
-    """
-
-    def __init__(
-        self,
-        monitor: SnapcastMonitor,
-        enabled: bool = DIAGNOSTICS_ENABLED,
-        poll_seconds: float = DIAGNOSTICS_POLL_SECONDS,
-        stall_warn_seconds: float = DIAGNOSTICS_STALL_WARN_SECONDS,
-        history_limit: int = DIAGNOSTICS_HISTORY_LIMIT,
-        clock=time.time,
-    ) -> None:
-        self.monitor = monitor
-        self.enabled = enabled
-        self.poll_seconds = poll_seconds
-        self.stall_warn_seconds = stall_warn_seconds
-        self.history_limit = max(10, history_limit)
-        self.clock = clock
-        self._lock = threading.RLock()
-        self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._started_epoch = self.clock()
-        self._initialized = False
-        self._sequence = 0
-        self._events = deque(maxlen=self.history_limit)
-        self._previous_reachable: Optional[bool] = None
-        self._previous_clients: Dict[str, Dict[str, object]] = {}
-        self._previous_streams: Dict[str, str] = {}
-        self._active_stalls: Dict[str, float] = {}
-        self._client_stats: Dict[str, Dict[str, object]] = {}
-
-    def start(self) -> None:
-        if not self.enabled:
-            return
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._thread = threading.Thread(
-                target=self._run,
-                name="renderer-diagnostics",
-                daemon=True,
-            )
-            self._thread.start()
-
-    @staticmethod
-    def _client_ip(client: Dict[str, object]) -> Optional[str]:
-        host = client.get("host")
-        if isinstance(host, dict):
-            value = host.get("ip")
-            return str(value) if value is not None else None
-        return None
-
-    def _record(
-        self,
-        event_type: str,
-        *,
-        client: Optional[Dict[str, object]] = None,
-        details: Optional[Dict[str, object]] = None,
-    ) -> None:
-        now = self.clock()
-        self._sequence += 1
-        event: Dict[str, object] = {
-            "seq": self._sequence,
-            "epoch": round(now, 3),
-            "type": event_type,
-        }
-        if client is not None:
-            event["clientId"] = client.get("id")
-            event["name"] = client.get("name")
-            event["ip"] = self._client_ip(client)
-        if details:
-            event.update(details)
-        self._events.append(event)
-
-    def _update_client_stats(
-        self,
-        client: Dict[str, object],
-        *,
-        present_dropped: bool = False,
-        reconnected: bool = False,
-        stall_started: bool = False,
-    ) -> None:
-        client_id = client.get("id")
-        if not isinstance(client_id, str) or not client_id:
-            return
-
-        age = client.get("lastSeenAgeSeconds")
-        age_float = (
-            float(age)
-            if isinstance(age, (int, float)) and not isinstance(age, bool)
-            else None
-        )
-
-        stats = self._client_stats.setdefault(
-            client_id,
-            {
-                "id": client_id,
-                "name": client.get("name"),
-                "ip": self._client_ip(client),
-                "samples": 0,
-                "maxLastSeenAgeSeconds": 0.0,
-                "timesyncStallCount": 0,
-                "presentDropCount": 0,
-                "reconnectCount": 0,
-            },
-        )
-        stats["name"] = client.get("name")
-        stats["ip"] = self._client_ip(client)
-        stats["samples"] = int(stats.get("samples", 0)) + 1
-        stats["connected"] = bool(client.get("connected", False))
-        stats["present"] = bool(client.get("present", False))
-        stats["audible"] = bool(client.get("audible", False))
-        stats["lastSeenAgeSeconds"] = age_float
-        if age_float is not None:
-            stats["maxLastSeenAgeSeconds"] = round(
-                max(float(stats.get("maxLastSeenAgeSeconds", 0.0)), age_float),
-                3,
-            )
-        if present_dropped:
-            stats["presentDropCount"] = int(stats.get("presentDropCount", 0)) + 1
-        if reconnected:
-            stats["reconnectCount"] = int(stats.get("reconnectCount", 0)) + 1
-        if stall_started:
-            stats["timesyncStallCount"] = int(stats.get("timesyncStallCount", 0)) + 1
-
-    def _process_snapshot(self, snap: Dict[str, object]) -> None:
-        reachable = bool(snap.get("reachable", False))
-        raw_clients = snap.get("clients")
-        clients = [
-            client for client in raw_clients
-            if isinstance(raw_clients, list) and isinstance(client, dict)
-        ] if isinstance(raw_clients, list) else []
-        current_clients = {
-            str(client.get("id")): client
-            for client in clients
-            if client.get("id") is not None
-        }
-
-        raw_streams = snap.get("streams")
-        current_streams: Dict[str, str] = {}
-        if isinstance(raw_streams, list):
-            for stream in raw_streams:
-                if not isinstance(stream, dict):
-                    continue
-                stream_id = stream.get("id")
-                if stream_id is None:
-                    continue
-                current_streams[str(stream_id)] = str(stream.get("status", "unknown"))
-
-        with self._lock:
-            if not self._initialized:
-                self._previous_reachable = reachable
-                self._previous_clients = copy.deepcopy(current_clients)
-                self._previous_streams = dict(current_streams)
-                for client in current_clients.values():
-                    self._update_client_stats(client)
-                self._initialized = True
-                return
-
-            if reachable != self._previous_reachable:
-                self._record(
-                    "snapserver_reachability_changed",
-                    details={
-                        "from": self._previous_reachable,
-                        "to": reachable,
-                    },
-                )
-
-            for stream_id, status in current_streams.items():
-                previous_status = self._previous_streams.get(stream_id)
-                if previous_status is not None and status != previous_status:
-                    self._record(
-                        "stream_status_changed",
-                        details={
-                            "streamId": stream_id,
-                            "from": previous_status,
-                            "to": status,
-                        },
-                    )
-
-            for client_id, client in current_clients.items():
-                previous = self._previous_clients.get(client_id)
-                present_dropped = False
-                reconnected = False
-                stall_started = False
-
-                if previous is not None:
-                    for field in ("connected", "present", "audible"):
-                        old = bool(previous.get(field, False))
-                        new = bool(client.get(field, False))
-                        if old != new:
-                            self._record(
-                                f"client_{field}_changed",
-                                client=client,
-                                details={"from": old, "to": new},
-                            )
-                            if field == "present" and old and not new:
-                                present_dropped = True
-                            if field == "connected" and not old and new:
-                                reconnected = True
-
-                age = client.get("lastSeenAgeSeconds")
-                age_float = (
-                    float(age)
-                    if isinstance(age, (int, float)) and not isinstance(age, bool)
-                    else None
-                )
-                is_stalled = (
-                    bool(client.get("connected", False))
-                    and age_float is not None
-                    and age_float >= self.stall_warn_seconds
-                )
-                was_stalled = client_id in self._active_stalls
-
-                if is_stalled and not was_stalled:
-                    self._active_stalls[client_id] = self.clock()
-                    stall_started = True
-                    self._record(
-                        "timesync_stall_started",
-                        client=client,
-                        details={
-                            "lastSeenAgeSeconds": round(age_float, 3),
-                            "warnAfterSeconds": self.stall_warn_seconds,
-                        },
-                    )
-                elif not is_stalled and was_stalled:
-                    started = self._active_stalls.pop(client_id)
-                    self._record(
-                        "timesync_stall_recovered",
-                        client=client,
-                        details={
-                            "durationSeconds": round(max(0.0, self.clock() - started), 3),
-                            "lastSeenAgeSeconds": (
-                                round(age_float, 3) if age_float is not None else None
-                            ),
-                        },
-                    )
-
-                self._update_client_stats(
-                    client,
-                    present_dropped=present_dropped,
-                    reconnected=reconnected,
-                    stall_started=stall_started,
-                )
-
-            for client_id, previous in self._previous_clients.items():
-                if client_id not in current_clients:
-                    self._record("client_disappeared_from_status", client=previous)
-                    self._active_stalls.pop(client_id, None)
-
-            self._previous_reachable = reachable
-            self._previous_clients = copy.deepcopy(current_clients)
-            self._previous_streams = dict(current_streams)
-
-    def snapshot(self, limit: int = 100) -> Dict[str, object]:
-        limit = max(1, min(int(limit), self.history_limit))
-        with self._lock:
-            events = list(self._events)[-limit:]
-            clients = sorted(
-                (copy.deepcopy(item) for item in self._client_stats.values()),
-                key=lambda item: str(item.get("id", "")),
-            )
-            return {
-                "enabled": self.enabled,
-                "startedEpoch": round(self._started_epoch, 3),
-                "pollSeconds": self.poll_seconds,
-                "stallWarnSeconds": self.stall_warn_seconds,
-                "historyLimit": self.history_limit,
-                "eventCount": len(self._events),
-                "clients": clients,
-                "events": events,
-            }
-
-    def _run(self) -> None:
-        while not self._stop.is_set():
-            self._process_snapshot(self.monitor.snapshot())
-            self._stop.wait(self.poll_seconds)
-
-
-DIAGNOSTICS = DiagnosticsRecorder(SNAPCAST_MONITOR)
-
-
 class MpdStartupBoundary:
     """Forget the old MPD session once per service process, before new writes.
 
@@ -1271,7 +947,6 @@ class PassiveSessionPolicy:
         self._saved_single_mode = "0"
         self._last_action = "waiting_for_presence_baseline"
         self._last_action_epoch = time.time()
-        self.handoffs = None
 
     def start(self) -> None:
         if not self.enabled and self.startup is None:
@@ -1497,11 +1172,6 @@ class PassiveSessionPolicy:
         # ownership. New controller registrations are allowed while this retries.
         if self.startup is not None:
             self.startup.ensure_ready(self.mpd_factory())
-        if self.handoffs is not None and self.handoffs.blocks_policy():
-            # Keep the last presence sample: radios arriving during a reservation
-            # must still count as arrivals after an expired/cancelled transfer.
-            self._record("return_home_handoff_pending")
-            return
         if not self.enabled:
             self._record("disabled")
             return
@@ -1561,178 +1231,6 @@ class PassiveSessionPolicy:
             self._stop.wait(self.poll_seconds)
 
 
-class ReturnHomeHandoffs:
-    """Transient, idempotent ownership transfer serialized with every MPD writer.
-
-    A reservation only protects idle HOUSE. It does not supply playing intent,
-    renderer presence, or a silent-playback exception. Failed MPD writes remain
-    quarantined until cancellation/explicit transport, rather than retrying clear.
-    Records live for this service process; unknown after restart means reconcile,
-    never automatically prepare/commit the old snapshot again.
-    """
-
-    def __init__(self, policy, clock=time.monotonic, lease_seconds=15):
-        self.policy = policy
-        self.clock = clock
-        self.lease_seconds = lease_seconds
-        self.records = {}
-        self.active = None
-        policy.handoffs = self
-
-    @staticmethod
-    def _key(payload, commit=False):
-        fields = {"controllerId", "handoffId"}
-        if commit:
-            fields |= {"tracks", "startIndex", "positionSeconds", "shuffle", "repeat"}
-        if set(payload) != fields:
-            raise ApiError(400, "invalid_handoff", "Unexpected or missing handoff fields")
-        return (ControllerRegistry._id(payload.get("controllerId"), "controllerId"),
-                ControllerRegistry._id(payload.get("handoffId"), "handoffId"))
-
-    def blocks_policy(self):
-        # Caller holds MPD_WRITE_LOCK, including the policy tick.
-        if self.active is None:
-            return False
-        record = self.records[self.active]
-        if record["status"] == "reserved" and self.clock() >= record["expires"]:
-            record["status"] = "expired"
-            self.active = None
-            return False
-        return True
-
-    def _reply(self, key, mpd):
-        self.blocks_policy()
-        record = self.records.get(key, {"status": "unknown"})
-        view = {"controllerId": key[0], "handoffId": key[1], "status": record["status"],
-                "leaseRemainingSeconds": round(max(0, record.get("expires", 0) - self.clock()), 3)
-                    if record["status"] == "reserved" else 0}
-        if "detail" in record:
-            view["detail"] = record["detail"]
-        result = {"handoff": view, "mpd": None}
-        try:
-            result["mpd"] = mpd.state()
-        except (OSError, MpdError) as exc:
-            # A failed state read must not hide a successful commit and invite
-            # replay of clear/add/seek. The receipt remains authoritative.
-            result["mpdError"] = str(exc)
-        return result
-
-    def prepare(self, payload, mpd):
-        key = self._key(payload)
-        self.blocks_policy()
-        record = self.records.get(key)
-        if record is not None:
-            if record["status"] == "reserved":
-                record["expires"] = self.clock() + self.lease_seconds
-            return self._reply(key, mpd)
-        if self.active is not None:
-            raise ApiError(409, "handoff_in_progress", "Another handoff is reserved or awaiting recovery")
-        # A completed drain is fresh idle even if MPD paused at the next track.
-        state = mpd.state()
-        policy = self.policy
-        if policy._pending_final_stop and (state.get("transport") == "stop" or
-                (state.get("transport") == "pause" and policy._pending_song_id is not None
-                 and state.get("songId") != policy._pending_song_id)):
-            policy._complete_final_stop(mpd)
-            state = mpd.state()
-        record = {"status": "adopt_existing"}
-        if state.get("transport") == "stop":
-            record.update(status="reserved", expires=self.clock() + self.lease_seconds,
-                          queueVersion=state.get("queueVersion"))
-            self.active = key
-        self.records[key] = record
-        return self._reply(key, mpd)
-
-    def status(self, payload, mpd):
-        return self._reply(self._key(payload), mpd)
-
-    def cancel(self, payload, mpd):
-        key = self._key(payload)
-        self.blocks_policy()
-        record = self.records.get(key)
-        if record is not None and self.active == key:
-            if record["status"] == "failed":
-                # A partial or unacknowledged play may have reached MPD. Keep
-                # quarantine if stop itself cannot be acknowledged.
-                mpd.command("stop")
-            record["status"] = "cancelled"
-            self.active = None
-        return self._reply(key, mpd)
-
-    def explicit_command(self):
-        self.blocks_policy()
-        if self.active is not None:
-            self.records[self.active]["status"] = "cancelled"
-            self.active = None
-
-    def commit(self, payload, mpd):
-        key = self._key(payload, commit=True)
-        self.blocks_policy()
-        record = self.records.get(key)
-        if record is None or record["status"] != "reserved":
-            return self._reply(key, mpd)
-        tracks = payload["tracks"]
-        if not isinstance(tracks, list) or not tracks or len(tracks) > 10000:
-            raise ApiError(400, "invalid_handoff", "Provide 1 to 10000 track paths")
-        safe = []
-        for track in tracks:
-            path = validate_relative_path(track)
-            if not path or any(character in path for character in "\r\n\x00"):
-                raise ApiError(400, "invalid_handoff", "Invalid track path")
-            safe.append(path)
-        index, position = payload["startIndex"], payload["positionSeconds"]
-        if type(index) is not int or not 0 <= index < len(safe):
-            raise ApiError(400, "invalid_handoff", "startIndex is outside tracks")
-        try:
-            valid_position = type(position) in (int, float) and math.isfinite(position) and position >= 0
-        except OverflowError:
-            valid_position = False
-        if (not valid_position
-                or type(payload["shuffle"]) is not bool or type(payload["repeat"]) is not bool):
-            raise ApiError(400, "invalid_handoff", "Finite position and boolean playback settings required")
-        # The phone must attach before committing. This is genuine controller
-        # presence, never a fabricated ready/audible renderer report.
-        controller_lease = self.policy.controllers.handoff_lease(key[0])
-        if controller_lease is None:
-            raise ApiError(409, "handoff_controller_required", "Attach the controller before committing")
-        state = mpd.state()
-        if state.get("transport") != "stop" or state.get("queueVersion") != record["queueVersion"]:
-            record["status"] = "adopt_existing"
-            self.active = None
-            return self._reply(key, mpd)
-        # Validate file identities before destructive writes. In particular an
-        # SMB folder path must never expand recursively through MPD's add.
-        indexed = set(mpd.library_files(""))
-        if any(track not in indexed for track in safe):
-            raise ApiError(400, "handoff_track_unavailable", "A track is not an indexed MPD file")
-        # Never repeat the write sequence, even after partial failure or lost
-        # HTTP acknowledgement. Committed receipts survive further transport.
-        record["status"] = "applying"
-        commands = ["clear", *(f"add {mpd_quote(track)}" for track in safe),
-                    f"random {int(payload['shuffle'])}", f"repeat {int(payload['repeat'])}",
-                    "single 0", "consume 0", f"play {index}", f"seekcur {position:.3f}"]
-        try:
-            self.policy.explicit_transport(mpd)
-            mpd.run(*commands)
-        except (OSError, MpdError) as exc:
-            record.update(status="failed", detail=str(exc))
-            return self._reply(key, mpd)
-        finally:
-            self.policy.controllers.renew_handoff_lease(key[0], controller_lease)
-        record["status"] = "committed"
-        self.active = None
-        # Existing policy immediately retains a muted-only controller session.
-        # Do not require or invent a silent-playback exception during handoff.
-        presence = self.policy.controllers.snapshot(self.policy.monitor.snapshot())
-        if presence["snapserverReachable"]:
-            try:
-                self.policy._apply_controller_pause(mpd, presence)
-            except (OSError, MpdError):
-                pass  # The normal policy poll retries; installation succeeded.
-        self.policy._record("return_home_handoff_committed")
-        return self._reply(key, mpd)
-
-
 class LibraryUpdates:
     """Coalesce browser scans across phones; explicit Refresh bypasses cooldown."""
 
@@ -1760,7 +1258,6 @@ PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
     SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS,
     startup=MPD_STARTUP,
 )
-RETURN_HOME_HANDOFFS = ReturnHomeHandoffs(PASSIVE_SESSION_POLICY)
 
 
 def parse_mpd_fields(lines: List[str]) -> Dict[str, str]:
@@ -2024,25 +1521,6 @@ class ApiHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-            if path == "/diagnostics":
-                query = parse_qs(parsed.query, keep_blank_values=True)
-                raw_limit = query.get("limit", ["100"])[0]
-                try:
-                    limit = int(raw_limit)
-                except ValueError as exc:
-                    raise ApiError(
-                        400, "invalid_request", "limit must be an integer"
-                    ) from exc
-                self._json(
-                    200,
-                    {
-                        "service": SERVICE_NAME,
-                        "version": SERVICE_VERSION,
-                        "diagnostics": DIAGNOSTICS.snapshot(limit=limit),
-                    },
-                )
-                return
-
             if path == "/queue":
                 queue = MpdClient().queue()
                 self._json(
@@ -2120,18 +1598,6 @@ class ApiHandler(BaseHTTPRequestHandler):
                                      "library": result})
                     return
 
-                handoff_commands = {
-                    "/session/handoff/prepare": RETURN_HOME_HANDOFFS.prepare,
-                    "/session/handoff/commit": RETURN_HOME_HANDOFFS.commit,
-                    "/session/handoff/status": RETURN_HOME_HANDOFFS.status,
-                    "/session/handoff/cancel": RETURN_HOME_HANDOFFS.cancel,
-                }
-                if path in handoff_commands:
-                    MPD_STARTUP.require_ready()
-                    result = handoff_commands[path](payload, MpdClient())
-                    self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, **result})
-                    return
-
                 controller_commands = {
                     "/controllers/attach": CONTROLLERS.attach,
                     "/controllers/heartbeat": CONTROLLERS.heartbeat,
@@ -2167,14 +1633,12 @@ class ApiHandler(BaseHTTPRequestHandler):
                 mpd = MpdClient()
 
                 def explicit_transport():
-                    RETURN_HOME_HANDOFFS.explicit_command()
                     PASSIVE_SESSION_POLICY.explicit_transport(mpd)
 
                 if path == "/queue/reorder":
                     if set(payload) != {"songIds", "queueVersion"}:
                         raise ApiError(400, "invalid_request", "Provide only songIds and queueVersion")
-                    state = mpd.reorder_queue(payload["songIds"], payload["queueVersion"],
-                                              before_write=RETURN_HOME_HANDOFFS.explicit_command)
+                    state = mpd.reorder_queue(payload["songIds"], payload["queueVersion"])
                     self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, "mpd": state})
                     return
 
@@ -2201,14 +1665,12 @@ class ApiHandler(BaseHTTPRequestHandler):
 
                 if path == "/next":
                     with MPD_WRITE_LOCK:
-                        RETURN_HOME_HANDOFFS.explicit_command()
                         mpd.command("next")
                     self._mpd_state_response()
                     return
 
                 if path == "/previous":
                     with MPD_WRITE_LOCK:
-                        RETURN_HOME_HANDOFFS.explicit_command()
                         mpd.command("previous")
                     self._mpd_state_response()
                     return
@@ -2220,7 +1682,6 @@ class ApiHandler(BaseHTTPRequestHandler):
                     if seconds < 0:
                         raise ApiError(400, "invalid_request", "seconds cannot be negative")
                     with MPD_WRITE_LOCK:
-                        RETURN_HOME_HANDOFFS.explicit_command()
                         mpd.command(f"seekcur {float(seconds):.3f}")
                     self._mpd_state_response()
                     return
@@ -2228,7 +1689,6 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if path == "/shuffle":
                     enabled = bool_field(payload, "enabled")
                     with MPD_WRITE_LOCK:
-                        RETURN_HOME_HANDOFFS.explicit_command()
                         mpd.command(f"random {1 if enabled else 0}")
                     self._mpd_state_response()
                     return
@@ -2236,7 +1696,6 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if path == "/repeat":
                     enabled = bool_field(payload, "enabled")
                     with MPD_WRITE_LOCK:
-                        RETURN_HOME_HANDOFFS.explicit_command()
                         mpd.command(f"repeat {1 if enabled else 0}")
                     self._mpd_state_response()
                     return
@@ -2322,7 +1781,6 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     SNAPCAST_MONITOR.start()
-    DIAGNOSTICS.start()
     PASSIVE_SESSION_POLICY.start()
     server = ThreadingHTTPServer((HTTP_BIND, HTTP_PORT), ApiHandler)
     print(

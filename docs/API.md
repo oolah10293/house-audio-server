@@ -1,14 +1,14 @@
 # HTTP control API
 
-Current source: **v0.9.1** (125 local tests pass). Last confirmed Pi deployment: **v0.9.0**; v0.9.1 deployment is pending. The 2026-10-01 health output reports service OK, startup ready, and MPD/Snapserver reachable. Android field evidence, including successful S8/synchronization and failed handoffs, is tracked in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
+Current source: **v0.9.2** (103 local tests pass). Last confirmed Pi deployment: **v0.9.0**; v0.9.2 deployment is pending. See [RELEASE_0.9.2.md](RELEASE_0.9.2.md) for verification and installation. Android field evidence is tracked in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
 
-**Current Android split, 2026-10-01:** independent SMB Music v0.5.0 and House Music v0.1.0 implementations use separate packages, with no automatic/manual transfer or shared playback state. House Music retains the ordinary controller, queue, library, settings and transport APIs below. The handoff endpoints below remain documented because they are implemented in shipped v0.9.0; they are legacy functionality and must not be used by the independent apps. No endpoint or runtime behavior changes in this documentation update. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) supersedes earlier transfer requirements in the dated implementation notes below.
+**Current independent apps:** SMB Music v0.5.1 and House Music v0.1.1 use separate packages and playback state. House Music uses the ordinary controller, queue, library, settings and transport APIs below. v0.9.2 removes the former combined-app handoff API and RAM diagnostics endpoint. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) defines the independent-app contract.
 
 **Historical v0.8.2 integration note:** the companion [Android v0.4.1 correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the Tailscale/routing, conditional playlist-mute and lower-strip output-control corrections found in the v0.4.0 field pass. Device acceptance remains pending; the server API and deployed v0.8.2 are unchanged.
 
 **Requirements clarification, 2026-09-30:** [SESSION_BEHAVIOR.md §7](SESSION_BEHAVIOR.md) now requires Bluetooth-gated Android output; Play/Resume and queue commands must not independently unmute the phone. The older conditional auto-unmute rule is superseded. The deployed API schemas and server pause/retention policy are unchanged. Current Android field results live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
 
-**Superseded return-home requirement, 2026-09-30:** the former combined Android design required an active SMB session to transfer into idle HOUSE before a passive default could start. v0.9.0 implements the corresponding API below. The 2026-10-01 independent-app decision withdraws that integration; ordinary presence calls continue not to transfer any session.
+**Removed APIs, v0.9.2:** `POST /session/handoff/{prepare,commit,status,cancel}` and `GET /diagnostics` return `404 not_found`. They cannot reserve the session, alter playback or collect event history. Use the independent House Music app; combined Android v0.4.x return-home transfers are no longer supported.
 
 This is the first usable MPD control layer for the house-audio project. It is intentionally small and exposes only allowlisted operations.
 
@@ -77,27 +77,6 @@ Read the server-owned passive default, without contacting MPD or Snapserver:
 
 Reading settings does not register controller presence or start playback.
 
-### `GET /diagnostics?limit=<n>`
-
-Returns a small in-memory diagnostic history for renderer dropouts. The server records **events, not every sample**, so it can run unattended without producing a giant log.
-
-Tracked automatically:
-
-- Snapserver reachable/unreachable transitions;
-- Snapserver stream state changes such as `playing -> idle`;
-- per-renderer `connected`, effective `present`, and `audible` transitions;
-- Snapcast time-sync stalls when `lastSeenAgeSeconds` exceeds the configured warning threshold;
-- recovery from those stalls and approximate stall duration;
-- per-renderer counters plus the worst observed `lastSeenAgeSeconds` since service start.
-
-Example:
-
-```text
-/diagnostics
-/diagnostics?limit=50
-```
-
-The default warning threshold is 2.5 seconds. This endpoint is diagnostic only and does not change playback.
 
 ### `GET /queue`
 
@@ -365,20 +344,6 @@ Real-world leave-and-return testing exposed the expected v0.5.0 edge case: after
 v0.5.1 implements the approved behavior: passive-radio arrival while MPD is paused sends `play` to resume the existing house queue and position. It does **not** rebuild the queue or load default `MP3s`. This preserves session continuity while satisfying the appliance rule that powering on a passive radio should produce music.
 
 
-## v0.6.0 unattended dropout diagnostics
-
-Occasional short silences were observed with two synchronized ESP32 renderers, sometimes affecting only one node. Rather than requiring simultaneous ping windows or manual timing, v0.6.0 adds an unattended event recorder around the Snapserver state already being polled.
-
-The recorder is intentionally lightweight and memory-only. After hearing a dropout, query `GET /diagnostics` later and compare the affected renderer's events with the other node and the global Snapserver stream.
-
-Interpretation:
-
-- `timesync_stall_started` on only one renderer strongly points toward that node's network/client path;
-- `client_present_changed` or `client_connected_changed` confirms a larger renderer connectivity interruption;
-- `stream_status_changed` affecting the global stream points upstream toward MPD/Snapserver rather than one renderer;
-- if audio drops while all of those remain clean, the next place to instrument is the ESP32 decoder/audio-buffer/I2S path rather than basic network presence.
-
-
 ## v0.5.1 runtime validation
 
 A real leave-and-return test reproduced the paused-session edge exactly:
@@ -399,19 +364,9 @@ A hard-powered renderer also rejoined an already-active song after more than ten
 
 This proves the synchronized distribution path beyond API/network state: multiple real analog outputs are audibly aligned.
 
-## Current reliability investigation
+## Reliability investigation
 
-Occasional few-second silences have been heard on one renderer or the other during otherwise synchronized two-node playback. Both nodes have their external antennas installed, and the root cause is currently unresolved.
-
-v0.6.0's `/diagnostics` endpoint is intended to separate:
-
-- one-client Snapcast timing/presence stalls;
-- client disconnect/reconnect behavior;
-- global Snapserver stream-state changes;
-- cases where all server-side indicators remain clean, which would push investigation toward the ESP32 decoder/audio-buffer/I2S path.
-
-The diagnostics feature is implemented and unit-tested. A real dropout capture is still pending.
-
+Occasional single-renderer dropouts were reported during otherwise synchronized playback. The v0.6.0 RAM recorder did not provide useful evidence and was removed in v0.9.2. Live health and renderer snapshots remain; this cleanup does not claim a physical dropout fix.
 
 ## v0.6.1 final-track boundary fix
 
@@ -608,7 +563,7 @@ Stop this device's receiver, stop its heartbeat loop, then detach. The response 
 
 | Event | Policy result |
 | --- | --- |
-| Controller merely attaches to fresh idle, even unmuted | Stay stopped; wait for explicit Play/selection. The legacy handoff API is a separate operation, not attach behavior or an independent-app requirement. |
+| Controller merely attaches to fresh idle, even unmuted | Stay stopped; wait for explicit Play/selection. |
 | Controller joins/quits while a radio remains audible | Preserve shared queue, track, position, and transport. |
 | Only controllers with muted/unavailable outputs remain | Pause exactly where playback is, retain queue, mark `autoPaused: true`. |
 | Output becomes audible during that automatic pause | Resume retained playback. |
@@ -621,7 +576,7 @@ Stop this device's receiver, stop its heartbeat loop, then detach. The response 
 
 Session snapshots now use `mode: "controllers_and_renderers"`, combined `presentCount`, separate `controllerCount`/`passiveCount`/`audibleCount`, `controllerPresenceImplemented: true`, and `autoPaused`/`pauseReason` (null or `no_audible_output`). These reflect the last successful policy poll.
 
-The table above describes presence-driven behavior. The legacy v0.9.0 handoff implementation also serializes transfers with passive auto-start, preserves an already-active HOUSE session, and reconciles uncertain acknowledgements. Those safeguards remain part of the shipped endpoint contract, not a requirement to integrate the independent apps.
+The table above describes presence-driven behavior. Normal MPD write serialization remains; no transfer reservation can delay passive startup or intercept ordinary commands.
 
 ### Persistence and remaining boundaries
 
@@ -699,86 +654,10 @@ The first Android HOUSE field pass revealed an operational prerequisite and a cl
 The server API contract itself is unchanged by that client correction.
 
 
-## Return-home handoff (v0.9.0)
-
-**Legacy API, still implemented:** the 2026-10-01 independent Android apps decision supersedes the product requirement for these calls. This section documents shipped v0.9.0 behavior for compatibility; independent SMB Music and HOUSE Music must not invoke this transfer flow.
-
-These four **POST** endpoints use the same server write lock as passive-session policy and all deliberate MPD commands. They transfer already-playing standalone intent into stopped/idle HOUSE. They do not alter `/controllers/attach`, revive paused SMB playback, or overwrite playing/retained-paused HOUSE.
-
-### Prepare, status, and cancel
-
-Send exactly:
-
-```json
-{"controllerId":"android-phone","handoffId":"unique-id-for-this-return"}
-```
-
-- `POST /session/handoff/prepare`: inspect HOUSE and reserve it only when stopped. Returns `reserved`, or `adopt_existing` for a playing/retained-paused HOUSE. A known completed final-drain boundary is normalized to stopped first. Repeat Prepare with the same reserved ID renews its 15-second lease; terminal IDs never create another reservation.
-- `POST /session/handoff/status`: read the receipt and current MPD state. This endpoint never replaces or seeks the queue.
-- `POST /session/handoff/cancel`: cancel a reserved transfer. A failed transfer must acknowledge MPD Stop before releasing its quarantine. Repeated Cancel is safe. Cancel of an already committed transfer preserves shared playback; it is not a global Stop.
-
-Send Prepare immediately after confirming physical home and Pi identity, before ordinary attach/state polling. Passive default startup is blocked from successful reservation until Commit/Cancel/expiry. A session already active when Prepare acquires the lock remains authoritative. Server time starts at the first transfer request; it cannot infer the phone's earlier physical network arrival.
-
-### Commit
-
-After reservation, attach the controller and maintain its lease, prepare the mapped library-relative queue, then pause/snapshot the private player at the transfer boundary and send:
-
-```json
-{
-  "controllerId":"android-phone",
-  "handoffId":"unique-id-for-this-return",
-  "tracks":["Rap/C.mp3","MP3s/A.mp3","Rap/A.mp3"],
-  "startIndex":1,
-  "positionSeconds":47.125,
-  "shuffle":false,
-  "repeat":true
-}
-```
-
-`POST /session/handoff/commit` requires exactly those fields. The queue order and zero-based selection are preserved. `shuffle` maps to MPD Random; `repeat` maps to Repeat All. Single and Consume are disabled. Position must be finite and nonnegative; it is applied at millisecond precision without adding network elapsed time. The caller pauses private playback before Commit, so the saved position represents its last private playback point. Duplicate files are allowed. All paths must name exact MPD-indexed files, not folders; validation occurs before destructive writes. Limits are 10,000 tracks and the existing 2 MiB JSON body limit.
-
-The controller must already hold a live attachment. No renderer is claimed audible unless it is actually ready. Muted-only transfer applies the normal server automatic pause and retains the transferred position until real output returns. Existing final-node/restart rules remain unchanged.
-
-The reservation is checked at the beginning of Commit. Once installation begins, its write lock prevents lease expiry or passive startup from interrupting the operation, even when a large queue takes more than 15 seconds. Because heartbeats use that same lock, the genuinely live controller lease captured at Commit entry is renewed once on completion, preserving its existing mute/readiness and sequence. This compensates for the server blocking renewals; it cannot create presence, revive a detach, or overwrite a newer attachment. Ordinary expiry resumes afterward. Allow a longer HTTP timeout and reconcile timeout/lost acknowledgement with Status; never resend a fresh queue operation based solely on a timeout.
-
-### Response and recovery
-
-All successful protocol responses use HTTP 200:
-
-```json
-{
-  "service":"house-audio-server",
-  "version":"0.9.0",
-  "handoff":{
-    "controllerId":"android-phone",
-    "handoffId":"unique-id-for-this-return",
-    "status":"committed",
-    "leaseRemainingSeconds":0
-  },
-  "mpd":{"transport":"pause","elapsedSeconds":47.125}
-}
-```
-
-`mpd` contains the ordinary full MPD state; the example is abbreviated. A state-read failure returns `mpd: null` with `mpdError` while preserving the receipt. `handoff.detail` may describe an MPD failure.
-
-| Status | Client action |
-| --- | --- |
-| `reserved` | Keep/renew the reservation, attach, then commit the stopped private snapshot once. |
-| `committed` | Adopt HOUSE; never repeat clear/add/seek. Further Status returns current HOUSE position, not the old transfer position. |
-| `adopt_existing` | Adopt the pre-existing HOUSE without replacing its queue. |
-| `expired` / `cancelled` | The old ID can no longer commit. Reconcile current mode and explicit play intent before any new transition. |
-| `failed` | Private audio stays paused. MPD may have partially applied the transfer; do not retry it. Automatic policy is quarantined until successful Cancel or a deliberate server transport/queue command. |
-| `unknown` | No receipt exists, including after service restart. Do not prepare/replay an old attempted Commit automatically. Reconcile HOUSE and the current user intent. |
-
-Receipts are process-local and remain terminal for that service process. Startup reset still discards the previous HOUSE session; all handoff endpoints return `503 startup_pending` until that boundary completes. Controller registration itself remains available during startup. Explicit MPD transport/queue/settings commands cancel a pending handoff before taking effect; passive default-folder setting changes do not cancel it. Out-of-band native MPD writers remain outside the HTTP concurrency boundary; Commit additionally rejects a changed queue revision or non-stopped transport by returning `adopt_existing`.
-
-Malformed payloads/values return HTTP 400 (`invalid_handoff`, `invalid_controller_request`, or `invalid_path`); absent indexed tracks return `400 handoff_track_unavailable`. Competing reservations or an unrecovered failed transfer return `409 handoff_in_progress`; missing live controller registration returns `409 handoff_controller_required`. MPD errors before mutation use the normal `503 mpd_unavailable` response; a mutation whose outcome is uncertain is recorded as `failed` instead of inviting replay.
-
-
 ## Library indexing (v0.9.1)
 
 `POST /library/update` accepts `{}` or `{"force": false}` for a coalesced automatic scan; `{"force": true}` requests an explicit scan without the 60-second automatic cooldown. Other keys and non-boolean force values return 400. Responses include the normal service/version envelope and `"library": {"updating": true, "jobId": 7}` (or false/null when idle). A running root scan is reused across callers. Failures return the standard 503 error; a failed start does not consume the cooldown.
 
-`GET /browse?path=MP3s` retains its previous fields and additionally includes the same `library` status. When `updating` is true, fetch again after the job finishes before treating the listing as current. The app polls every two seconds during scanning, then returns to its normal 30-second visible-browser check. The server automatically coalesces those checks to at most one new scan per minute. Reads alone do not initiate indexing. These operations do not participate in handoff, change the passive-default selection, or issue playback/queue commands.
+`GET /browse?path=MP3s` retains its previous fields and additionally includes the same `library` status. When `updating` is true, fetch again after the job finishes before treating the listing as current. The app polls every two seconds during scanning, then returns to its normal 30-second visible-browser check. The server automatically coalesces those checks to at most one new scan per minute. Reads alone do not initiate indexing. These operations do not change the passive-default selection or issue playback/queue commands.
 
 MPD update protocol: <https://mpd.readthedocs.io/en/stable/protocol.html#the-music-database>.
