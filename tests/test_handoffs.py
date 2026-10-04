@@ -333,7 +333,7 @@ class HandoffHttpTests(HandoffFixture):
             status, result = self.request("/session/handoff/prepare", key)
             self.assertEqual(status, 200)
             self.assertEqual(result["handoff"]["status"], "reserved")
-            self.assertEqual(result["version"], "0.9.0")
+            self.assertEqual(result["version"], h.SERVICE_VERSION)
             self.assertEqual(self.request("/pause", {})[0], 200)
             self.assertEqual(self.request("/session/handoff/status", key)[1]["handoff"]["status"], "cancelled")
 

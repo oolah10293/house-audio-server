@@ -32,7 +32,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.9.0"
+SERVICE_VERSION = "0.9.1"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -529,6 +529,17 @@ class MpdClient:
             responses[0].lines, {"file", "directory", "playlist"}
         )
         return [normalize_library_entry(record) for record in records]
+
+    def library_status(self):
+        _, responses = self.run("status")
+        job = to_int(parse_mpd_fields(responses[0].lines).get("updating_db"))
+        return {"updating": job is not None, "jobId": job}
+
+    def update_library(self):
+        # Incremental index update only: never touch the queue or transport.
+        _, responses = self.run("update")
+        job = to_int(parse_mpd_fields(responses[0].lines).get("updating_db"))
+        return {"updating": job is not None, "jobId": job}
 
     def library_files(self, path: str) -> List[str]:
         """List indexed files recursively, matching MPD's folder-add scope."""
@@ -1722,6 +1733,27 @@ class ReturnHomeHandoffs:
         return self._reply(key, mpd)
 
 
+class LibraryUpdates:
+    """Coalesce browser scans across phones; explicit Refresh bypasses cooldown."""
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.last_started = None
+
+    def request(self, mpd, force=False):
+        with MPD_WRITE_LOCK:
+            current = mpd.library_status()
+            if current["updating"]:
+                return current
+            now = self.clock()
+            if not force and self.last_started is not None and now - self.last_started < 60:
+                return current
+            result = mpd.update_library()
+            self.last_started = now
+            return result
+
+
+LIBRARY_UPDATES = LibraryUpdates()
 PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
 CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE)
 PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
@@ -2027,7 +2059,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             if path == "/browse":
                 query = parse_qs(parsed.query, keep_blank_values=True)
                 browse_path = validate_relative_path(query.get("path", [""])[0])
-                entries = MpdClient().browse(browse_path)
+                mpd = MpdClient()
+                library = mpd.library_status()
+                entries = mpd.browse(browse_path)
                 self._json(
                     200,
                     {
@@ -2036,6 +2070,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "path": browse_path,
                         "count": len(entries),
                         "entries": entries,
+                        "library": library,
                     },
                 )
                 return
@@ -2077,6 +2112,14 @@ class ApiHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
 
             with MPD_WRITE_LOCK:
+                if path == "/library/update":
+                    if set(payload) - {"force"} or type(payload.get("force", False)) is not bool:
+                        raise ApiError(400, "invalid_request", "Provide only optional boolean force")
+                    result = LIBRARY_UPDATES.request(MpdClient(), payload.get("force", False))
+                    self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                     "library": result})
+                    return
+
                 handoff_commands = {
                     "/session/handoff/prepare": RETURN_HOME_HANDOFFS.prepare,
                     "/session/handoff/commit": RETURN_HOME_HANDOFFS.commit,

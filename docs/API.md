@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source and confirmed Pi deployment: **v0.9.0** (119 local tests pass). The 2026-10-01 health output reports service OK, startup ready, and MPD/Snapserver reachable. Android field evidence, including successful S8/synchronization and failed handoffs, is tracked in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
+Current source: **v0.9.1** (125 local tests pass). Last confirmed Pi deployment: **v0.9.0**; v0.9.1 deployment is pending. The 2026-10-01 health output reports service OK, startup ready, and MPD/Snapserver reachable. Android field evidence, including successful S8/synchronization and failed handoffs, is tracked in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
 
 **Current Android split, 2026-10-01:** independent SMB Music v0.5.0 and House Music v0.1.0 implementations use separate packages, with no automatic/manual transfer or shared playback state. House Music retains the ordinary controller, queue, library, settings and transport APIs below. The handoff endpoints below remain documented because they are implemented in shipped v0.9.0; they are legacy functionality and must not be used by the independent apps. No endpoint or runtime behavior changes in this documentation update. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) supersedes earlier transfer requirements in the dated implementation notes below.
 
@@ -773,3 +773,12 @@ All successful protocol responses use HTTP 200:
 Receipts are process-local and remain terminal for that service process. Startup reset still discards the previous HOUSE session; all handoff endpoints return `503 startup_pending` until that boundary completes. Controller registration itself remains available during startup. Explicit MPD transport/queue/settings commands cancel a pending handoff before taking effect; passive default-folder setting changes do not cancel it. Out-of-band native MPD writers remain outside the HTTP concurrency boundary; Commit additionally rejects a changed queue revision or non-stopped transport by returning `adopt_existing`.
 
 Malformed payloads/values return HTTP 400 (`invalid_handoff`, `invalid_controller_request`, or `invalid_path`); absent indexed tracks return `400 handoff_track_unavailable`. Competing reservations or an unrecovered failed transfer return `409 handoff_in_progress`; missing live controller registration returns `409 handoff_controller_required`. MPD errors before mutation use the normal `503 mpd_unavailable` response; a mutation whose outcome is uncertain is recorded as `failed` instead of inviting replay.
+
+
+## Library indexing (v0.9.1)
+
+`POST /library/update` accepts `{}` or `{"force": false}` for a coalesced automatic scan; `{"force": true}` requests an explicit scan without the 60-second automatic cooldown. Other keys and non-boolean force values return 400. Responses include the normal service/version envelope and `"library": {"updating": true, "jobId": 7}` (or false/null when idle). A running root scan is reused across callers. Failures return the standard 503 error; a failed start does not consume the cooldown.
+
+`GET /browse?path=MP3s` retains its previous fields and additionally includes the same `library` status. When `updating` is true, fetch again after the job finishes before treating the listing as current. The app polls every two seconds during scanning, then returns to its normal 30-second visible-browser check. The server automatically coalesces those checks to at most one new scan per minute. Reads alone do not initiate indexing. These operations do not participate in handoff, change the passive-default selection, or issue playback/queue commands.
+
+MPD update protocol: <https://mpd.readthedocs.io/en/stable/protocol.html#the-music-database>.
