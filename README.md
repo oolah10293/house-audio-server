@@ -2,9 +2,9 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source: **v0.9.1**. Last confirmed Pi deployment: **v0.9.0**. The v0.9.1 library-refresh update is ready for installation; deployment acceptance is pending. The user's 2026-10-01 health output reports service OK, startup ready, and MPD/Snapserver reachable. Three S3 nodes and two phones are reported playing in good sync, including a working Galaxy S8, but **Android v0.4.3 handoffs failed in both directions**. Deployment and audio synchronization do not establish transfer acceptance. Server behavior, deployment status, and field-proven server milestones are documented here. Android release/acceptance details are intentionally kept in [smb-music-player](https://github.com/oolah10293/smb-music-player), especially its [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md); ESP32 renderer details are kept in [house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
+Current source: **v0.9.2** — independent-app server cleanup with library refresh retained. **103 local tests pass; Pi deployment and phone/radio acceptance are pending.** Last confirmed Pi deployment remains **v0.9.0**. See [release and installation notes](docs/RELEASE_0.9.2.md). Android release/acceptance details live in [smb-music-player](https://github.com/oolah10293/smb-music-player), and renderer details in [house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
 
-**Current Android apps, 2026-10-01:** separate, completely independent **SMB Music v0.5.0** and **House Music v0.1.0**. No automatic/manual handoff, shared queue/song/position, SMB-triggered HOUSE queue reset, or cross-app coordination. SMB Music keeps standalone playback; House Music controls/renders only the Pi session. Both independent implementations are now in the Android repository; exact build/artifact and pending device-test status are recorded in its [SMB release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.5.0.md) and [House release](https://github.com/oolah10293/smb-music-player/blob/main/house-app/docs/RELEASE_0.1.0.md). Server v0.9.0 and S3 firmware remain unchanged and compatible.
+**Current Android apps:** separate, independent **SMB Music v0.5.1** and **House Music v0.1.1**. SMB Music owns its private playback; House Music controls/renders the Pi session. Their release records distinguish build verification from pending phone acceptance: [SMB release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.5.1.md), [House release](https://github.com/oolah10293/smb-music-player/blob/main/house-app/docs/RELEASE_0.1.1.md). Server v0.9.2 removes the old combined-app transfer API and RAM diagnostics recorder. House Music v0.1.1 already uses the retained APIs; no new APK or S3 firmware is needed for this server cleanup.
 
 ## Agreed playback and session behavior
 
@@ -20,7 +20,7 @@ The important session distinctions are:
 - Every completed drain ends the session. The next passive power-on loads a newly shuffled queue from the currently configured default, even if MPD retained yesterday's CD/Rap queue in `pause @ 0.0`. Do not persist/continue the completed shuffle order or force a different first song; chance repeats are allowed. Only the default folder setting is intended to persist.
 - HOUSE authority is separate from local output mute. The shipped Android app gates HOUSE rendering on Bluetooth audio: no Bluetooth means a muted phone, including after Play/Resume and queue changes; the queued manual override below will change that restriction. Route disconnect mutes the phone; the existing server policy pauses/retains only when no audible output remains. Route connection joins existing playback and may resume a server-owned automatic pause, but does not start fresh idle or override deliberate Pause/Stop. Full output, Quit, and independent-app rules are in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md); Android-local SMB Bluetooth lifecycle is defined in its linked Android contract.
 
-**Current requirements and implementation status:** the 2026-10-01 independent-app decision in [SESSION_BEHAVIOR §8](docs/SESSION_BEHAVIOR.md) supersedes the former active-SMB return-home requirement. The deployed v0.9.0 handoff API remains legacy functionality; independent apps must not call it. Existing single-HOUSE authority, passive startup, pause/retention, and final-node rules remain in force. Bluetooth automation is retained; House Music v0.1.1 implements manual mute/unmute for outputs including a headphone jack, pending phone acceptance as tracked in the [Android roadmap](https://github.com/oolah10293/smb-music-player/blob/main/docs/ROADMAP.md). Regression evidence and checks live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Dated release sections below describe their historical implementations.
+**Current requirements and implementation status:** the 2026-10-01 independent-app decision in [SESSION_BEHAVIOR §8](docs/SESSION_BEHAVIOR.md) supersedes the former active-SMB return-home requirement. Server v0.9.2 removes the obsolete handoff API, reservations, receipts and transfer-only policy hooks. The RAM event recorder and `/diagnostics` endpoint are also removed. Existing single-HOUSE authority, passive startup, pause/retention, and final-node rules remain in force. Bluetooth automation is retained; House Music v0.1.1 implements manual mute/unmute for outputs including a headphone jack, pending phone acceptance as tracked in the [Android roadmap](https://github.com/oolah10293/smb-music-player/blob/main/docs/ROADMAP.md). Regression evidence and checks live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Dated release sections below describe their historical implementations.
 
 The accepted browser interface is another folder-first controller alongside the Android and Windows players. It should share their Pi-side control service rather than introduce a different player or queue. Detailed edge cases and implementation questions are explicitly separated from confirmed decisions in the behavior document.
 
@@ -60,7 +60,7 @@ The proof server is the first usable version of the real server, not a disposabl
 
 - **MPD** — owns the one playback session: queue, current track, transport state, seek position, shuffle, and folder-derived playlist state.
 - **Snapserver** — distributes timestamped/buffered synchronized audio to renderers.
-- **house-audio-server** — implemented thin control/session layer around the permanent stack. It exposes HOUSE-mode state/control, renderer presence, passive-radio session policy, and diagnostics without reimplementing decoding or synchronization. Home presence does not require a separate discovery protocol; clients can identify the LAN by a bound MPD probe.
+- **house-audio-server** — implemented thin control/session layer around the permanent stack. It exposes HOUSE-mode state/control, renderer presence, passive-radio session policy, and live health/state without reimplementing decoding or synchronization. Home presence does not require a separate discovery protocol; clients can identify the LAN by a bound MPD probe.
 - **Samba** — continues serving the same files to existing standalone clients and is not replaced by this project.
 
 The proven audio path is:
@@ -178,7 +178,7 @@ Do not create a temporary proof server that is later abandoned. Build the perman
 9. **IN PROGRESS HOUSE server contract** — persisted runtime default-folder selection is field-proven. Controller-presence/output-state policy is deployed; initial Pi baseline validation is good, while physical muted-controller pause/resume testing remains pending. v0.8.1 fresh-idle restart behavior is field-proven for an already-present passive S3. Cross-session shuffle persistence is no longer desired.
 10. Integrate Android and Windows HOUSE-mode control and the accepted browser controller.
 11. **DONE** — two independent ESP32/PCM5102A renderers have passed the real audible synchronization test.
-12. **IN PROGRESS reliability work** — diagnose occasional few-second single-node audio dropouts using the v0.6.0 unattended diagnostics recorder.
+12. **Reliability investigation remains separate** — the unhelpful RAM diagnostics recorder was removed in v0.9.2 at the user's request. This release makes no claim to fix ESP32 audio dropouts.
 
 Every successful step remains part of the final installation.
 
@@ -201,7 +201,9 @@ Implemented write endpoints:
 - `POST /queue/clear`
 - `POST /queue/replace` — accepts an ordered list of relative library paths, start index, optional start position, and play flag.
 - `POST /queue/reorder` — v0.8.2: guarded ID/revision-based reordering that preserves the current track, position, transport, and policy state.
-- `POST /session/handoff/{prepare,commit,status,cancel}` — v0.9.0: reserve idle HOUSE, transfer live SMB playback once, and reconcile acknowledgements without replaying a queue replacement.
+- `POST /library/update` — incremental MPD indexing for automatic and pull-down file-list refresh.
+
+Removed in v0.9.2: the old `/session/handoff/*` transfer API and `/diagnostics` RAM recorder. These paths return `404 not_found`. Ordinary controller presence, live health/state and session policy remain available.
 
 The API does not expose an arbitrary MPD-command passthrough. Queue/library paths are validated as relative paths before being sent to MPD. See [docs/API.md](docs/API.md) for the current contract.
 
@@ -351,7 +353,7 @@ Known facts:
 - the system otherwise stays synchronized and recovers automatically;
 - the cause is not yet established, so this is **not** being labeled a Wi-Fi problem, Snapserver problem, or decoder problem prematurely.
 
-v0.6.0 adds bounded in-memory diagnostics at `GET /diagnostics` to record per-client Snapcast time-sync stalls/recovery, connected/present/audible changes, Snapserver reachability, and stream-state changes. The next useful evidence is a field capture after an audible dropout. If server-side timing/presence remains clean, instrumentation should move into the ESP32 decoder/buffer/I2S path.
+The RAM recorder introduced in v0.6.0 was removed in v0.9.2 at the user's request. Live `/health`, `/renderers` and `/session` remain available; the server no longer collects a rolling dropout event history.
 
 Renderer-side tracking: [house-audio-esp32 Issue #3](https://github.com/oolah10293/house-audio-esp32/issues/3).
 
@@ -417,7 +419,7 @@ This lifecycle is a recorded requirement only; it is **not implemented yet**.
 
 ## Status
 
-**The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is physical validation of controller/output policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. Persisted runtime default-folder selection is field-proven in v0.7.0. Controller/output presence is deployed in v0.8.0 with baseline checks passing; physical controller transitions remain pending. v0.6.0 provides the first unattended diagnostics capture for that investigation.
+**The permanent end-to-end house-audio path is now proven through two simultaneously audible, synchronized ESP32-S3 + PCM5102A renderers.** The basic MPD control API, renderer presence (including abrupt hard-power loss), fresh-idle passive-radio auto-start, active-session rejoin, and passive-radio resume-through-Pause behavior are all runtime-proven. The observed radio power-on/rejoin time is about six seconds on the current hardware. Remaining major server work is physical validation of controller/output policy, unattended reboot/startup validation, and reliability diagnosis for occasional few-second single-node dropouts. Persisted runtime default-folder selection is field-proven in v0.7.0. Controller/output presence is deployed in v0.8.0 with baseline checks passing; physical controller transitions remain pending. The former v0.6.0 RAM recorder was removed in v0.9.2; no physical dropout resolution is claimed.
 
 ### Leave-and-return pause edge — v0.5.1
 
@@ -425,19 +427,9 @@ A real leave-the-house test found both renderers reconnecting correctly (`presen
 
 v0.5.1 changes passive-radio arrival to resume the existing paused session. This preserves the queue and avoids a fresh default `MP3s` rebuild while restoring the intended appliance behavior.
 
-### Automatic dropout diagnostics — v0.6.0
+### Historical RAM diagnostics — v0.6.0, removed in v0.9.2
 
-With two synchronized renderers running, occasional few-second silences were reported on one node or the other. v0.6.0 adds unattended diagnostics so reproducing the problem does not require watching multiple terminals.
-
-The service now keeps a bounded in-memory event history of Snapserver reachability, stream-state transitions, each client's connected/present/audible transitions, Snapcast `lastSeen` stalls/recovery, stall counts, and worst observed last-seen age.
-
-After a dropout, inspect:
-
-```bash
-curl -s http://127.0.0.1:8787/diagnostics
-```
-
-If one renderer shows a time-sync/presence anomaly while the other stays clean, investigate that renderer's Wi-Fi/client path. If the Snapserver stream changes state, investigate upstream. If neither happens during the audible dropout, instrument the ESP32 decoder/buffer/I2S path next.
+This experiment collected Snapcast stall and presence events in RAM. It did not provide useful evidence for the user. v0.9.2 removes the recorder, background loop, endpoint and settings; ordinary live presence monitoring remains essential to session policy.
 
 ### MPD oneshot boundary edge — v0.6.1
 
@@ -639,7 +631,7 @@ This server release adds `POST /queue/reorder`: require the expected queue revis
 
 **Validation:** 90 local tests and GitHub CI pass. v0.8.2 is now installed on the permanent Pi; health/startup are good and the existing passive-S3/Rap session is working. Android v0.4.0 successfully entered HOUSE and adopted the current MPD track after MPD's LAN listener was enabled. Queue-reorder behavior and phone/S3 synchronization still need dedicated device checks.
 
-**Next combined checkpoint:** keep the installed Pi v0.8.2, install Android v0.4.1, first repeat Tailscale-on launch/toggle and conditional mute cases, then follow [the phone/S3 checklist](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Validate silent opening, phone/S3 synchronization, sort during pause/play, local mute, background controller presence, audible-return resume, and Quit preserving remaining listeners. Live home/away handoff follows that implementation slice; its open decisions remain unchanged.
+**Historical integration checkpoint:** Android v0.4.1 originally covered routing, mute and synchronized-phone checks against server v0.8.2. The combined-app handoff plan was superseded by independent apps; current server installation and acceptance checks are in [RELEASE_0.9.2.md](docs/RELEASE_0.9.2.md).
 
 ### HOUSE Country Buffer direction
 
@@ -657,21 +649,16 @@ Future feature details live in their tracking issues rather than being duplicate
 - Dedicated synchronized subwoofer renderer: [house-audio-esp32 Issue #4](https://github.com/oolah10293/house-audio-esp32/issues/4).
 
 
-## v0.9.0 — coordinated active-SMB return home
+## Historical v0.9.0 — combined-app handoff, removed in v0.9.2
 
-**Historical release behavior:** this remains implemented in v0.9.0, but the independent Android apps decision above supersedes its product requirement.
-
-A currently playing phone can reserve idle HOUSE before joining its controller/renderer, then transfer its queue order, selected track, exact paused-at-transfer position, Shuffle, and Repeat All state. Passive radios cannot start the default folder while that reservation or transfer owns the server write lock. Radios arriving afterward join the transferred session. Existing playing or retained-paused HOUSE remains authoritative; ordinary controller attach still never starts a playlist.
-
-Prepare uses a renewable 15-second reservation. Commit runs only once per controller/handoff ID. Status reconciles lost acknowledgements; repeating Commit cannot rewind a successful transfer. A partial/unacknowledged MPD write enters a failure quarantine until cancellation stops the partial playback or an explicit controller command takes over. A missing record after server restart is **unknown**, not permission to replay the old queue.
-
-The existing muted-controller pause/retention, final-track drain, passive startup, and restart rules still apply. A controller must be attached before Commit and report real receiver readiness: no synthetic audible phone, silent-playback exception, or Bluetooth bypass. A muted-only transfer pauses and retains its exact position until eligible audio returns.
-
-**Validation:** Python compilation and **119 local tests pass**, including transfer order/position/settings, passive arrival during a long commit, current HOUSE preservation, lost acknowledgements, lease renewal/expiry, stale/repeated commits, invalid/missing files, partial-write quarantine, explicit Pause cancellation, muted-only retention, final-controller departure, and startup guarding. No Pi or Android hardware test has been performed for this release. See [the API contract](docs/API.md#return-home-handoff-v090) and [release/deployment checks](docs/RELEASE_0.9.0.md).
-
+This release implemented return-home queue/song/position transfers for the former combined Android app. The user reported that both transfer directions failed, then chose independent apps. v0.9.2 removes the complete server transfer machinery. Historical implementation and test evidence remain in [RELEASE_0.9.0.md](docs/RELEASE_0.9.0.md) and Git history; those instructions are not the current setup.
 
 ## v0.9.1 — library freshness for House Music v0.1.1
 
 Adds `POST /library/update` for incremental MPD indexing and `library` scan status on `GET /browse`. House Music v0.1.1 uses it when browsing, periodically while the file list is visible, and when pulling down on that list. Automatic requests coalesce across phones for 60 seconds; explicit requests bypass that cooldown, and all requests reuse a running scan. Indexing issues only `update` and `status`; it does not replace or reorder the queue or issue a transport command. MPD may itself remove queued entries whose files have been deleted from the library.
 
 The independently tested SMB Music v0.5.1 is unchanged. No S3 update or application integration is introduced. Playback remains compatible with House Music v0.1.0; install the new app for its UI and recovery fixes. See [RELEASE_0.9.1.md](docs/RELEASE_0.9.1.md).
+
+## v0.9.2 — independent-app server cleanup
+
+Removes SMB-to-HOUSE transfer endpoints, reservations/receipts, transfer-only controller lease extensions, and hooks in playback commands and passive startup. Removes the RAM diagnostics recorder, its background thread, endpoint and settings. The installer strips only its four obsolete settings from an existing configuration. Preserves v0.9.1 library refresh, controller presence/mute reports, MPD write serialization, passive startup, retained pause, final-track drain and fresh-idle restart. See [RELEASE_0.9.2.md](docs/RELEASE_0.9.2.md) for verification and installation.

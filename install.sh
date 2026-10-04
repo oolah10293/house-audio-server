@@ -20,6 +20,13 @@ install -o root -g root -m 0644 systemd/house-audio-server.service "$SERVICE_FIL
 
 if [ ! -f "$DEFAULT_FILE" ]; then
     install -o root -g root -m 0644 config/house-audio-server.default "$DEFAULT_FILE"
+else
+    # v0.9.2 removes the RAM recorder. Keep all other existing local settings.
+    sed -i -E \
+        -e '/^[[:space:]]*(export[[:space:]]+)?DIAGNOSTICS_(ENABLED|POLL_SECONDS|STALL_WARN_SECONDS|HISTORY_LIMIT)[[:space:]]*=/d' \
+        -e '/^# Lightweight in-memory renderer diagnostics\. Records only state changes and$/d' \
+        -e '/^# stalls, not every sample\.$/d' \
+        "$DEFAULT_FILE"
 fi
 
 systemctl daemon-reload
