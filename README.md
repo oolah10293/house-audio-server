@@ -2,9 +2,11 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source: **v0.9.2** — independent-app server cleanup with library refresh retained. **103 local tests pass; Pi deployment and phone/radio acceptance are pending.** Last confirmed Pi deployment remains **v0.9.0**. See [release and installation notes](docs/RELEASE_0.9.2.md). Android release/acceptance details live in [smb-music-player](https://github.com/oolah10293/smb-music-player), and renderer details in [house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
+Current source: **v0.11.2** — handles WXDX's additional `Artist - text="Song"` metadata format and keeps marked station announcements out of Last played. v0.11.1 missed the user's second screenshot format; a direct live WXDX capture reproduced it. Keep House Music v0.3.0 installed. See [release and installation notes](docs/RELEASE_0.11.2.md). **Field confirmation, 2026-10-10:** after this fix the user reports it works well and the UI looks really good. Detailed history timing/restart checks have automated coverage but no separate physical confirmation yet.
 
-**Current Android apps:** separate, independent **SMB Music v0.5.1** and **House Music v0.1.1**. SMB Music owns its private playback; House Music controls/renders the Pi session. Their release records distinguish build verification from pending phone acceptance: [SMB release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.5.1.md), [House release](https://github.com/oolah10293/smb-music-player/blob/main/house-app/docs/RELEASE_0.1.1.md). Server v0.9.2 removes the old combined-app transfer API and RAM diagnostics recorder. House Music v0.1.1 already uses the retained APIs; no new APK or S3 firmware is needed for this server cleanup.
+**Current Android apps:** separate, independent SMB Music and House Music. House Music v0.3.0 adds richer radio details and Last played using this server's history; [its release notes](https://github.com/oolah10293/smb-music-player/blob/house-v0.2.0-radio/house-app/docs/RELEASE_0.3.0.md) distinguish automated checks from phone acceptance. SMB Music retains its private playback and is unchanged by this release.
+
+v0.11.0 pairs with House Music v0.3.0 for richer radio details and retained Last played. History works while the phone app is closed. No S3 firmware update is needed; MPD and Snapcast continue to provide playback and synchronized audio.
 
 ## Agreed playback and session behavior
 
@@ -15,9 +17,9 @@ The important session distinctions are:
 - With nobody connected, the Pi is idle, except while finishing the last playing track after everyone disconnects.
 - Only a **passive node** automatically starts a new default session from fresh idle: the configured `MP3s` or `Rap` folder, a new random shuffle, and Repeat All. A controller merely connecting waits for Play. Independent SMB playback has no effect on that session or its default queue. See [SESSION_BEHAVIOR §8](docs/SESSION_BEHAVIOR.md).
 - A controller joining existing playback adopts the current song and queue. Changes it deliberately makes remain in effect after that controller leaves while other nodes remain.
-- All nodes disconnecting during playback means finish the current track, then stop despite Repeat All. A node returning before track end cancels the pending stop and preserves the session.
-- Only a muted phone remaining means **pause and retain the playlist, track, and exact position**, not finish and discard the session. An audible node returning or that phone unmuting resumes the retained session.
-- Every completed drain ends the session. The next passive power-on loads a newly shuffled queue from the currently configured default, even if MPD retained yesterday's CD/Rap queue in `pause @ 0.0`. Do not persist/continue the completed shuffle order or force a different first song; chance repeats are allowed. Only the default folder setting is intended to persist.
+- For library playback, all nodes disconnecting means finish the current track, then stop despite Repeat All. A node returning before track end cancels the pending stop and preserves the session. **Live radio stops and clears immediately when the policy confirms nobody remains**, because it has no track boundary to drain.
+- Only a muted phone remaining means **pause and retain the session**. Library tracks retain their exact position; radio closes the stream and retains its station, then reconnects to the live broadcast when resumed. An audible node returning or that phone unmuting resumes a server-owned automatic pause.
+- Every completed drain ends the session. The next passive power-on loads a newly shuffled queue from the currently configured default, even if MPD retained yesterday's CD/Rap queue in `pause @ 0.0`. Do not persist/continue the completed shuffle order or force a different first song; chance repeats are allowed. The default folder setting and saved radio bookmarks persist; completed playback order/progress does not.
 - HOUSE authority is separate from local output mute. The shipped Android app gates HOUSE rendering on Bluetooth audio: no Bluetooth means a muted phone, including after Play/Resume and queue changes; the queued manual override below will change that restriction. Route disconnect mutes the phone; the existing server policy pauses/retains only when no audible output remains. Route connection joins existing playback and may resume a server-owned automatic pause, but does not start fresh idle or override deliberate Pause/Stop. Full output, Quit, and independent-app rules are in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md); Android-local SMB Bluetooth lifecycle is defined in its linked Android contract.
 
 **Current requirements and implementation status:** the 2026-10-01 independent-app decision in [SESSION_BEHAVIOR §8](docs/SESSION_BEHAVIOR.md) supersedes the former active-SMB return-home requirement. Server v0.9.2 removes the obsolete handoff API, reservations, receipts and transfer-only policy hooks. The RAM event recorder and `/diagnostics` endpoint are also removed. Existing single-HOUSE authority, passive startup, pause/retention, and final-node rules remain in force. Bluetooth automation is retained; House Music v0.1.1 implements manual mute/unmute for outputs including a headphone jack, pending phone acceptance as tracked in the [Android roadmap](https://github.com/oolah10293/smb-music-player/blob/main/docs/ROADMAP.md). Regression evidence and checks live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Dated release sections below describe their historical implementations.
@@ -192,6 +194,7 @@ Implemented read endpoints:
 - `GET /state` — reads MPD `status` and `currentsong` and returns the current transport state, position/duration, queue length/version, Shuffle/Repeat flags, and current-song identity/metadata.
 - `GET /queue` — returns the complete active MPD queue in order.
 - `GET /browse?path=...` — browses MPD's indexed folder-first library using relative paths.
+- `GET /radio/stations` — reads the shared, durable station bookmarks without changing playback.
 
 Implemented write endpoints:
 
@@ -202,10 +205,12 @@ Implemented write endpoints:
 - `POST /queue/replace` — accepts an ordered list of relative library paths, start index, optional start position, and play flag.
 - `POST /queue/reorder` — v0.8.2: guarded ID/revision-based reordering that preserves the current track, position, transport, and policy state.
 - `POST /library/update` — incremental MPD indexing for automatic and pull-down file-list refresh.
+- `POST /radio/stations`, `/radio/stations/rename`, `/radio/stations/delete` — add/probe, rename or delete station bookmarks.
+- `POST /radio/play` — selects a saved station as the one shared MPD source. `/state.source` exposes live intent, status, retry/error information and supported controls.
 
 Removed in v0.9.2: the old `/session/handoff/*` transfer API and `/diagnostics` RAM recorder. These paths return `404 not_found`. Ordinary controller presence, live health/state and session policy remain available.
 
-The API does not expose an arbitrary MPD-command passthrough. Queue/library paths are validated as relative paths before being sent to MPD. See [docs/API.md](docs/API.md) for the current contract.
+The API does not expose an arbitrary MPD-command passthrough. Queue/library paths are validated as relative paths before being sent to MPD; direct HTTP(S) station URLs use the dedicated radio endpoints. See [docs/API.md](docs/API.md) for the current contract.
 
 Default runtime configuration:
 
@@ -631,7 +636,7 @@ This server release adds `POST /queue/reorder`: require the expected queue revis
 
 **Validation:** 90 local tests and GitHub CI pass. v0.8.2 is now installed on the permanent Pi; health/startup are good and the existing passive-S3/Rap session is working. Android v0.4.0 successfully entered HOUSE and adopted the current MPD track after MPD's LAN listener was enabled. Queue-reorder behavior and phone/S3 synchronization still need dedicated device checks.
 
-**Historical integration checkpoint:** Android v0.4.1 originally covered routing, mute and synchronized-phone checks against server v0.8.2. The combined-app handoff plan was superseded by independent apps; current server installation and acceptance checks are in [RELEASE_0.9.2.md](docs/RELEASE_0.9.2.md).
+**Historical integration checkpoint:** Android v0.4.1 originally covered routing, mute and synchronized-phone checks against server v0.8.2. The combined-app handoff plan was superseded by independent apps; current server installation and acceptance checks are in [RELEASE_0.10.0.md](docs/RELEASE_0.10.0.md).
 
 ### HOUSE Country Buffer direction
 
@@ -645,7 +650,7 @@ This is an approved design direction, not yet a deployed configuration change or
 
 Future feature details live in their tracking issues rather than being duplicated here:
 
-- Internet radio through MPD: [Issue #5](https://github.com/oolah10293/house-audio-server/issues/5).
+- Internet radio through MPD: server support in v0.10.0; app integration and field acceptance remain in [Issue #5](https://github.com/oolah10293/house-audio-server/issues/5).
 - Dedicated synchronized subwoofer renderer: [house-audio-esp32 Issue #4](https://github.com/oolah10293/house-audio-esp32/issues/4).
 
 
@@ -662,3 +667,11 @@ The independently tested SMB Music v0.5.1 is unchanged. No S3 update or applicat
 ## v0.9.2 — independent-app server cleanup
 
 Removes SMB-to-HOUSE transfer endpoints, reservations/receipts, transfer-only controller lease extensions, and hooks in playback commands and passive startup. Removes the RAM diagnostics recorder, its background thread, endpoint and settings. The installer strips only its four obsolete settings from an existing configuration. Preserves v0.9.1 library refresh, controller presence/mute reports, MPD write serialization, passive startup, retained pause, final-track drain and fresh-idle restart. See [RELEASE_0.9.2.md](docs/RELEASE_0.9.2.md) for verification and installation.
+
+## v0.10.0 — saved Internet radio through MPD
+
+Adds a Pi-owned station list with automatic stream names, optional renaming and deletion. Selecting a saved station replaces the shared MPD queue with its URL and uses the existing FIFO/Snapcast output. There is no parallel decoder, phone-owned playback queue or S3 change. A successful add checks HTTP response type and saves the bookmark; playback is a separate action and must still be checked for progress and audible output.
+
+Live Play reconnects at the current broadcast; Pause/Stop close the connection and cancel retries. Seek, Previous/Next, Shuffle, Repeat and queue sorting are unavailable while a radio source is selected. Selecting a folder builds its library queue and restores the pre-radio playback modes; it does not reconstruct the earlier queue or song. Stream failures use capped reconnect backoff while the station remains selected and playback is intended. Last-node departure and service restart end the live session; a later passive startup still uses the saved MP3s/Rap default. Saved stations survive updates/restarts.
+
+The [2026-10-09 field test](https://github.com/oolah10293/house-audio-server/issues/5#issuecomment-6093245333) proved Radio Paradise audible on one S3 using manual MPD commands on v0.9.2. It did not validate this new API, lifecycle/retry behavior or multi-node radio playback. WXDX's public feed was verified separately; Pi/S3 playback was not confirmed. See [RELEASE_0.10.0.md](docs/RELEASE_0.10.0.md) for this release's verification and Pi checks.
