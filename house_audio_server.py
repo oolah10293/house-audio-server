@@ -31,11 +31,12 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 from radio_history import RadioHistory
+from radio_metadata import normalize_radio_metadata
 from radio_stations import (RadioError, StationStore, probe_station,
                             validate_stream_url, validate_station_name)
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.11.0"
+SERVICE_VERSION = "0.11.1"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -1630,7 +1631,7 @@ def normalize_song(fields: Dict[str, str]) -> Optional[Dict[str, object]]:
     if not fields:
         return None
 
-    return {
+    song = {
         "file": fields.get("file"),
         "title": fields.get("title"),
         "stationName": fields.get("name"),
@@ -1648,6 +1649,10 @@ def normalize_song(fields: Dict[str, str]) -> Optional[Dict[str, object]]:
         "pos": to_int(fields.get("pos")),
         "id": to_int(fields.get("id")),
     }
+
+    if str(song.get("file") or "").lower().startswith(("http://", "https://")):
+        return normalize_radio_metadata(song)
+    return song
 
 
 def normalize_library_entry(fields: Dict[str, str]) -> Dict[str, object]:

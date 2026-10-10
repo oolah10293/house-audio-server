@@ -167,6 +167,33 @@ class RadioHttpTests(unittest.TestCase):
             self.mpd.state_data["elapsedSeconds"] += 1
             self.policy._tick()
 
+    def test_wxdx_metadata_reaches_current_state_and_previous_history_cleanly(self):
+        from test_radio_metadata import WXDX, URL
+        station = self.add_station(URL, "105.9 The X")
+        self.play_radio(station)
+        state = self.mpd.state()
+        def set_title(title):
+            state["song"] = h.normalize_song({"file": URL, "id": str(state["songId"]),
+                                             "title": title, "name": "105.9 The X"})
+        set_title(WXDX)
+        with patch.object(self.mpd, "state", return_value=state):
+            for second in range(12):
+                self.clock.advance(1)
+                state["elapsedSeconds"] = second
+                self.policy._tick()
+            code, body = self.request("/state")
+            self.assertEqual(code, 200)
+            self.assertEqual(body["mpd"]["song"]["title"], "Blue Monday")
+            self.assertEqual(body["mpd"]["song"]["artist"], "ORGY")
+            self.assertIsNone(body["radioHistory"]["lastPlayed"])
+            set_title('title="Next song",artist="Next artist",url="opaque"')
+            self.policy._tick()
+            code, body = self.request("/state")
+            self.assertEqual(code, 200)
+            self.assertEqual(body["mpd"]["song"]["title"], "Next song")
+            self.assertEqual(body["radioHistory"]["lastPlayed"]["title"], "Blue Monday")
+            self.assertEqual(body["radioHistory"]["lastPlayed"]["artist"], "ORGY")
+
     def test_history_is_observed_without_controller_or_http_polling(self):
         self.play_radio()
         original = self.mpd.state()

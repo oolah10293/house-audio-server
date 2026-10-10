@@ -13,6 +13,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from radio_metadata import normalize_radio_metadata
+
 
 class RadioHistory:
     MINIMUM_SECONDS = 10.0
@@ -64,6 +66,9 @@ class RadioHistory:
                 raise ValueError("Invalid radio history timing")
         if value["playedSeconds"] <= cls.MINIMUM_SECONDS:
             raise ValueError("Unqualified radio history record")
+        value = normalize_radio_metadata(value)
+        if not cls._text(value.get("title")):
+            return None  # Old malformed envelope: keep the older valid record.
         return {"title": cls._text(value["title"]),
                 "artist": cls._text(value.get("artist")),
                 "album": cls._text(value.get("album")),
@@ -97,7 +102,7 @@ class RadioHistory:
 
     def observe(self, station, state, intent="play"):
         now = self.clock()
-        song = state.get("song") or {}
+        song = normalize_radio_metadata(state.get("song") or {})
         identity = self._identity(station, song)
         old_identity = self._identity(self.current["station"], self.current) if self.current else None
         if identity != old_identity:

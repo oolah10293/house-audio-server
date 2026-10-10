@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source: **v0.11.0**. The user confirmed v0.10.0 radio playback and return to local music. New history behavior has automated coverage; physical acceptance is pending. See [RELEASE_0.11.0.md](RELEASE_0.11.0.md).
+Current source: **v0.11.1**. See [the WXDX metadata hotfix](RELEASE_0.11.1.md). The user confirmed v0.10.0 radio playback and return to local music. New history behavior has automated coverage; physical acceptance is pending. See [RELEASE_0.11.0.md](RELEASE_0.11.0.md).
 
 **Current independent apps:** SMB Music v0.5.1 and House Music v0.1.1 use separate packages and playback state. House Music uses the ordinary controller, queue, library, settings and transport APIs below. v0.9.2 removes the former combined-app handoff API and RAM diagnostics endpoint. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) defines the independent-app contract.
 
@@ -806,3 +806,27 @@ Old apps ignore this field. New apps hide history when it is absent on an older
 server. Current station/song details still come from `source.station` and `mpd.song`
 (title, artist, albumArtist, album, stationName), plus `mpd.bitrate` (kbps) and
 `mpd.audio` (sample-rate:bits:channels). Details may change on every state poll.
+
+### Structured station metadata (v0.11.1)
+
+Some HTTP(S) streams place a structured envelope inside the MPD Title tag, such
+as `title="Blue Monday",artist="ORGY",url="song_spot=..."`. For radio records in
+`/state.mpd.song` and `/queue`, the server now extracts `title` and `artist`
+(and embedded `album` if supplied). Explicit MPD artist/album fields take priority.
+The original envelope remains available as optional `rawTitle` for troubleshooting;
+clients should display the normalized title/artist/album fields instead. Station
+tracking fields in the URL tail are not display metadata and are not song identity.
+
+This handles WXDX's observed nested quotes in the URL tail without trying to parse
+that tail as JSON or CSV. Display-field quotes, commas and Unicode are retained.
+Recognized malformed envelopes provide the usable leading fields or blank values,
+never a raw protocol dump as the fallback title. Plain titles and ordinary combined
+artist/title text remain unchanged; local file metadata is not parsed this way.
+
+The same normalization runs before radio-history identity/timing and when old
+persisted history records are loaded. Changing only tracking IDs does not end a
+song or reset its ten-second qualification. Previously saved WXDX envelopes are
+read back as clean display fields. A malformed old checkpoint cannot displace a
+valid previous record. No queue or playback intent is restored.
+
+House Music v0.3.0 already consumes these fields; no new APK is required.

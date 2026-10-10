@@ -2,7 +2,7 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source: **v0.11.0** — Pi-owned Last played radio song history. See [release and installation notes](docs/RELEASE_0.11.0.md). The user confirmed the v0.10.0 server installation, audible station playback and return to local music; v0.11.0 physical acceptance is pending. Android releases live in [smb-music-player](https://github.com/oolah10293/smb-music-player).
+Current source: **v0.11.1** — fixes WXDX structured song metadata in Now Playing and Last played. Keep House Music v0.3.0 installed; this is a server-only hotfix. See [release and installation notes](docs/RELEASE_0.11.1.md). The user's screenshot exposed raw `title=...,artist=...,url=...` text being displayed as the song name; automated regression tests now cover that format. Physical acceptance of the fix is pending.
 
 **Current Android apps:** separate, independent SMB Music and House Music. House Music v0.3.0 adds richer radio details and Last played using this server's history; [its release notes](https://github.com/oolah10293/smb-music-player/blob/house-v0.2.0-radio/house-app/docs/RELEASE_0.3.0.md) distinguish automated checks from phone acceptance. SMB Music retains its private playback and is unchanged by this release.
 
