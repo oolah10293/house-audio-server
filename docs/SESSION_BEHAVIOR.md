@@ -6,7 +6,9 @@ The 2026-09-29 clarification makes §4 authoritative over the former §11 resume
 
 The 2026-09-30 clarification makes Bluetooth audio a requirement for Android phone renderer eligibility (§7). Play/Resume and queue commands do not independently unmute the phone. This supersedes the former pre-command auto-unmute rule; the existing server pause/retention and final-node rules remain in force. It records approved behavior, not a new release or a claim of implementation.
 
-**2026-10-01 decision: Android SMB Music and HOUSE Music are completely independent apps (§8).** This supersedes all earlier Android home/away handoff requirements, including the 2026-09-30 active-SMB return-home transfer and the subsequent transition-coordinator proposal. Do not implement automatic or manual transfer, shared queue/song/position, SMB-triggered HOUSE queue reset, or cross-app coordination. SMB Music v0.5.0 and House Music v0.1.0 now implement this split in separate Android packages. Their release records distinguish build verification from pending phone acceptance. Server v0.9.2 removes the superseded transfer machinery and RAM diagnostics recorder; field deployment remains pending.
+**2026-10-01 decision: Android SMB Music and HOUSE Music are completely independent apps (§8).** This supersedes all earlier Android home/away handoff requirements, including the 2026-09-30 active-SMB return-home transfer and the subsequent transition-coordinator proposal. Do not implement automatic or manual transfer, shared queue/song/position, SMB-triggered HOUSE queue reset, or cross-app coordination. SMB Music v0.5.0 and House Music v0.1.0 now implement this split in separate Android packages. Their release records distinguish build verification from pending phone acceptance. Server v0.9.2 removes the superseded transfer machinery and RAM diagnostics recorder and is confirmed installed on the Pi.
+
+**2026-10-10 addition: saved Internet-radio stations are a shared HOUSE source (§16).** The user approved server support for pasted stream URLs, automatic names, saved selection/deletion and live playback. MPD remains the sole source/decoder. Library rules retain their existing behavior; §16 defines the live-stream exceptions where exact-position pause or final-track drain cannot apply. v0.10.0 implements the server contract; the new app page and physical acceptance remain pending.
 
 These rules supersede earlier suggestions of an always-playing private radio station, starting music whenever any controller opens, and treating every failed server request as permission to switch to standalone playback.
 
@@ -45,7 +47,7 @@ If the controller disconnects while other nodes remain, its selected playlist st
 
 ## 4. All nodes leave: finish the current track, then stop
 
-When the last node disconnects during playback, the Pi lets the current track **finish**, then stops. The pending stop takes precedence over Repeat All; the queue must not roll into another song with nobody connected.
+When the last node disconnects during **library playback**, the Pi lets the current track **finish**, then stops. The pending stop takes precedence over Repeat All; the queue must not roll into another song with nobody connected. Live radio has no such boundary and stops/clears when nobody remains (§16).
 
 **Any node reconnecting before that final track ends cancels the pending stop and preserves the existing playlist.** An audible node continues the current track/session without a restart or fresh default shuffle. If the returning device is only a muted controller, apply the muted-controller pause rule rather than keeping inaudible music running.
 
@@ -57,7 +59,7 @@ There is therefore one intentional exception to "no connected nodes means no pla
 
 A muted phone is still a connected controller. It can keep the current session and playlist alive **without keeping the music running**.
 
-The agreed case is:
+The agreed library-track case is:
 
 1. Music is playing and a phone remains connected with its output muted.
 2. The last unmuted node disconnects.
@@ -68,6 +70,8 @@ Muting the phone while other audible nodes remain must not pause those nodes. An
 
 The same rule applies to PC/browser controllers. **If the last controller leaves an already automatically paused session, end the session without advancing the song.** The next passive radio starts a fresh session using the configured default. This choice was confirmed on 2026-09-29.
 
+For live radio, retain the selected station and close its connection rather than retaining a playback position. Resume reconnects to the live broadcast; last-controller departure ends and clears the live session (§16).
+
 **Background apps and screen-off phones remain present while heartbeats continue.** The agreed initial timing is one heartbeat every five seconds, expiring after fifteen seconds without renewal. Explicit Quit detaches immediately rather than waiting for expiry. Quit also clears client-local HOUSE presentation/cache; it does not send global MPD Stop/Clear merely to clean up the client UI. A still-audible renderer can remain an output if its control connection alone is lost; its roles still belong to one device. Android must maintain its background heartbeat through the appropriate service lifecycle. Browser timer suspension is a lost heartbeat, not proof of presence. These choices were confirmed on 2026-09-29.
 
 ## 6. New shuffle for every fresh passive session
@@ -76,7 +80,7 @@ The same rule applies to PC/browser controllers. **If the last controller leaves
 
 The same first song may occur naturally by chance. Do not exclude the previous first song, compare orders to force a difference, or reroll a valid shuffle. A one-track folder necessarily starts with that track.
 
-This replaces the older requirement to persist/continue an exact default rotation or bookmark across completed sessions. Only the chosen default **folder setting** is intended to persist; the completed session's shuffled order/progress is not.
+This replaces the older requirement to persist/continue an exact default rotation or playback-position bookmark across completed sessions. The chosen default **folder setting** persists; the completed session's shuffled order/progress does not. Saved radio station bookmarks under §16 are durable choices, not playback progress.
 
 - A return before the final track ends continues the existing queue, track, and position without reshuffling.
 - An ordinary paused/retained session remains resumable; it has not completed a drain.
@@ -200,7 +204,7 @@ On restart:
 - discard automatic-pause ownership/reason;
 - discard pending final-track drain state;
 - abandon the previous queue/session as live session state and normalize MPD to fresh idle;
-- preserve durable configuration/identity only, including the selected passive default folder and controller↔renderer ownership.
+- preserve durable configuration/identity only, including the selected passive default folder, controller↔renderer ownership and saved radio station bookmarks.
 
 After restart:
 
@@ -227,6 +231,29 @@ Product/architecture rules:
 - Per-client latency compensation is distinct from the shared buffer. The shared buffer supplies timing margin; renderer-specific offsets compensate repeatable output-path latency.
 
 Field motivation, not diagnosis: brief S3 dropouts have been noticed around periods of heavier LAN/Internet traffic. Increasing synchronized buffer depth is an approved reliability experiment; it does not establish that network contention is the root cause.
+
+## 16. Internet radio as a shared HOUSE source
+
+Internet radio uses **station URL → MPD → existing FIFO → Snapserver → HOUSE renderers**. There is one shared source and queue. The phone does not decode its own station or create a parallel audio path, and SMB Music remains independent.
+
+The planned House Music Radio page accepts pasted direct stream URLs, automatically names/saves stations on the Pi, lets the user tap a saved station to play, and offers a small × to delete a saved entry. All HOUSE controllers read the same list. Optional rename supports poor/missing station metadata. The server provides these operations in v0.10.0; this release does not deliver the Android page.
+
+Station management and playback are separate API actions so adding/renaming/deleting a bookmark does not unexpectedly interrupt another listener. The later app can combine add followed by play into its Add & Play action. Deleting the current bookmark removes it from the saved list while the selected live broadcast continues. A station's stable display name is separate from changing song metadata; missing song titles are valid and must not produce invented track information.
+
+Selecting a saved station deliberately replaces the house queue with that stream. Returning to a folder deliberately builds the selected library queue under the existing folder-first rules. Restoring the exact pre-radio queue, song or position is not required. Preserve and restore the pre-radio library playback-mode flags when returning to files; radio's forced modes are not new user preferences.
+
+Live transport behavior:
+
+- Show the source as **LIVE**. Seeking, Previous/Next, Shuffle, Repeat and queue sorting do not apply. Switch stations through explicit station selection.
+- Play opens the selected station at the live broadcast position. It does not replay material missed during a pause.
+- Pause closes the stream and retains the station. Stop closes it and cancels playback intent. Both cancel retries. Explicit Play can reopen the retained station while the session still exists.
+- Only muted controllers remaining triggers automatic pause with station retention. An audible node returning resumes that automatic pause live. A passive node arriving into a retained pause may also resume, consistent with §2; controller attachment alone must not override deliberate Pause/Stop.
+- **Nobody remaining ends and clears live playback when effective presence confirms departure.** There is no final-track wait. Renderer staleness/lease rules still apply; a Snapserver outage is unknown presence, not evidence of departure.
+- Transient stream failure may retry with capped backoff only while live playback is still intended and the same station queue is still authoritative. A deliberate Pause/Stop/source change must cancel reconnects. A retry cannot resurrect radio over another source or keep it running in an empty house.
+
+The default passive startup remains **MP3s or Rap**, with the normal new shuffle after fresh idle or server restart. A station is not the automatic startup default in this release. Saved bookmarks/names survive restart; active station choice, live intent and retry state do not. A passive arrival after explicit Stop follows the existing fresh default behavior.
+
+API state distinguishes the logical live source/intent from MPD's raw transport. In particular, radio Pause has stopped MPD to release the connection. Controllers should follow `source.status`, `playIntent` and capability flags rather than interpreting that raw Stop as loss of the selected station. A successful command/probe does not prove audible playback; progress and real outputs must still be checked.
 
 
 ## Status and evidence references

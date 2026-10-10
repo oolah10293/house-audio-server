@@ -16,6 +16,7 @@ fi
 
 install -d -o root -g root -m 0755 "$INSTALL_DIR"
 install -o root -g root -m 0755 house_audio_server.py "$INSTALL_DIR/house_audio_server.py"
+install -o root -g root -m 0644 radio_stations.py "$INSTALL_DIR/radio_stations.py"
 install -o root -g root -m 0644 systemd/house-audio-server.service "$SERVICE_FILE"
 
 if [ ! -f "$DEFAULT_FILE" ]; then

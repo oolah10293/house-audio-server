@@ -36,3 +36,6 @@ CONTROLLER_HEARTBEAT_SECONDS=5
 CONTROLLER_LEASE_SECONDS=15
 # Only renderer ownership is saved, not live leases or playback state.
 HOUSE_AUDIO_CONTROLLERS_FILE=/var/lib/house-audio-server/controllers.json
+
+# Shared radio bookmarks persist; playback/retry state does not survive restart.
+HOUSE_AUDIO_RADIO_STATIONS_FILE=/var/lib/house-audio-server/radio-stations.json

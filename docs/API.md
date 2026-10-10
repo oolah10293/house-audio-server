@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source: **v0.9.2** (103 local tests pass). Last confirmed Pi deployment: **v0.9.0**; v0.9.2 deployment is pending. See [RELEASE_0.9.2.md](RELEASE_0.9.2.md) for verification and installation. Android field evidence is tracked in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
+Current source: **v0.10.0**; Pi deployment/field acceptance for this version are pending. Last confirmed Pi deployment: **v0.9.2**, including audible manual Radio Paradise playback on one S3. See [RELEASE_0.10.0.md](RELEASE_0.10.0.md) for verification and installation. Android field evidence is tracked in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
 
 **Current independent apps:** SMB Music v0.5.1 and House Music v0.1.1 use separate packages and playback state. House Music uses the ordinary controller, queue, library, settings and transport APIs below. v0.9.2 removes the former combined-app handoff API and RAM diagnostics endpoint. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) defines the independent-app contract.
 
@@ -31,6 +31,45 @@ Returns the current MPD transport/session snapshot:
 - queue length and version
 - selected queue position/id
 - current file identity and available metadata
+
+v0.10.0 adds a top-level `source`. Controllers should use this object for live-radio presentation and available controls, while `mpd` remains the raw playback snapshot. For example:
+
+```json
+{
+  "type": "radio",
+  "live": true,
+  "station": {
+    "id": "radio-example",
+    "url": "https://stream.radioparadise.com/rock-192",
+    "name": "Radio Paradise: Rock Mix (192k mp3)",
+    "nameSource": "stream"
+  },
+  "stationSaved": true,
+  "status": "playing",
+  "playIntent": "play",
+  "autoPaused": false,
+  "lastError": null,
+  "metadataError": null,
+  "retryAttempt": 0,
+  "retryInSeconds": null,
+  "canSeek": false,
+  "canSkip": false,
+  "canShuffle": false,
+  "canRepeat": false
+}
+```
+
+- `type` is `radio`, `library` (a non-radio queue exists), or `none` (empty queue). Non-radio sources have `live: false`, `station: null`, raw MPD transport as `status`, and the four capability flags true; the flags describe operation support, not whether an empty queue can play.
+- Radio `status` is `connecting`, `playing`, `retrying`, `paused`, `stopped` or `error`; `playIntent` is `play`, `pause` or `stop`. **Radio Pause intentionally reports raw `mpd.transport: "stop"`** because the live connection is closed. Use `source.status`/`playIntent` to render that pause correctly.
+- `stationSaved` becomes false if the currently playing bookmark is deleted. Deletion does not interrupt the live session. The station snapshot remains available until the session ends or changes source.
+- `lastError` describes a stream/MPD failure; `metadataError` describes a failed attempt to persist a generated station name. A metadata write failure does not stop playback. Retry fields report the current reconnect attempt and scheduled delay, or null when none is scheduled.
+- `mpd` additionally exposes MPD's `error`, `bitrate` and decoded `audio` format. `mpd.song.stationName` comes from MPD's `Name` field and is separate from the changing `mpd.song.title`. Title metadata may be blank; it never replaces the bookmark name. Decoded format is not a change to the Snapcast output configuration.
+
+Selecting a station acknowledges MPD's commands; it does not prove successful decoding or audible output. Poll state for playback progress and verify the renderer. Library `elapsedSeconds`/duration seeking semantics do not apply to a live broadcast.
+
+### `GET /radio/stations` — v0.10.0
+
+Returns `{service, version, stations, count}`. Each entry is `{id, url, name, nameSource}`; `nameSource` is `stream`, `fallback` or `user`. Entries retain insertion order. Reading the list does not contact MPD, register a controller or start playback.
 
 ### `GET /renderers`
 
@@ -118,15 +157,15 @@ Folder selection does not validate MPD's current index. If that folder has no in
 
 ### `POST /play`
 
-Resume/start the selected MPD item.
+Resume/start the selected MPD item. For a selected radio source, reopen the current station at the live broadcast position and reset its retry schedule.
 
 ### `POST /pause`
 
-Pause MPD.
+Pause MPD for a library track. For radio, close the stream connection while retaining the selected station and pause intent. There is no time-shift buffer; later Play reconnects live.
 
 ### `POST /stop`
 
-Stop MPD.
+Stop MPD. For radio, retain the selected station for explicit Play but cancel retries and automatic resume. A later passive arrival follows the stopped-session rule and starts the configured default folder.
 
 ### `POST /next`
 
@@ -135,6 +174,8 @@ Advance to the next MPD queue item.
 ### `POST /previous`
 
 Go to the previous MPD queue item.
+
+For radio, `/next`, `/previous`, `/seek`, `/shuffle`, `/repeat` and `/queue/reorder` return HTTP 409 `live_stream_operation` without changing playback. The Radio page should select another station explicitly instead of presenting queue/seek controls.
 
 ### `POST /seek`
 
@@ -168,7 +209,7 @@ Maps the app's Shuffle control to MPD Random.
 
 ### `POST /queue/clear`
 
-Clears the current MPD queue.
+Clears the current MPD queue. If radio is selected, this ends its live intent/retries and restores the saved pre-radio library modes before clearing.
 
 ### `POST /queue/replace`
 
@@ -194,9 +235,12 @@ Rules:
 - `play` defaults to `true`.
 - `positionSeconds` defaults to `0` and is applied only when `play` is true.
 - absolute paths, backslashes, and `..` traversal are rejected.
+- stream URLs are rejected; use the dedicated radio endpoints below.
 - the API never accepts arbitrary MPD protocol commands from a client.
 
 Use `/queue/replace` for a new folder/filtered PLAY LIST or selected-track queue. To sort the existing queue while preserving playback, use `/queue/reorder` below.
+
+Replacing a radio source with library tracks cancels radio intent/retries and restores the pre-radio Random/Repeat/Single/Consume settings. It builds the requested new library queue; the old queue/song/position is not restored. Invalid replacement requests leave the current radio session intact.
 
 ### `POST /queue/reorder` — v0.8.2
 
@@ -214,6 +258,50 @@ Returns the updated `mpd` state. A stale revision or different ID set returns HT
 
 This endpoint sorts only the existing queue. It does not select new files or replace a PLAY LIST; those operations use `/queue/replace`.
 
+### Radio bookmarks and selection — v0.10.0
+
+| Endpoint | JSON body | Result |
+| --- | --- | --- |
+| `POST /radio/stations` | `{"url":"https://stream.radioparadise.com/rock-192"}` with optional `name` | HTTP 201 and `{service, version, station, created: true}` for a new bookmark; HTTP 200 and `created: false` for an already saved normalized URL. |
+| `POST /radio/stations/rename` | `{"stationId":"radio-example","name":"My rock station"}` | HTTP 200 and `{service, version, station}` with a user-owned name. |
+| `POST /radio/stations/delete` | `{"stationId":"radio-example"}` | HTTP 200 and `{service, version, station}` for the removed bookmark. Current playback continues. |
+| `POST /radio/play` | `{"stationId":"radio-example"}` | Selects the saved station and returns the same state envelope as `GET /state`. |
+
+`stationId` is the opaque `station.id` returned by add/list; never derive it from a URL. Only the listed body fields are accepted. A missing station returns HTTP 404 `station_not_found`.
+
+**Adding and playing are separate operations.** Add validates the URL, performs a bounded HTTP response-header probe, then saves the bookmark. It does not stop or replace current music. A client implementing Add & Play should send `/radio/play` after add succeeds. Duplicate add returns the existing bookmark without another probe or implicit rename; use the rename endpoint for a deliberate name change.
+
+The initial automatic name uses `icy-name` when provided, otherwise a readable hostname/path fallback. During playback, MPD's station `Name` can improve an automatically generated name. A user-supplied name or rename is preserved. Names are 1–120 printable characters; blank/control-character names are rejected. The current song's `Title` is not a station name.
+
+Accept direct HTTP(S) audio stream URLs or HLS manifest URLs whose responses advertise a supported media type. This first version does not resolve station web pages, PLS files or ordinary M3U station directories. The response probe accepts `audio/*` except identified PLS/M3U directory types, plus `application/ogg`, `application/vnd.apple.mpegurl` and `application/x-mpegurl`. Header/type validation is a preflight check, not a decoder compatibility guarantee. Some feeds without a usable media type will be rejected. The probe uses a ten-second network budget and at most five redirects; each redirect is revalidated, and the response is closed without reading the endless audio body. Probing runs outside the MPD write lock.
+
+URLs are at most 2048 characters. Schemes/hostnames are normalized, but case-sensitive path/query bytes remain intact. Credentials, fragments, control characters, malformed escapes and unsupported schemes are rejected. URL-encode non-ASCII path/query characters. LAN stream addresses are allowed. This remains the existing trusted home-network API, with no new Internet-facing authentication.
+
+The shared list allows up to 256 bookmarks and is atomically persisted to `/var/lib/house-audio-server/radio-stations.json`. Override with `HOUSE_AUDIO_RADIO_STATIONS_FILE`; its parent must already be writable by the service. Install/update and restart preserve the file. A missing file means an empty list; an invalid existing file fails startup instead of being silently overwritten. Storage writes are durable replacements; HTTP 503 `station_write_failed` can mean uncertain directory-sync durability, so reload the list before retrying.
+
+Add/rename/delete/list work independently of MPD startup readiness. `/radio/play` and transport operations require `startup.ready` and return HTTP 503 `startup_pending` while startup reset is incomplete. Radio selection clears the current shared queue, loads exactly one stream, and sets Random/Repeat/Single/Consume off. MPD remains the sole decoder and feeds the existing FIFO/Snapcast path. It neither creates a second output pipeline nor changes the passive default.
+
+Radio errors use the usual `{service, version, error, detail}` envelope:
+
+| HTTP | Error | Meaning |
+| --- | --- | --- |
+| 400 | `invalid_request`, `invalid_stream_url`, `invalid_station_name` | Correct the request before retrying. |
+| 404 | `station_not_found` | Refresh the station list. |
+| 409 | `station_limit`, `live_stream_operation` | Bookmark limit reached, or operation unavailable for live radio. |
+| 422 | `unsupported_stream`, `station_probe_failed` | Unsupported response type or stream connection/HTTP failure. |
+| 504 | `station_probe_failed` | Probe timed out. |
+| 503 | `station_write_failed`, `mpd_unavailable`, `startup_pending` | Storage/MPD/readiness failure; refresh authoritative state. |
+
+### Radio lifecycle and reconnect behavior
+
+The normal enabled session policy monitors a selected station while Snapserver presence is known. An MPD error, stopped transport, or twenty seconds without elapsed progress starts reconnect backoff at 2, 5, 10 and then 30 seconds, capped at 30 seconds for subsequent attempts. Thirty seconds of healthy progress resets the attempt count. Reconnect reopens the owned station queue; it never replaces another MPD client's newly selected queue. Policy observations and automatic retry pause while renderer presence is unknown or the policy is disabled.
+
+Use HOUSE `/stop` for a deliberate radio stop. A native MPD Stop with the same owned station queue is indistinguishable from an upstream outage and can trigger reconnect; a native MPD queue replacement relinquishes HOUSE radio ownership instead.
+
+Explicit Pause/Stop, station/source changes, queue clear, final-node departure and service restart cancel the old live intent/retries. Pause retains a station and resumes live; it does not retain a position. If only muted controllers remain, the server applies that pause automatically and resumes when an audible node returns. A passive node arriving into a retained radio pause can also resume it. Merely attaching a controller does not override deliberate Pause/Stop.
+
+Once effective presence confirms nobody remains, radio stops and clears immediately; it cannot wait for a final song boundary. A Snapserver outage is unknown presence, not proof everyone left. After the session ends or the server restarts, passive startup still loads the configured MP3s/Rap folder with a fresh shuffle. Only bookmarks survive; station selection, retry timers and earlier library mode snapshots are transient. See [SESSION_BEHAVIOR §16](SESSION_BEHAVIOR.md#16-internet-radio-as-a-shared-house-source).
+
 ## Current boundaries
 
 Implemented now:
@@ -230,13 +318,14 @@ Implemented now:
 - persisted passive-default read/set (v0.7.0; permanent-Pi validation complete)
 - controller attach/heartbeat/detach, output reports, and muted-controller session policy (v0.8.0; deployed baseline passes, physical controller transitions pending)
 - Android local receiver mute/readiness reporting (v0.4.1 corrects first-phone-pass behavior; physical acceptance pending)
+- shared radio bookmarks, naming, live selection/state, source-aware transport and reconnect policy (v0.10.0; local verification only, Pi acceptance pending)
 
 Implemented:
 
 - fresh idle + passive renderer present/arrives -> load the configured default folder (`MP3s` or `Rap`), enable Random + Repeat All, and start playback;
 - passive renderer joining active playback -> leave the existing queue untouched;
 - passive renderer joining an ordinary paused/retained session resumes it without replacing its queue; a completed-drain boundary pause is excluded;
-- final passive renderer leaves during playback -> finish the current track, then normalize MPD to stopped/fresh idle, including a pause-on-next-track boundary;
+- final passive renderer leaves during library playback -> finish the current track, then normalize MPD to stopped/fresh idle, including a pause-on-next-track boundary; radio stops/clears when nobody remains;
 - renderer returns before track end -> cancel the pending stop and preserve the current song, position, and queue;
 - renderer returns after completed drain -> new randomized queue of the configured passive default; no saved old rotation and no forced first-song difference;
 - Snapserver outage -> never interpret it as all renderers leaving.
@@ -246,6 +335,7 @@ Still not implemented:
 - general transport-command request deduplication/revision checks beyond the guarded `/queue/reorder` operation
 - Android/Windows authentication/pairing
 - push state feed
+- House Music Radio page and live-aware app controls (separate Android update)
 
 For now, controllers can poll `/state`; the Android design intentionally does not require WebSockets for the first integration.
 
