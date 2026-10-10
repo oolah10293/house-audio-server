@@ -168,7 +168,7 @@ class RadioHttpTests(unittest.TestCase):
             self.policy._tick()
 
     def test_wxdx_metadata_reaches_current_state_and_previous_history_cleanly(self):
-        from test_radio_metadata import WXDX, URL
+        from test_radio_metadata import WXDX, WXDX_STATION, WXDX_MUSIC, URL
         station = self.add_station(URL, "105.9 The X")
         self.play_radio(station)
         state = self.mpd.state()
@@ -186,11 +186,24 @@ class RadioHttpTests(unittest.TestCase):
             self.assertEqual(body["mpd"]["song"]["title"], "Blue Monday")
             self.assertEqual(body["mpd"]["song"]["artist"], "ORGY")
             self.assertIsNone(body["radioHistory"]["lastPlayed"])
-            set_title('title="Next song",artist="Next artist",url="opaque"')
+            set_title(WXDX_STATION)
+            for second in range(12, 43):
+                self.clock.advance(1)
+                state["elapsedSeconds"] = second
+                self.policy._tick()
+            code, body = self.request("/state")
+            self.assertEqual(code, 200)
+            self.assertEqual(body["mpd"]["song"]["title"], "Home Of The Penguins")
+            self.assertEqual(body["mpd"]["song"]["artist"], "")
+            self.assertEqual(body["radioHistory"]["lastPlayed"]["title"], "Blue Monday")
+            self.assertIsNone(self.radio.history.current)
+            self.assertEqual(h.RadioHistory(self.history_path).snapshot()["lastPlayed"]["title"], "Blue Monday")
+            set_title(WXDX_MUSIC)
             self.policy._tick()
             code, body = self.request("/state")
             self.assertEqual(code, 200)
-            self.assertEqual(body["mpd"]["song"]["title"], "Next song")
+            self.assertEqual(body["mpd"]["song"]["title"], "Don't Wanna Go Home Tonight")
+            self.assertEqual(body["mpd"]["song"]["artist"], "Three Days Grace")
             self.assertEqual(body["radioHistory"]["lastPlayed"]["title"], "Blue Monday")
             self.assertEqual(body["radioHistory"]["lastPlayed"]["artist"], "ORGY")
 

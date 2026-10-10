@@ -36,7 +36,7 @@ from radio_stations import (RadioError, StationStore, probe_station,
                             validate_stream_url, validate_station_name)
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.11.1"
+SERVICE_VERSION = "0.11.2"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))

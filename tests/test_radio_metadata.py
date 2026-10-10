@@ -1,4 +1,4 @@
-"""Regression from the user's 2026-10-10 WXDX/Blue Monday screenshot."""
+"""Regressions from both WXDX screenshots and a direct live ICY capture."""
 import json
 import tempfile
 import unittest
@@ -18,11 +18,115 @@ WXDX = ('title="Blue Monday",artist="ORGY",url="song_spot="F" '
         'TAID="0" TPID="1054833" cartcutId="0" amgArtworkURL="null" '
         'length="00:04:22" unsID="-1" '
         'spotInstanceId="5adc1099-7acf-4396-a115-d7d965f6d713""')
+# Captured directly from https://stream.revma.ihrhls.com/zc2033 on 2026-10-10;
+# the ICY StreamTitle value exactly matches the user's second screenshot.
+WXDX_STATION = ('Home Of The Penguins - text="105.9 the X" song_spot="T" '
+                'MediaBaseId="0" itunesTrackId="0" amgTrackId="0" amgArtistId="0" '
+                'TAID="0" TPID="0" cartcutId="0" amgArtworkURL="" '
+                'length="00:00:00" unsID="0" spotInstanceId="-1"')
+# A second direct live read captured this song, followed by WXDX_STATION.
+WXDX_MUSIC = ('Three Days Grace - text="Don\'t Wanna Go Home Tonight" song_spot="M" '
+              'MediaBaseId="3153138" itunesTrackId="0" amgTrackId="-1" amgArtistId="0" '
+              'TAID="0" TPID="345521489" cartcutId="0446560001" '
+              'amgArtworkURL="https://i.iheart.com/v3/catalog/track/345521489?'
+              'ops=fit(200,200),format(%22jpeg%22)" length="00:03:27" '
+              'unsID="-1" spotInstanceId="-1"')
 URL = 'https://stream.revma.ihrhls.com/zc2033'
 STATION = dict(id='wxdx', name='105.9 The X', url=URL)
 
 
 class RadioMetadataTests(unittest.TestCase):
+    def test_live_music_capture_has_separate_title_and_artist(self):
+        song = h.normalize_song(dict(file=URL, title=WXDX_MUSIC, name=STATION['name']))
+        self.assertEqual(song['title'], "Don't Wanna Go Home Tonight")
+        self.assertEqual(song['artist'], 'Three Days Grace')
+        self.assertEqual(song['radioContentType'], 'music')
+        self.assertEqual(song['rawTitle'], WXDX_MUSIC)
+
+    def test_live_station_message_is_readable_and_not_a_song(self):
+        song = h.normalize_song(dict(file=URL, title=WXDX_STATION, name=STATION['name']))
+        self.assertEqual(song['title'], 'Home Of The Penguins')
+        self.assertEqual(song['artist'], '')
+        self.assertEqual(song['radioContentType'], 'nonMusic')
+        self.assertEqual(song['rawTitle'], WXDX_STATION)
+        self.assertEqual(song['stationName'], STATION['name'])
+
+    def test_text_song_formats_and_artist_prefixes(self):
+        for prefix, artist in (('Band - ', 'Band'), ('Band | ', 'Band'), ('', '')):
+            for marker in ('M', 'F'):
+                with self.subTest(prefix=prefix, marker=marker):
+                    raw = prefix + 'text="Next song" song_spot="' + marker + '" TPID="42"'
+                    song = normalize_radio_metadata(dict(title=raw))
+                    self.assertEqual((song['title'], song['artist']), ('Next song', artist))
+                    self.assertEqual(song['radioContentType'], 'music')
+        song = normalize_radio_metadata(dict(title='Band - text="Song" song_spot="M"',
+                                            artist='MPD artist', album='MPD album'))
+        self.assertEqual((song['artist'], song['album']), ('MPD artist', 'MPD album'))
+
+    def test_text_quotes_separators_and_malformed_fields(self):
+        cases = [
+            ('Björk - text="Jóga, \\"live\\"" song_spot="M"', 'Jóga, "live"'),
+            ('Band - text="She Said ""Hello""" song_spot="F"', 'She Said "Hello"'),
+            ("Band - text='Don\\'t Stop' song_spot='M'", "Don't Stop"),
+            ('text="Song"song_spot="M"', 'Song'),
+            ('text="Song"; song_spot="M";', 'Song'),
+            ('Band - text="unterminated', ''),
+        ]
+        for raw, title in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize_radio_metadata(dict(title=raw))['title'], title)
+
+    def test_content_markers_are_read_from_tail_not_title(self):
+        music = normalize_radio_metadata(dict(title=WXDX))
+        self.assertEqual(music['radioContentType'], 'music')
+        for marker in ('T', 'O'):
+            promo = normalize_radio_metadata(dict(title=WXDX.replace('song_spot="F"',
+                                                                   'song_spot="'+marker+'"')))
+            self.assertEqual(promo['radioContentType'], 'nonMusic')
+            self.assertEqual(promo['title'], 'Blue Monday')
+            self.assertEqual(promo['artist'], '')
+        raw = 'text="A lyric song_spot=\'T\'" song_spot="M"'
+        self.assertEqual(normalize_radio_metadata(dict(title=raw))['radioContentType'], 'music')
+
+    def test_normalization_is_idempotent_even_for_literal_tag_in_title(self):
+        for raw in (WXDX, WXDX_STATION, 'text="title=\'A lyric\'" song_spot="M"'):
+            song = normalize_radio_metadata(dict(title=raw))
+            self.assertEqual(normalize_radio_metadata(song), song)
+
+    def test_long_announcements_do_not_replace_previous_song_or_qualify(self):
+        clock = FakeClock()
+        history = RadioHistory(clock=clock)
+        def hear(raw, seconds):
+            for second in range(seconds + 1):
+                clock.advance(1)
+                history.observe(STATION, dict(transport='play', elapsedSeconds=clock(),
+                                song=normalize_radio_metadata(dict(title=raw))))
+        hear(WXDX, 11)
+        hear(WXDX_STATION, 30)
+        self.assertIsNone(history.current)
+        self.assertEqual(history.snapshot()['lastPlayed']['title'], 'Blue Monday')
+        hear(WXDX_MUSIC, 10)
+        self.assertEqual(history.seconds, 10)
+        hear(WXDX_STATION, 11)
+        self.assertEqual(history.snapshot()['lastPlayed']['title'], 'Blue Monday')
+        hear(WXDX_MUSIC, 11)
+        hear(WXDX_STATION, 11)
+        self.assertEqual(history.snapshot()['lastPlayed']['title'], "Don't Wanna Go Home Tonight")
+        self.assertEqual(history.snapshot()['lastPlayed']['artist'], 'Three Days Grace')
+
+    def test_old_raw_station_checkpoint_does_not_replace_saved_song(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'history.json'
+            record = dict(title=WXDX, artist='', album='', station=STATION,
+                          startedAtEpoch=1791658800, playedSeconds=11)
+            path.write_text(json.dumps(dict(version=1, lastPlayed=record,
+                            qualifiedCurrent=dict(record, title=WXDX_STATION))))
+            history = RadioHistory(path)
+            self.assertEqual(history.snapshot()['lastPlayed']['title'], 'Blue Monday')
+            path.write_text(json.dumps(dict(version=1, lastPlayed=dict(record, title=WXDX_STATION),
+                                           qualifiedCurrent=None)))
+            self.assertIsNone(RadioHistory(path).snapshot()['lastPlayed'])
+
     def test_screenshot_payload_becomes_separate_title_and_artist(self):
         original = dict(title=WXDX, artist=None, album=None, stationName='105.9 The X')
         song = normalize_radio_metadata(original)

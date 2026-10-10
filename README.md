@@ -2,7 +2,7 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source: **v0.11.1** — fixes WXDX structured song metadata in Now Playing and Last played. Keep House Music v0.3.0 installed; this is a server-only hotfix. See [release and installation notes](docs/RELEASE_0.11.1.md). The user's screenshot exposed raw `title=...,artist=...,url=...` text being displayed as the song name; automated regression tests now cover that format. Physical acceptance of the fix is pending.
+Current source: **v0.11.2** — handles WXDX's additional `Artist - text="Song"` metadata format and keeps marked station announcements out of Last played. v0.11.1 missed the user's second screenshot format; a direct live WXDX capture reproduced it. Keep House Music v0.3.0 installed. See [release and installation notes](docs/RELEASE_0.11.2.md). Physical acceptance is pending.
 
 **Current Android apps:** separate, independent SMB Music and House Music. House Music v0.3.0 adds richer radio details and Last played using this server's history; [its release notes](https://github.com/oolah10293/smb-music-player/blob/house-v0.2.0-radio/house-app/docs/RELEASE_0.3.0.md) distinguish automated checks from phone acceptance. SMB Music retains its private playback and is unchanged by this release.
 

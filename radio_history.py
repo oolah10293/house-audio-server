@@ -67,8 +67,8 @@ class RadioHistory:
         if value["playedSeconds"] <= cls.MINIMUM_SECONDS:
             raise ValueError("Unqualified radio history record")
         value = normalize_radio_metadata(value)
-        if not cls._text(value.get("title")):
-            return None  # Old malformed envelope: keep the older valid record.
+        if not cls._text(value.get("title")) or value.get("radioContentType") == "nonMusic":
+            return None  # Old malformed/non-song envelope: keep the valid record.
         return {"title": cls._text(value["title"]),
                 "artist": cls._text(value.get("artist")),
                 "album": cls._text(value.get("album")),
@@ -80,7 +80,8 @@ class RadioHistory:
     def _identity(self, station, song):
         title = self._text(song.get("title"))
         placeholders = {"unknown", "unknown title", "unknown - unknown", "stream", "live", "live radio"}
-        if (not title or not any(c.isalnum() for c in title)
+        if (song.get("radioContentType") == "nonMusic"
+                or not title or not any(c.isalnum() for c in title)
                 or title.casefold() in placeholders
                 or title.casefold() in {self._text(station.get("name")).casefold(),
                                         self._text(song.get("stationName")).casefold()}):
