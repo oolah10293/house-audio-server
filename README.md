@@ -2,11 +2,11 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source: **v0.10.0** — shared Internet-radio bookmarks and MPD-backed live playback. **Pi deployment and v0.10.0 field acceptance are pending.** Last confirmed Pi deployment is **v0.9.2**, including an audible Radio Paradise test through MPD → Snapcast → one S3. See [release, verification and installation notes](docs/RELEASE_0.10.0.md). Android release/acceptance details live in [smb-music-player](https://github.com/oolah10293/smb-music-player), and renderer details in [house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
+Current source: **v0.11.0** — Pi-owned Last played radio song history. See [release and installation notes](docs/RELEASE_0.11.0.md). The user confirmed the v0.10.0 server installation, audible station playback and return to local music; v0.11.0 physical acceptance is pending. Android releases live in [smb-music-player](https://github.com/oolah10293/smb-music-player).
 
-**Current Android apps:** separate, independent **SMB Music v0.5.1** and **House Music v0.1.1**. SMB Music owns its private playback; House Music controls/renders the Pi session. Their release records distinguish build verification from pending phone acceptance: [SMB release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.5.1.md), [House release](https://github.com/oolah10293/smb-music-player/blob/main/house-app/docs/RELEASE_0.1.1.md). Server v0.9.2 removes the old combined-app transfer API and RAM diagnostics recorder. House Music v0.1.1 already uses the retained APIs; no new APK or S3 firmware is needed for this server cleanup.
+**Current Android apps:** separate, independent SMB Music and House Music. House Music v0.3.0 adds richer radio details and Last played using this server's history; [its release notes](https://github.com/oolah10293/smb-music-player/blob/house-v0.2.0-radio/house-app/docs/RELEASE_0.3.0.md) distinguish automated checks from phone acceptance. SMB Music retains its private playback and is unchanged by this release.
 
-v0.10.0 supplies the server support for the planned House Music Radio page; this release contains **no new APK or S3 firmware**. The existing app continues to browse/play folders. A later app update will expose station entry, saved stations, deletion and live-aware controls. Until then, use the API checks in the release notes.
+v0.11.0 pairs with House Music v0.3.0 for richer radio details and retained Last played. History works while the phone app is closed. No S3 firmware update is needed; MPD and Snapcast continue to provide playback and synchronized audio.
 
 ## Agreed playback and session behavior
 

@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source: **v0.10.0**; Pi deployment/field acceptance for this version are pending. Last confirmed Pi deployment: **v0.9.2**, including audible manual Radio Paradise playback on one S3. See [RELEASE_0.10.0.md](RELEASE_0.10.0.md) for verification and installation. Android field evidence is tracked in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
+Current source: **v0.11.0**. The user confirmed v0.10.0 radio playback and return to local music. New history behavior has automated coverage; physical acceptance is pending. See [RELEASE_0.11.0.md](RELEASE_0.11.0.md).
 
 **Current independent apps:** SMB Music v0.5.1 and House Music v0.1.1 use separate packages and playback state. House Music uses the ordinary controller, queue, library, settings and transport APIs below. v0.9.2 removes the former combined-app handoff API and RAM diagnostics endpoint. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) defines the independent-app contract.
 
@@ -751,3 +751,58 @@ The server API contract itself is unchanged by that client correction.
 `GET /browse?path=MP3s` retains its previous fields and additionally includes the same `library` status. When `updating` is true, fetch again after the job finishes before treating the listing as current. The app polls every two seconds during scanning, then returns to its normal 30-second visible-browser check. The server automatically coalesces those checks to at most one new scan per minute. Reads alone do not initiate indexing. These operations do not change the passive-default selection or issue playback/queue commands.
 
 MPD update protocol: <https://mpd.readthedocs.io/en/stable/protocol.html#the-music-database>.
+
+## Radio song history (v0.11.0)
+
+`GET /state` includes `radioHistory`, even while the current source is local music:
+
+```json
+{
+  "radioHistory": {
+    "lastPlayed": {
+      "title": "Where The River Flows",
+      "artist": "Collective Soul",
+      "album": "Collective Soul",
+      "station": {"id": "saved-station-id", "name": "Rock station", "url": "https://example.com/live"},
+      "startedAtEpoch": 1791638000.0,
+      "playedSeconds": 11.5
+    },
+    "persistenceError": null
+  }
+}
+```
+
+`lastPlayed` is null until an identified song qualifies and ends or changes.
+`startedAtEpoch` is the server's Unix timestamp for first observing that song;
+`playedSeconds` is conservatively counted observed playback, not its full length.
+Blank artist/album values mean the station did not supply them. A combined ICY
+title is retained verbatim as `title`; artist/title boundaries are not guessed.
+Unknown, blank, punctuation-only and station-name-only titles cannot qualify.
+Stations can supply ads or program labels as titles; there is no audio recognition.
+
+The background daemon samples independently of controllers and HTTP requests,
+even with presence automation disabled. Only intervals with the same song identity,
+playing transport, no MPD error, and advancing elapsed time count. Pauses, resets,
+stalls, catch-up jumps and observer gaps over three seconds do not count. The
+normal poll is 0.5 seconds; a song must accumulate strictly **more than 10 seconds**.
+No queue-version or MPD song-ID change is required for an ICY song change.
+
+The previous qualifying song remains displayed while the current song plays,
+even after the current song qualifies. Brief/blank metadata never erases it.
+A metadata change, station/source change, deliberate Stop, external queue change,
+or ended session promotes a qualified outgoing song. Pause suspends accounting;
+Play reconnects live and the next supplied identity determines whether it changed.
+
+`/var/lib/house-audio-server/radio-history.json` atomically stores the previous
+record and a separate qualifying-current checkpoint. The checkpoint is written
+once when a song qualifies, not every poll. On restart it becomes previous,
+because restart still ends playback and starts fresh according to existing policy.
+This never restores a station, queue or playback intent. Optional environment
+variable: `HOUSE_AUDIO_RADIO_HISTORY_FILE`; its parent must be writable by the
+service. Save/read errors are nonfatal and exposed in `persistenceError`; failed
+writes retain the in-memory record and retry at most every five seconds on activity.
+
+Old apps ignore this field. New apps hide history when it is absent on an older
+server. Current station/song details still come from `source.station` and `mpd.song`
+(title, artist, albumArtist, album, stationName), plus `mpd.bitrate` (kbps) and
+`mpd.audio` (sample-rate:bits:channels). Details may change on every state poll.

@@ -38,6 +38,7 @@ class RadioMpd(FakeMpd):
         self.fail_command = None
         self.fail_remaining = 0
         self.station_name = None
+        self.song_title = None
 
     def state(self):
         state = super().state()
@@ -47,7 +48,8 @@ class RadioMpd(FakeMpd):
 
     def queue(self):
         return [{"id": song_id, "file": file, "pos": index,
-                 "stationName": self.station_name if file.startswith("https://") else None}
+                 "stationName": self.station_name if file.startswith("https://") else None,
+                 "title": self.song_title if file.startswith("https://") else None}
                 for index, (song_id, file) in enumerate(zip(self.ids, self.queue_files))]
 
     def run(self, *commands):
@@ -87,7 +89,9 @@ class RadioHttpTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.stations = h.StationStore(str(Path(self.directory.name) / "stations.json"))
-        self.radio = h.RadioPlayback(self.stations, clock=self.clock)
+        self.history_path = Path(self.directory.name) / "history.json"
+        self.radio = h.RadioPlayback(self.stations, clock=self.clock,
+                                    history=h.RadioHistory(self.history_path, clock=self.clock))
         self.monitor = NodeMonitor()
         self.controllers = h.ControllerRegistry(clock=self.clock)
         self.mpd = RadioMpd()
@@ -154,6 +158,50 @@ class RadioHttpTests(unittest.TestCase):
     def outage(self):
         self.mpd.state_data.update(transport="stop", error="HTTP connection closed")
         self.policy._tick()
+
+    def hear_song(self, title, seconds=11):
+        self.mpd.song_title = title
+        self.policy._tick()
+        for _ in range(seconds):
+            self.clock.advance(1)
+            self.mpd.state_data["elapsedSeconds"] += 1
+            self.policy._tick()
+
+    def test_history_is_observed_without_controller_or_http_polling(self):
+        self.play_radio()
+        original = self.mpd.state()
+        self.hear_song("First song")
+        self.assertIsNone(self.radio.history.snapshot()["lastPlayed"])
+        self.mpd.song_title = "Second song"
+        self.policy._tick()
+        code, state = self.request("/state")
+        self.assertEqual(code, 200)
+        self.assertEqual(state["radioHistory"]["lastPlayed"]["title"], "First song")
+        self.assertEqual(state["mpd"]["queueVersion"], original["queueVersion"])
+        self.assertEqual(state["mpd"]["songId"], original["songId"])
+        self.assertEqual(h.RadioHistory(self.history_path).snapshot()["lastPlayed"]["title"], "First song")
+
+    def test_history_captures_station_change_and_return_to_library(self):
+        self.play_radio()
+        self.hear_song("First song")
+        other = self.add_station(ALT_URL, "Other station")
+        self.play_radio(other, establish_presence=False)
+        self.assertEqual(self.radio.history.snapshot()["lastPlayed"]["title"], "First song")
+        self.hear_song("Second song")
+        self.radio.release(self.mpd, clear=True)
+        code, state = self.request("/state")
+        self.assertEqual(code, 200)
+        self.assertNotEqual(state["source"]["type"], "radio")
+        self.assertEqual(state["radioHistory"]["lastPlayed"]["title"], "Second song")
+        self.assertEqual(state["radioHistory"]["lastPlayed"]["station"]["name"], "Other station")
+
+    def test_history_continues_with_presence_policy_disabled(self):
+        self.play_radio()
+        self.policy.enabled = False
+        self.hear_song("First song")
+        self.mpd.song_title = "Second song"
+        self.policy._tick()
+        self.assertEqual(self.radio.history.snapshot()["lastPlayed"]["title"], "First song")
 
     def test_save_station_is_persistent_and_does_not_change_playback(self):
         before = copy.deepcopy((self.mpd.state(), self.mpd.queue_files))

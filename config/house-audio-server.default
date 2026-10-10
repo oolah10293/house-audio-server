@@ -39,3 +39,6 @@ HOUSE_AUDIO_CONTROLLERS_FILE=/var/lib/house-audio-server/controllers.json
 
 # Shared radio bookmarks persist; playback/retry state does not survive restart.
 HOUSE_AUDIO_RADIO_STATIONS_FILE=/var/lib/house-audio-server/radio-stations.json
+
+# Descriptive radio song history only; never resumes playback after restart.
+HOUSE_AUDIO_RADIO_HISTORY_FILE=/var/lib/house-audio-server/radio-history.json

@@ -30,11 +30,12 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
+from radio_history import RadioHistory
 from radio_stations import (RadioError, StationStore, probe_station,
                             validate_stream_url, validate_station_name)
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.10.0"
+SERVICE_VERSION = "0.11.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -76,6 +77,10 @@ CONTROLLER_HEARTBEAT_SECONDS = float(os.environ.get("CONTROLLER_HEARTBEAT_SECOND
 CONTROLLER_LEASE_SECONDS = float(os.environ.get("CONTROLLER_LEASE_SECONDS", "15"))
 RADIO_STATIONS_FILE = os.environ.get(
     "HOUSE_AUDIO_RADIO_STATIONS_FILE", "/var/lib/house-audio-server/radio-stations.json"
+)
+
+RADIO_HISTORY_FILE = os.environ.get(
+    "HOUSE_AUDIO_RADIO_HISTORY_FILE", "/var/lib/house-audio-server/radio-history.json"
 )
 
 MAX_JSON_BODY = 2 * 1024 * 1024
@@ -909,7 +914,8 @@ class RadioPlayback:
     retry timers and the old library options deliberately do not.
     """
 
-    def __init__(self, stations, clock=time.monotonic):
+    def __init__(self, stations, clock=time.monotonic, history=None):
+        self.history = history if history is not None else RadioHistory(clock=clock)
         self.stations = stations
         self.clock = clock
         self.station = None
@@ -967,6 +973,7 @@ class RadioPlayback:
         return self.station is not None
 
     def forget(self):
+        self.history.end()
         self.station = None
         self.intent = "stop"
         self.auto_paused = False
@@ -981,7 +988,18 @@ class RadioPlayback:
         self.ending = False
         self._reset_retry()
 
+    def _capture_history(self, mpd):
+        if self.station is not None:
+            try:
+                state = mpd.state()
+                if self._matching_queue(mpd, state):
+                    self.history.observe(self.station, state, self.intent)
+            except (OSError, MpdError):
+                self.history.suspend()
+
     def select(self, mpd, station):
+        self._capture_history(mpd)
+        self.history.end()
         if self.saved_modes is None:
             state = mpd.state()
             self.saved_modes = {
@@ -1016,6 +1034,7 @@ class RadioPlayback:
         self.intent, self.status = "play", "connecting"
 
     def resume(self, mpd, automatic=False):
+        self.history.suspend()
         self.intent = "stop"
         self.auto_paused = False
         self._reset_retry()
@@ -1033,6 +1052,8 @@ class RadioPlayback:
         self.intent, self.status, self.error = "play", "connecting", None
 
     def pause(self, mpd, automatic=False):
+        self._capture_history(mpd)
+        self.history.suspend()
         # Cancel retry before I/O, including when the stop acknowledgement fails.
         self.intent, self.status = "pause", "paused"
         self.auto_paused = automatic
@@ -1040,6 +1061,8 @@ class RadioPlayback:
         mpd.command("stop")
 
     def stop(self, mpd):
+        self._capture_history(mpd)
+        self.history.end()
         self.intent, self.status = "stop", "stopped"
         self.auto_paused = False
         self._reset_retry()
@@ -1049,6 +1072,8 @@ class RadioPlayback:
         """End radio, restoring the pre-radio library modes before replacement."""
         if self.station is None:
             return
+        self._capture_history(mpd)
+        self.history.end()
         self.intent = "stop"
         self.auto_paused = False
         self.ending = self.ending or clear
@@ -1113,6 +1138,7 @@ class RadioPlayback:
         self.retry_attempt += 1
         self.retry_at = None
         self.last_progress, self.last_elapsed = now, None
+        self.history.suspend()
         # Never clear/add here: a retry may only reopen the queue we still own.
         try:
             mpd.run("stop", "clearerror", "play 0")
@@ -1375,6 +1401,8 @@ class PassiveSessionPolicy:
         except (OSError, MpdError) as exc:
             # Keep the previous successful sample so a failed departure/pause
             # write is retried, not lost by treating the next poll as a baseline.
+            if self.radio is not None:
+                self.radio.history.suspend()
             self._record(f"policy_waiting_for_mpd: {exc}")
 
     def _complete_final_stop(self, mpd: MpdClient) -> None:
@@ -1432,6 +1460,11 @@ class PassiveSessionPolicy:
         # ownership. New controller registrations are allowed while this retries.
         if self.startup is not None:
             self.startup.ensure_ready(self.mpd_factory())
+        if self.radio is not None and self.radio.station is not None:
+            mpd = self.mpd_factory()
+            state = mpd.state()
+            if self.radio.reconcile(mpd, state):
+                self.radio.history.observe(self.radio.station, state, self.radio.intent)
         if not self.enabled:
             self._record("disabled")
             return
@@ -1553,7 +1586,7 @@ LIBRARY_UPDATES = LibraryUpdates()
 PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
 CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE)
 RADIO_STATIONS = StationStore(RADIO_STATIONS_FILE)
-RADIO = RadioPlayback(RADIO_STATIONS)
+RADIO = RadioPlayback(RADIO_STATIONS, history=RadioHistory(RADIO_HISTORY_FILE))
 PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
     SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS,
     startup=MPD_STARTUP, radio=RADIO,
@@ -1733,6 +1766,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             state = mpd.state()
             RADIO.reconcile(mpd, state)
             source = RADIO.snapshot(state)
+            radio_history = RADIO.history.snapshot()
         self._json(
             200,
             {
@@ -1740,6 +1774,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "version": SERVICE_VERSION,
                 "mpd": state,
                 "source": source,
+                "radioHistory": radio_history,
                 "renderers": {
                     "snapserverReachable": snap.get("reachable", False),
                     "connectedCount": snap.get("connectedCount", 0),

@@ -14,6 +14,6 @@ jobs:
         with:
           python-version: "3.13"
       - name: Compile
-        run: python -m py_compile house_audio_server.py radio_stations.py
+        run: python -m py_compile house_audio_server.py radio_stations.py radio_history.py
       - name: Unit tests
         run: python -m unittest discover -s tests -v

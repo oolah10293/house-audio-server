@@ -204,7 +204,7 @@ On restart:
 - discard automatic-pause ownership/reason;
 - discard pending final-track drain state;
 - abandon the previous queue/session as live session state and normalize MPD to fresh idle;
-- preserve durable configuration/identity only, including the selected passive default folder, controller↔renderer ownership and saved radio station bookmarks.
+- preserve durable configuration/identity, including the selected passive default folder, controller↔renderer ownership and saved radio station bookmarks, plus descriptive radio song history under §17. History does not resume playback.
 
 After restart:
 
@@ -255,6 +255,21 @@ The default passive startup remains **MP3s or Rap**, with the normal new shuffle
 
 API state distinguishes the logical live source/intent from MPD's raw transport. In particular, radio Pause has stopped MPD to release the connection. Controllers should follow `source.status`, `playIntent` and capability flags rather than interpreting that raw Stop as loss of the selected station. A successful command/probe does not prove audible playback; progress and real outputs must still be checked.
 
+
+## 17. Last played radio song
+
+Confirmed 2026-10-10: retain and display the previous identified radio song that
+played for **more than ten seconds**. The Pi owns this record so it keeps working
+while the phone app is closed. Include title/artist as supplied, station and time.
+A current song qualifying must not replace the previous display until it ends or
+changes. Short snippets and missing metadata must not erase the previous record.
+
+History survives station changes, return to local music, and service restarts.
+It is descriptive information, not a queue or resume request: §13 remains the
+startup authority. No song identity is invented when the station supplies none.
+The daemon uses observed advancing MPD playback; paused/stalled/reconnect intervals
+are excluded. v0.11.0 exposes history to House Music v0.3.0. API timing and persistence
+details are in API.md; physical acceptance remains separate from automated checks.
 
 ## Status and evidence references
 
