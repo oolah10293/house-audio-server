@@ -35,8 +35,13 @@ space-separated music metadata, quotes and Unicode, normalization idempotency,
 content markers inside titles, old history recovery, and HTTP `/state` across
 song/long-announcement/song transitions. The history test explicitly checks that
 ten seconds is insufficient while eleven qualifies, and that announcements lasting
-thirty seconds never replace the previous song. Physical Pi/phone acceptance is
-still pending; a direct stream capture is not a hardware acceptance test.
+thirty seconds never replace the previous song.
+
+**Field confirmation, 2026-10-10:** after receiving the v0.11.2 update, the user
+reported: “ok, that seems to work pretty well. The UI looks really good.” This
+confirms good observed behavior after the WXDX fix with the existing v0.3.0 app.
+It does not separately confirm every history timing, app-closed or restart case;
+those retain their automated evidence and remain available for targeted checks.
 
 ## Update the Pi
 

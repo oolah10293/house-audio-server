@@ -1,6 +1,6 @@
 # HTTP control API
 
-Current source: **v0.11.2**. See [the additional WXDX metadata fix](RELEASE_0.11.2.md). The user confirmed v0.10.0 radio playback and return to local music. New history behavior has automated coverage; physical acceptance is pending. See [RELEASE_0.11.0.md](RELEASE_0.11.0.md).
+Current source: **v0.11.2**. See [the additional WXDX metadata fix](RELEASE_0.11.2.md). The user confirmed v0.10.0 radio playback and return to local music, then reported good results and UI after the v0.11.2 fix on 2026-10-10. Detailed history timing/restart checks have automated coverage but no separate physical confirmation yet. See [RELEASE_0.11.0.md](RELEASE_0.11.0.md).
 
 **Current independent apps:** SMB Music v0.5.1 and House Music v0.1.1 use separate packages and playback state. House Music uses the ordinary controller, queue, library, settings and transport APIs below. v0.9.2 removes the former combined-app handoff API and RAM diagnostics endpoint. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) defines the independent-app contract.
 
