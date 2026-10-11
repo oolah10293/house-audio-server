@@ -1,8 +1,8 @@
 # HTTP control API
 
-Current source: **v0.11.2**. See [the additional WXDX metadata fix](RELEASE_0.11.2.md). The user confirmed v0.10.0 radio playback and return to local music, then reported good results and UI after the v0.11.2 fix on 2026-10-10. Detailed history timing/restart checks have automated coverage but no separate physical confirmation yet. See [RELEASE_0.11.0.md](RELEASE_0.11.0.md).
+Current source: **v0.12.0**. See [release notes](RELEASE_0.12.0.md) and [subwoofer page/API guide](SUBWOOFERS.md). Radio metadata/history behavior from v0.11.2 remains included. New server behavior has automated coverage; physical Pi/Bose/app acceptance is pending.
 
-**Current independent apps:** SMB Music v0.5.1 and House Music v0.1.1 use separate packages and playback state. House Music uses the ordinary controller, queue, library, settings and transport APIs below. v0.9.2 removes the former combined-app handoff API and RAM diagnostics endpoint. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) defines the independent-app contract.
+**Current independent apps:** SMB Music v0.5.1 and House Music v0.3.0 use separate packages and playback state. House Music uses the ordinary controller, queue, library, settings and transport APIs below. v0.9.2 removes the former combined-app handoff API and RAM diagnostics endpoint. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) defines the independent-app contract.
 
 **Historical v0.8.2 integration note:** the companion [Android v0.4.1 correction release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.4.1.md) implements the Tailscale/routing, conditional playlist-mute and lower-strip output-control corrections found in the v0.4.0 field pass. Device acceptance remains pending; the server API and deployed v0.8.2 are unchanged.
 
@@ -69,7 +69,44 @@ Selecting a station acknowledges MPD's commands; it does not prove successful de
 
 ### `GET /radio/stations` — v0.10.0
 
-Returns `{service, version, stations, count}`. Each entry is `{id, url, name, nameSource}`; `nameSource` is `stream`, `fallback` or `user`. Entries retain insertion order. Reading the list does not contact MPD, register a controller or start playback.
+Returns `{service, version, stations, count, sort, listening}`. Each entry is
+`{id, url, name, nameSource, listeningSeconds}`; `nameSource` is `stream`, `fallback`
+or `user`. **v0.12.0** orders entries by descending listening time, then name
+(case-insensitive alphabetical), then stable ID. `sort` is `"listening_time"`.
+`listening` has `trackingStartedAtEpoch`, `saveIntervalSeconds` (30),
+`persistenceError` (null or text), and `readOnly` (boolean). Reading the list does
+not contact MPD, register a controller or start playback. Writes still return
+the station bookmark; fetch the list for counters/order. Station IDs, names and
+existing playback operations are unchanged.
+
+The background policy thread observes advancing playback with at least one audible
+normal output, even with the app closed. See [counting/persistence rules](RELEASE_0.12.0.md#counting-and-persistence).
+Totals start with this update, survive rename/restart, and are removed on bookmark
+deletion. Song metadata/history are separate. The app owns temporary new-station
+pinning and freezing order during a Radio-page visit; those require its later update.
+
+### Subwoofer settings and node API — v0.12.0
+
+| Route | Purpose |
+| --- | --- |
+| `GET /subwoofers` | Browser settings page, also available with a trailing slash. |
+| `GET /api/subwoofers` | Registry, discovered renderers, per-sub demand and fresh node feedback. |
+| `POST /api/subwoofers` | Register a sub or edit its name/assigned speakers; existing edits include `id`. |
+| `GET /api/subwoofers/{id}/demand` | Hardware-agnostic needed/not-needed/unknown decision with 30-second grace contract. |
+| `POST /api/subwoofers/{id}/status` | Receive node-owned mode/state/countdown/ACK evidence. |
+
+The complete schema, validation, freshness and firmware failure rules are in
+[SUBWOOFERS.md](SUBWOOFERS.md#firmware-integration-contract). These routes do not
+require MPD to be reachable. Configuration is persisted; reports are transient.
+The page and raw APIs do not issue amplifier commands. Node firmware is the second
+step of the agreed rollout.
+
+Registered subs remain in raw renderer diagnostics, but `/controllers` renderer
+entries mark them `dependent:true`, `passive:false`, `audible:false`,
+`eligibleForSubwoofer:false`, while retaining raw `present`. Normal entries include
+`dependent:false` and their effective `eligibleForSubwoofer`. Controller/session
+counts exclude dependent outputs. Demand is unknown on unavailable/stale Snapserver
+observations; never interpret `needed:null` as false.
 
 ### `GET /renderers`
 

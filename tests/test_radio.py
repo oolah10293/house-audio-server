@@ -249,7 +249,7 @@ class RadioHttpTests(unittest.TestCase):
         status, body = self.request("/radio/stations")
         self.assertEqual(status, 200)
         self.assertEqual(body["count"], 1)
-        self.assertEqual(body["stations"], [station])
+        self.assertEqual(body["stations"], [dict(station, listeningSeconds=0)])
         self.assertEqual((self.mpd.state(), self.mpd.queue_files), before)
         self.assertEqual(self.mpd.commands, [])
         self.assertTrue((Path(self.directory.name) / "stations.json").exists())

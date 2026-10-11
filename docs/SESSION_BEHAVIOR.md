@@ -271,6 +271,44 @@ The daemon uses observed advancing MPD playback; paused/stalled/reconnect interv
 are excluded. v0.11.0 exposes history to House Music v0.3.0. API timing and persistence
 details are in API.md; physical acceptance remains separate from automated checks.
 
+## 18. Dependent subwoofers and station listening order
+
+Approved 2026-10-11; server support is implemented in v0.12.0. A registered sub
+is a dependent output, excluded from passive arrival/start/resume and all normal
+session-preservation counts in the preceding rules. It cannot activate itself or
+another sub. Raw diagnostics retain it. Each sub follows any eligible normal
+renderer in its saved per-sub assignment; overlapping assignments are allowed.
+Presence, not playback, drives demand. A paused/muted passive normal speaker still
+qualifies; a control-only/muted/unready/detached phone does not.
+
+Unknown server/Snapserver observations are not confirmed absence. Auto holds the
+current amplifier state during unknown demand; cold boot stays standby until valid
+demand arrives. A sub owns the **30-second** absence grace and cancels it when an
+assigned speaker returns. Force standby / Force awake override Auto until Auto is
+selected again, but Force awake never keeps HOUSE playback alive. Mode, demand
+and actual node-reported status must remain distinct. A sent command is not proof
+of standby; a validated acknowledgment means acceptance, not measured power.
+Missing/stale feedback is unknown. These actuator/mode responsibilities require
+the later Bose firmware update, including the nonblocking 404 ms wake fix.
+
+The [Pi page guide](SUBWOOFERS.md) records registration/edit/save/status and the
+node API. Settings live on the Pi; manual mode stays on the sub's existing controls.
+No LED or Android subwoofer settings page is added.
+
+Station totals count observed advancing radio playback with at least one audible
+normal output, once per interval regardless of speaker count. Pauses, stalls,
+outages and sub-only playback do not earn time. The Pi tracks without the phone;
+totals survive restart/rename, begin after the update and sort most-listened first
+with alphabetic ties. They are independent of §17's individual-song history.
+
+The subsequent House Music update keeps newly added stations at the top for the
+rest of the current Radio-page visit (Add & Play starts them immediately), holds
+row order steady during the visit, then applies server ranking on reopening. It
+also fixes missed consecutive swipes. Current app behavior is unchanged by this
+server release. Delivery/check order is Pi, Bose S3, House Music; ordinary S3 nodes
+and standalone SMB Music need no update. Preserve compatibility where simple,
+without building elaborate support just for staged rollout.
+
 ## Status and evidence references
 
 This document is the **normative behavior contract**, not the release/field log. Server implementation/runtime evidence belongs in [README.md](../README.md) and [API.md](API.md). Android device acceptance belongs in the Android repository's `HOUSE_VALIDATION.md`. ESP32 renderer evidence belongs in the ESP32 repository.

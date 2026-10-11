@@ -2,7 +2,7 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source: **v0.11.2** — handles WXDX's additional `Artist - text="Song"` metadata format and keeps marked station announcements out of Last played. v0.11.1 missed the user's second screenshot format; a direct live WXDX capture reproduced it. Keep House Music v0.3.0 installed. See [release and installation notes](docs/RELEASE_0.11.2.md). **Field confirmation, 2026-10-10:** after this fix the user reports it works well and the UI looks really good. Detailed history timing/restart checks have automated coverage but no separate physical confirmation yet.
+Current source: **v0.12.0** — Pi subwoofer settings/assignments, per-sub demand and reported status, dependent-sub session exclusion, and durable radio listening-time ranking. See [release and installation notes](docs/RELEASE_0.12.0.md) and the permanent [subwoofer page guide](docs/SUBWOOFERS.md). This is the server-first step: automatic amplifier standby/status still needs the Bose firmware update; Radio-page visit ordering and consecutive swipes still need the later House Music update. Keep House Music v0.3.0 installed. Physical acceptance of v0.12.0 is pending; v0.11.2's field-confirmed radio metadata fix remains included.
 
 **Current Android apps:** separate, independent SMB Music and House Music. House Music v0.3.0 adds richer radio details and Last played using this server's history; [its release notes](https://github.com/oolah10293/smb-music-player/blob/house-v0.2.0-radio/house-app/docs/RELEASE_0.3.0.md) distinguish automated checks from phone acceptance. SMB Music retains its private playback and is unchanged by this release.
 
@@ -15,7 +15,8 @@ v0.11.0 pairs with House Music v0.3.0 for richer radio details and retained Last
 The important session distinctions are:
 
 - With nobody connected, the Pi is idle, except while finishing the last playing track after everyone disconnects.
-- Only a **passive node** automatically starts a new default session from fresh idle: the configured `MP3s` or `Rap` folder, a new random shuffle, and Repeat All. A controller merely connecting waits for Play. Independent SMB playback has no effect on that session or its default queue. See [SESSION_BEHAVIOR §8](docs/SESSION_BEHAVIOR.md).
+- Registered **dependent subs** do not start/resume/preserve a session or count as normal listeners. Presence for the following rules excludes them; raw diagnostics retain them.
+- Only a **normal passive node** automatically starts a new default session from fresh idle: the configured `MP3s` or `Rap` folder, a new random shuffle, and Repeat All. A controller merely connecting waits for Play. Independent SMB playback has no effect on that session or its default queue. See [SESSION_BEHAVIOR §8](docs/SESSION_BEHAVIOR.md).
 - A controller joining existing playback adopts the current song and queue. Changes it deliberately makes remain in effect after that controller leaves while other nodes remain.
 - For library playback, all nodes disconnecting means finish the current track, then stop despite Repeat All. A node returning before track end cancels the pending stop and preserves the session. **Live radio stops and clears immediately when the policy confirms nobody remains**, because it has no track boundary to drain.
 - Only a muted phone remaining means **pause and retain the session**. Library tracks retain their exact position; radio closes the stream and retains its station, then reconnects to the live broadcast when resumed. An audible node returning or that phone unmuting resumes a server-owned automatic pause.
