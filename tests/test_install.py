@@ -56,6 +56,11 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(self.config.stat().st_mode & 0o777, 0o640)
         self.assertEqual((self.destination / "house_audio_server.py").read_bytes(),
                          (ROOT / "house_audio_server.py").read_bytes())
+        self.assertEqual((self.destination / "radio_stations.py").read_bytes(),
+                         (ROOT / "radio_stations.py").read_bytes())
+        for asset in ("state_file.py", "subwoofers.py", "radio_listening.py",
+                      "web/subwoofers.html", "web/subwoofers.css", "web/subwoofers.js"):
+            self.assertEqual((self.destination / asset).read_bytes(), (ROOT / asset).read_bytes())
         self.assertEqual(self.calls.read_text().splitlines(), [
             "daemon-reload", "enable house-audio-server.service", "restart house-audio-server.service"])
         self.install()

@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import random
 import re
 import secrets
+import signal
 import socket
 import tempfile
 import threading
@@ -29,8 +31,15 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
+from radio_history import RadioHistory
+from radio_listening import RadioListening
+from subwoofers import Subwoofers, SubwooferError
+from radio_metadata import normalize_radio_metadata
+from radio_stations import (RadioError, StationStore, probe_station,
+                            validate_stream_url, validate_station_name)
+
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.9.2"
+SERVICE_VERSION = "0.12.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -70,6 +79,20 @@ CONTROLLER_BINDINGS_FILE = os.environ.get(
 )
 CONTROLLER_HEARTBEAT_SECONDS = float(os.environ.get("CONTROLLER_HEARTBEAT_SECONDS", "5"))
 CONTROLLER_LEASE_SECONDS = float(os.environ.get("CONTROLLER_LEASE_SECONDS", "15"))
+RADIO_STATIONS_FILE = os.environ.get(
+    "HOUSE_AUDIO_RADIO_STATIONS_FILE", "/var/lib/house-audio-server/radio-stations.json"
+)
+
+RADIO_HISTORY_FILE = os.environ.get(
+    "HOUSE_AUDIO_RADIO_HISTORY_FILE", "/var/lib/house-audio-server/radio-history.json"
+)
+
+RADIO_LISTENING_FILE = os.environ.get(
+    "HOUSE_AUDIO_RADIO_LISTENING_FILE", "/var/lib/house-audio-server/radio-listening.json"
+)
+SUBWOOFERS_FILE = os.environ.get(
+    "HOUSE_AUDIO_SUBWOOFERS_FILE", "/var/lib/house-audio-server/subwoofers.json"
+)
 
 MAX_JSON_BODY = 2 * 1024 * 1024
 MPD_WRITE_LOCK = threading.RLock()
@@ -170,11 +193,12 @@ class ControllerRegistry:
 
     def __init__(self, path: Optional[str] = None, clock=time.monotonic,
                  heartbeat_seconds=CONTROLLER_HEARTBEAT_SECONDS,
-                 lease_seconds=CONTROLLER_LEASE_SECONDS):
+                 lease_seconds=CONTROLLER_LEASE_SECONDS, subwoofers=None):
         if not 0 < heartbeat_seconds < lease_seconds < float("inf"):
             raise ValueError("Require 0 < controller heartbeat < lease expiry")
         self.path = Path(path) if path is not None else None
         self.clock = clock
+        self.subwoofers = subwoofers
         self.heartbeat_seconds = heartbeat_seconds
         self.lease_seconds = lease_seconds
         self._lock = threading.RLock()
@@ -308,10 +332,12 @@ class ControllerRegistry:
             return {"controllerId": controller_id, "detached": True}
 
     def snapshot(self, snap):
+        dependent = self.subwoofers.renderer_ids() if self.subwoofers is not None else set()
         with self._lock:
             now = self.clock()
             controllers = [self._view(key, lease, now) for key, lease in sorted(self._leases.items())]
-            live = {item["controllerId"] for item in controllers if item["present"]}
+            live = {item["controllerId"] for item in controllers
+                    if item["present"] and item["rendererId"] not in dependent}
             passive, passive_audible, controlled_audible = set(), set(), set()
             renderers = []
             for client in snap.get("clients", []):
@@ -319,6 +345,11 @@ class ControllerRegistry:
                 owner = self._bindings.get(renderer_id)
                 present = bool(client.get("present", False))
                 audible = present and bool(client.get("audible", False))
+                if renderer_id in dependent:
+                    renderers.append({"rendererId": renderer_id, "controllerId": owner,
+                                      "passive": False, "present": present, "audible": False,
+                                      "dependent": True, "eligibleForSubwoofer": False})
+                    continue
                 if owner is None:
                     if present:
                         passive.add(renderer_id)
@@ -335,7 +366,9 @@ class ControllerRegistry:
                     if audible:
                         controlled_audible.add(owner)
                 renderers.append({"rendererId": renderer_id, "controllerId": owner,
-                                  "passive": owner is None, "present": present, "audible": audible})
+                                  "passive": owner is None, "present": present, "audible": audible,
+                                  "dependent": False,
+                                  "eligibleForSubwoofer": present if owner is None else audible})
             return {
                 "heartbeatSeconds": self.heartbeat_seconds, "leaseSeconds": self.lease_seconds,
                 "controllers": controllers, "renderers": renderers,
@@ -362,10 +395,14 @@ def validate_relative_path(value: str) -> str:
     if not isinstance(value, str):
         raise ApiError(400, "invalid_path", "Path must be a string")
 
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ApiError(400, "invalid_path", "Control characters are not allowed in paths")
     value = value.strip()
     if value in ("", "."):
         return ""
 
+    if "://" in value:
+        raise ApiError(400, "invalid_path", "Use /radio/play for station URLs")
     if "\\" in value:
         raise ApiError(400, "invalid_path", "Use forward slashes in library paths")
 
@@ -452,6 +489,9 @@ class MpdClient:
             "songPosition": to_int(status.get("song")),
             "songId": to_int(status.get("songid")),
             "song": normalize_song(song),
+            "error": status.get("error"),
+            "bitrate": to_int(status.get("bitrate")),
+            "audio": status.get("audio"),
         }
 
     def queue(self) -> List[Dict[str, object]]:
@@ -525,8 +565,8 @@ class MpdClient:
             raise ApiError(400, "empty_queue", "tracks must contain at least one item")
         if start_index < 0 or start_index >= len(tracks):
             raise ApiError(400, "invalid_start_index", "startIndex is outside tracks")
-        if position_seconds < 0:
-            raise ApiError(400, "invalid_position", "positionSeconds cannot be negative")
+        if not math.isfinite(position_seconds) or position_seconds < 0:
+            raise ApiError(400, "invalid_position", "positionSeconds must be finite and nonnegative")
 
         safe_tracks = [validate_relative_path(item) for item in tracks]
         if any(not item for item in safe_tracks):
@@ -583,6 +623,7 @@ class SnapcastMonitor:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._request_id = 0
+        self._snapshot_received_at = None
         self._snapshot: Dict[str, object] = {
             "reachable": False,
             "host": self.host,
@@ -609,7 +650,11 @@ class SnapcastMonitor:
 
     def snapshot(self) -> Dict[str, object]:
         with self._lock:
-            return copy.deepcopy(self._snapshot)
+            result = copy.deepcopy(self._snapshot)
+            if (result.get("reachable") and self._snapshot_received_at is not None
+                    and time.monotonic() - self._snapshot_received_at > self.stale_after_seconds):
+                result.update(reachable=False, error="Snapserver observation is stale")
+            return result
 
     def _next_id(self) -> int:
         self._request_id += 1
@@ -811,6 +856,7 @@ class SnapcastMonitor:
             )
 
         with self._lock:
+            self._snapshot_received_at = time.monotonic()
             self._snapshot = {
                 "reachable": True,
                 "host": self.host,
@@ -888,6 +934,271 @@ class MpdStartupBoundary:
 MPD_STARTUP = MpdStartupBoundary()
 
 
+class RadioPlayback:
+    """Transient live-session intent; MPD remains the only playback engine.
+
+    All methods run under MPD_WRITE_LOCK. Bookmarks survive restarts; intent,
+    retry timers and the old library options deliberately do not.
+    """
+
+    def __init__(self, stations, clock=time.monotonic, history=None, listening=None):
+        self.history = history if history is not None else RadioHistory(clock=clock)
+        self.listening = listening if listening is not None else RadioListening(clock=clock)
+        self.stations = stations
+        self.clock = clock
+        self.station = None
+        self.intent = "stop"
+        self.auto_paused = False
+        self.saved_modes = None
+        self.song_id = None
+        self.status = "idle"
+        self.error = None
+        self.metadata_error = None
+        self._name_attempted = None
+        self.pending_station = None
+        self.empty_selection = False
+        self.ending = False
+        self._reset_retry()
+
+    def _reset_retry(self):
+        self.listening.suspend(flush=True)
+        self.retry_attempt = 0
+        self.retry_at = None
+        self.last_progress = self.clock()
+        self.last_elapsed = None
+        self.healthy_since = None
+
+    def _matching_queue(self, mpd, state):
+        if (self.station is not None and (self.empty_selection or self.ending)
+                and state.get("queueLength") == 0):
+            return True
+        if self.station is None or state.get("queueLength") != 1:
+            return False
+        song = state.get("song") or {}
+        if not song.get("file"):
+            queue = mpd.queue()
+            song = queue[0] if len(queue) == 1 else {}
+        return (song.get("file") == self.station["url"]
+                and (self.song_id is None or song.get("id") == self.song_id))
+
+    def reconcile(self, mpd, state):
+        if self.pending_station is not None:
+            # A lost ACK can leave the old station, the new station, or an empty
+            # queue. Resolve that actual result before surrendering ownership.
+            if not self._matching_queue(mpd, state):
+                queue = mpd.queue()
+                if not queue or (len(queue) == 1 and queue[0].get("file") == self.pending_station["url"]):
+                    self.station = self.pending_station
+                    self.song_id = queue[0].get("id") if queue else None
+                    self.empty_selection = not queue
+                else:
+                    self.forget()
+                    return False
+            self.pending_station = None
+        if self.station is not None and not self._matching_queue(mpd, state):
+            # Another MPD writer or an MPD restart replaced the queue. Never
+            # recreate our old station over that new authority.
+            self.forget()
+        return self.station is not None
+
+    def forget(self):
+        self.history.end()
+        self.station = None
+        self.intent = "stop"
+        self.auto_paused = False
+        self.saved_modes = None
+        self.song_id = None
+        self.status = "idle"
+        self.error = None
+        self.metadata_error = None
+        self._name_attempted = None
+        self.pending_station = None
+        self.empty_selection = False
+        self.ending = False
+        self._reset_retry()
+
+    def _capture_history(self, mpd):
+        if self.station is not None:
+            try:
+                state = mpd.state()
+                if self._matching_queue(mpd, state):
+                    self.history.observe(self.station, state, self.intent)
+            except (OSError, MpdError):
+                self.history.suspend()
+
+    def select(self, mpd, station):
+        self._capture_history(mpd)
+        self.history.end()
+        if self.saved_modes is None:
+            state = mpd.state()
+            self.saved_modes = {
+                "random": bool(state.get("random")), "repeat": bool(state.get("repeat")),
+                "single": PassiveSessionPolicy._safe_single_mode(state),
+                "consume": bool(state.get("consume")),
+            }
+        # Keep the old owner until the replacement queue is acknowledged. The
+        # pending candidate lets reconcile settle an ambiguous failed write.
+        self.pending_station = dict(station)
+        self.intent = "stop"  # A partially failed write never enables retries.
+        self.auto_paused = False
+        self.ending = False
+        self.error = None
+        self.metadata_error = None
+        self._name_attempted = None
+        self._reset_retry()
+        try:
+            mpd.run("stop", "clear", "clearerror", "random 0", "repeat 0",
+                    "single 0", "consume 0", f'add {mpd_quote(station["url"])}')
+            queue = mpd.queue()
+            if len(queue) != 1 or queue[0].get("file") != station["url"]:
+                raise MpdError("MPD did not retain the selected station")
+            self.station = dict(station)
+            self.song_id = queue[0].get("id")
+            self.pending_station = None
+            self.empty_selection = False
+            mpd.command("play 0")
+        except (OSError, MpdError) as exc:
+            self.status, self.error = "error", str(exc)
+            raise
+        self.intent, self.status = "play", "connecting"
+
+    def resume(self, mpd, automatic=False):
+        self.history.suspend()
+        self.intent = "stop"
+        self.auto_paused = False
+        self._reset_retry()
+        try:
+            # Stop first discards any pre-pause buffer and reconnects live.
+            mpd.run("stop", "clearerror", "play 0")
+        except (OSError, MpdError) as exc:
+            self.status, self.error = "error", str(exc)
+            if automatic:
+                # An eligible returning listener still wants this station.
+                # Retain that intent and use the normal bounded retry path.
+                self.intent, self.status = "play", "retrying"
+                self.retry_at = self.clock() + 2
+            raise
+        self.intent, self.status, self.error = "play", "connecting", None
+
+    def pause(self, mpd, automatic=False):
+        self._capture_history(mpd)
+        self.history.suspend()
+        # Cancel retry before I/O, including when the stop acknowledgement fails.
+        self.intent, self.status = "pause", "paused"
+        self.auto_paused = automatic
+        self._reset_retry()
+        mpd.command("stop")
+
+    def stop(self, mpd):
+        self._capture_history(mpd)
+        self.history.end()
+        self.intent, self.status = "stop", "stopped"
+        self.auto_paused = False
+        self._reset_retry()
+        mpd.command("stop")
+
+    def release(self, mpd, clear=False):
+        """End radio, restoring the pre-radio library modes before replacement."""
+        if self.station is None:
+            return
+        self._capture_history(mpd)
+        self.history.end()
+        self.intent = "stop"
+        self.auto_paused = False
+        self.ending = self.ending or clear
+        self._reset_retry()
+        modes = self.saved_modes or {"single": "0", "consume": False,
+                                    "random": False, "repeat": True}
+        commands = ["stop"]
+        commands.extend((f'single {modes["single"]}',
+                         f'consume {int(modes["consume"])}',
+                         f'random {int(modes["random"])}',
+                         f'repeat {int(modes["repeat"])}'))
+        if clear:
+            commands.append("clear")
+        mpd.run(*commands)
+        self.forget()
+
+    def observe(self, mpd, state):
+        """Called only with known presence and the still-owned station queue."""
+        now = self.clock()
+        name = (state.get("song") or {}).get("stationName")
+        if name and name != self._name_attempted:
+            self._name_attempted = name
+            try:
+                self.station = self.stations.update_generated_name(self.station["id"], name)
+                self.metadata_error = None
+            except RadioError as exc:
+                if exc.status != 404:  # Deleting a bookmark never stops playback.
+                    self.metadata_error = exc.detail
+        if self.intent != "play":
+            # Retry a failed stop write without ever reconnecting playback.
+            if state.get("transport") != "stop":
+                mpd.command("stop")
+            return
+        if state.get("transport") == "pause":
+            self.pause(mpd)  # Respect an out-of-band native pause as well.
+            return
+        elapsed = state.get("elapsedSeconds")
+        progressing = (state.get("transport") == "play" and elapsed is not None
+                       and elapsed != self.last_elapsed)
+        if progressing:
+            self.last_elapsed, self.last_progress = elapsed, now
+            if self.healthy_since is None:
+                self.healthy_since = now
+            if now - self.healthy_since >= 30:
+                self.retry_attempt = 0
+        failed = (bool(state.get("error")) or state.get("transport") == "stop"
+                  or now - self.last_progress >= 20)
+        if not failed:
+            self.retry_at = None
+            self.error = None
+            self.status = "playing" if state.get("audio") or (elapsed or 0) > 0 else "connecting"
+            return
+        self.healthy_since = None
+        self.error = state.get("error") or "Station stopped or made no progress for 20 seconds"
+        self.status = "retrying"
+        if self.retry_at is None:
+            delay = (2, 5, 10, 30)[min(self.retry_attempt, 3)]
+            self.retry_at = now + delay
+            return
+        if now < self.retry_at:
+            return
+        self.retry_attempt += 1
+        self.retry_at = None
+        self.last_progress, self.last_elapsed = now, None
+        self.history.suspend()
+        # Never clear/add here: a retry may only reopen the queue we still own.
+        try:
+            mpd.run("stop", "clearerror", "play 0")
+        except (OSError, MpdError) as exc:
+            self.error = str(exc)
+            self.retry_at = now + (2, 5, 10, 30)[min(self.retry_attempt, 3)]
+            raise
+        self.status = "connecting"
+
+    def snapshot(self, state):
+        if self.station is None:
+            return {"type": "library" if state.get("queueLength", 0) else "none",
+                    "live": False, "station": None, "status": state.get("transport"),
+                    "canSeek": True, "canSkip": True, "canShuffle": True, "canRepeat": True}
+        station = dict(self.station)
+        saved = True
+        try:
+            station = self.stations.get(station["id"])
+        except RadioError as exc:
+            if exc.status != 404:
+                raise
+            saved = False
+        return {"type": "radio", "live": True, "station": station, "stationSaved": saved,
+                "status": self.status, "playIntent": self.intent, "autoPaused": self.auto_paused,
+                "lastError": state.get("error") or self.error,
+                "metadataError": self.metadata_error, "retryAttempt": self.retry_attempt,
+                "retryInSeconds": (max(0, round(self.retry_at - self.clock(), 2))
+                                   if self.retry_at is not None else None),
+                "canSeek": False, "canSkip": False, "canShuffle": False, "canRepeat": False}
+
+
 class PassiveSessionPolicy:
     """One house session policy for passive radios and controlling nodes.
 
@@ -916,6 +1227,7 @@ class PassiveSessionPolicy:
         settings: Optional[PassiveDefaultSettings] = None,
         controllers: Optional[ControllerRegistry] = None,
         startup: Optional[MpdStartupBoundary] = None,
+        radio: Optional[RadioPlayback] = None,
     ) -> None:
         self.monitor = monitor
         self.mpd_factory = mpd_factory
@@ -923,6 +1235,7 @@ class PassiveSessionPolicy:
         self.poll_seconds = poll_seconds
         self.settings = settings
         self.startup = startup
+        self.radio = radio
         self.controllers = controllers if controllers is not None else ControllerRegistry()
         self.default_folder = (
             str(settings.snapshot()["passiveDefaultFolder"])
@@ -1013,6 +1326,8 @@ class PassiveSessionPolicy:
         tracks = mpd.library_files(folder)
         if not tracks:
             raise MpdError(f"Default folder {folder!r} is empty")
+        if self.radio is not None:
+            self.radio.release(mpd)
         self._shuffle(tracks)
         # Explicitly randomize the actual queue as well as enabling MPD Random.
         # Starting item zero is unbiased because the entire list was shuffled.
@@ -1115,6 +1430,10 @@ class PassiveSessionPolicy:
         except (OSError, MpdError) as exc:
             # Keep the previous successful sample so a failed departure/pause
             # write is retried, not lost by treating the next poll as a baseline.
+            with MPD_WRITE_LOCK:
+                if self.radio is not None:
+                    self.radio.history.suspend()
+                    self.radio.listening.suspend()
             self._record(f"policy_waiting_for_mpd: {exc}")
 
     def _complete_final_stop(self, mpd: MpdClient) -> None:
@@ -1130,6 +1449,8 @@ class PassiveSessionPolicy:
 
     def explicit_transport(self, mpd):
         """Called under MPD_WRITE_LOCK before deliberate play/pause/stop/queue edits."""
+        if self.radio is not None:
+            self.radio.listening.suspend(flush=True)
         if self._pending_final_stop:
             self._restore_options(mpd, "pending_stop_cancelled_explicit_command")
         with self._lock:
@@ -1172,10 +1493,25 @@ class PassiveSessionPolicy:
         # ownership. New controller registrations are allowed while this retries.
         if self.startup is not None:
             self.startup.ensure_ready(self.mpd_factory())
+        snap = self.monitor.snapshot()
+        presence = self.controllers.snapshot(snap)
+        if self.radio is not None and self.radio.station is not None:
+            mpd = self.mpd_factory()
+            state = mpd.state()
+            if self.radio.reconcile(mpd, state):
+                self.radio.history.observe(self.radio.station, state, self.radio.intent)
+                volumes = {c.get("id"): c.get("volumePercent") for c in snap.get("clients", [])}
+                audible = bool(snap.get("reachable")) and any(
+                    r["audible"] and not r.get("dependent") and volumes.get(r["rendererId"]) != 0
+                    for r in presence["renderers"])
+                saved = any(s["id"] == self.radio.station["id"] for s in self.radio.stations.list())
+                self.radio.listening.observe(self.radio.station if saved else None, state,
+                                             audible, self.radio.intent)
+        elif self.radio is not None:
+            self.radio.listening.suspend()
         if not self.enabled:
             self._record("disabled")
             return
-        snap = self.monitor.snapshot()
         if not bool(snap.get("reachable", False)):
             # Unknown renderer state is not proof of departure or inaudibility.
             with self._lock:
@@ -1183,13 +1519,19 @@ class PassiveSessionPolicy:
                 self._previous_presence = None
             self._record("waiting_for_snapserver")
             return
-        presence = self.controllers.snapshot(snap)
         present_count = presence["presentCount"]
         with self._lock:
             previous = self._previous_presence
             pending = self._pending_final_stop
         mpd = self.mpd_factory()
         passive_arrival = bool(set(presence["passiveIds"]) - set((previous or {}).get("passiveIds", [])))
+
+        if self.radio is not None and self.radio.reconcile(mpd, mpd.state()):
+            self._tick_radio(mpd, presence, passive_arrival)
+            with self._lock:
+                self._previous_present_count = present_count
+                self._previous_presence = presence
+            return
 
         # Resolve the known drain before interpreting any kind of arrival.
         if pending:
@@ -1225,6 +1567,37 @@ class PassiveSessionPolicy:
             self._previous_present_count = present_count
             self._previous_presence = presence
 
+    def _tick_radio(self, mpd, presence, passive_arrival):
+        radio = self.radio
+        if radio.ending:
+            # Finish failed final cleanup before considering a returning node.
+            radio.release(mpd, clear=True)
+            self._auto_paused_state = None
+            if presence["passiveCount"] > 0:
+                self._start_default_session(mpd)
+            return
+        if presence["presentCount"] == 0:
+            # A live broadcast has no track boundary. Also handles a stream
+            # selected before our first presence sample or during monitor loss.
+            radio.release(mpd, clear=True)
+            self._auto_paused_state = None
+            self._record("radio_last_node_left_session_idle")
+            return
+        if passive_arrival and radio.intent == "stop":
+            self._start_default_session(mpd)
+            self._auto_paused_state = None
+            return
+        if ((passive_arrival and radio.intent == "pause")
+                or (radio.auto_paused and presence["audibleCount"] > 0)):
+            radio.resume(mpd, automatic=True)
+            self._record("radio_resumed_live")
+        if (radio.intent == "play" and presence["controllerCount"] > 0
+                and presence["audibleCount"] == 0):
+            radio.pause(mpd, automatic=True)
+            self._record("radio_paused_muted_controllers_only")
+        self._auto_paused_state = ("radio", radio.station["id"]) if radio.auto_paused else None
+        radio.observe(mpd, mpd.state())
+
     def _run(self) -> None:
         while not self._stop.is_set():
             self._tick()
@@ -1253,10 +1626,14 @@ class LibraryUpdates:
 
 LIBRARY_UPDATES = LibraryUpdates()
 PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
-CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE)
+SUBWOOFERS = Subwoofers(SUBWOOFERS_FILE)
+CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE, subwoofers=SUBWOOFERS)
+RADIO_STATIONS = StationStore(RADIO_STATIONS_FILE)
+RADIO = RadioPlayback(RADIO_STATIONS, history=RadioHistory(RADIO_HISTORY_FILE),
+                      listening=RadioListening(RADIO_LISTENING_FILE))
 PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
     SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS,
-    startup=MPD_STARTUP,
+    startup=MPD_STARTUP, radio=RADIO,
 )
 
 
@@ -1297,9 +1674,10 @@ def normalize_song(fields: Dict[str, str]) -> Optional[Dict[str, object]]:
     if not fields:
         return None
 
-    return {
+    song = {
         "file": fields.get("file"),
         "title": fields.get("title"),
+        "stationName": fields.get("name"),
         "artist": fields.get("artist"),
         "albumArtist": fields.get("albumartist"),
         "album": fields.get("album"),
@@ -1314,6 +1692,10 @@ def normalize_song(fields: Dict[str, str]) -> Optional[Dict[str, object]]:
         "pos": to_int(fields.get("pos")),
         "id": to_int(fields.get("id")),
     }
+
+    if str(song.get("file") or "").lower().startswith(("http://", "https://")):
+        return normalize_radio_metadata(song)
+    return song
 
 
 def normalize_library_entry(fields: Dict[str, str]) -> Dict[str, object]:
@@ -1425,14 +1807,52 @@ class ApiHandler(BaseHTTPRequestHandler):
             raise ApiError(400, "invalid_json", "JSON body must be an object")
         return payload
 
+    def _subwoofer_presence(self):
+        snap = SNAPCAST_MONITOR.snapshot()
+        return snap, CONTROLLERS.snapshot(snap)
+
+    def _subwoofer_response(self):
+        snap, presence = self._subwoofer_presence()
+        return {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                **SUBWOOFERS.snapshot(snap, presence)}
+
+    def _page_asset(self, filename, content_type):
+        body = (Path(__file__).parent / "web" / filename).read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; object-src 'none'")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _subwoofer_write_guard(self):
+        # LAN API, no credentials. Prevent another website submitting edits from
+        # a browser; ordinary JSON ESP32 requests have no Origin header.
+        if self.headers.get_content_type() != "application/json":
+            raise ApiError(415, "json_required", "Use application/json")
+        origin = self.headers.get("Origin")
+        if ((origin is not None and origin != "http://" + self.headers.get("Host", ""))
+                or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+            raise ApiError(403, "origin_not_allowed", "Open settings directly on the house server")
+
     def _mpd_state_response(self) -> None:
         snap = SNAPCAST_MONITOR.snapshot()
+        with MPD_WRITE_LOCK:
+            mpd = MpdClient()
+            state = mpd.state()
+            RADIO.reconcile(mpd, state)
+            source = RADIO.snapshot(state)
+            radio_history = RADIO.history.snapshot()
         self._json(
             200,
             {
                 "service": SERVICE_NAME,
                 "version": SERVICE_VERSION,
-                "mpd": MpdClient().state(),
+                "mpd": state,
+                "source": source,
+                "radioHistory": radio_history,
                 "renderers": {
                     "snapserverReachable": snap.get("reachable", False),
                     "connectedCount": snap.get("connectedCount", 0),
@@ -1448,6 +1868,33 @@ class ApiHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         try:
+            assets = {"/subwoofers": ("subwoofers.html", "text/html; charset=utf-8"),
+                      "/subwoofers/": ("subwoofers.html", "text/html; charset=utf-8"),
+                      "/subwoofers.js": ("subwoofers.js", "text/javascript; charset=utf-8"),
+                      "/subwoofers.css": ("subwoofers.css", "text/css; charset=utf-8")}
+            if path in assets:
+                self._page_asset(*assets[path])
+                return
+            if path == "/api/subwoofers":
+                with MPD_WRITE_LOCK:
+                    result = self._subwoofer_response()
+                self._json(200, result)
+                return
+            demand_match = re.fullmatch(r"/api/subwoofers/([A-Za-z0-9_.:-]+)/demand", path)
+            if demand_match:
+                with MPD_WRITE_LOCK:
+                    _, presence = self._subwoofer_presence()
+                    result = SUBWOOFERS.demand(demand_match[1], presence)
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, **result})
+                return
+            if path == "/radio/stations":
+                with MPD_WRITE_LOCK:
+                    stations = RADIO.listening.rank(RADIO_STATIONS.list())
+                    listening = RADIO.listening.snapshot()
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                 "stations": stations, "count": len(stations),
+                                 "sort": "listening_time", "listening": listening})
+                return
             if path == "/controllers":
                 self._json(200, {
                     "service": SERVICE_NAME, "version": SERVICE_VERSION,
@@ -1561,7 +2008,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "error": "not_found",
                 },
             )
-        except ApiError as exc:
+        except (ApiError, RadioError, SubwooferError) as exc:
             self._json(
                 exc.status,
                 {
@@ -1587,7 +2034,59 @@ class ApiHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         try:
+            if path.startswith("/api/subwoofers"):
+                self._subwoofer_write_guard()
             payload = self._read_json()
+
+            if path == "/api/subwoofers":
+                with MPD_WRITE_LOCK:
+                    config = SUBWOOFERS.save(payload, SNAPCAST_MONITOR.snapshot())
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                 "subwoofer": config})
+                return
+            status_match = re.fullmatch(r"/api/subwoofers/([A-Za-z0-9_.:-]+)/status", path)
+            if status_match:
+                with MPD_WRITE_LOCK:
+                    status = SUBWOOFERS.report(status_match[1], payload)
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                 "status": status})
+                return
+
+            if path == "/radio/stations":
+                if set(payload) - {"url", "name"} or "url" not in payload:
+                    raise ApiError(400, "invalid_request", "Provide url and optional name")
+                url = validate_stream_url(payload["url"])
+                name = validate_station_name(payload["name"]) if "name" in payload else None
+                # Network probes must never block transport, controller
+                # heartbeats, policy ticks, or another listener's station switch.
+                existing = next((s for s in RADIO_STATIONS.list() if s["url"] == url), None)
+                if existing is not None:
+                    station, created = existing, False
+                else:
+                    generated = probe_station(url)
+                    station, created = RADIO_STATIONS.add(url, name, generated_name=generated)
+                self._json(201 if created else 200, {
+                    "service": SERVICE_NAME, "version": SERVICE_VERSION,
+                    "station": station, "created": created,
+                })
+                return
+
+            if path in {"/radio/stations/rename", "/radio/stations/delete"}:
+                expected = {"stationId", "name"} if path.endswith("rename") else {"stationId"}
+                if set(payload) != expected:
+                    raise ApiError(400, "invalid_request", "Provide " + ", ".join(sorted(expected)))
+                if path.endswith("rename"):
+                    station = RADIO_STATIONS.rename(payload["stationId"], payload["name"])
+                else:
+                    station = RADIO_STATIONS.delete(payload["stationId"])
+                with MPD_WRITE_LOCK:
+                    if path.endswith("delete"):
+                        RADIO.listening.remove(station["id"])
+                    if RADIO.station is not None and RADIO.station["id"] == station["id"]:
+                        RADIO.station = dict(station)
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                 "station": station})
+                return
 
             with MPD_WRITE_LOCK:
                 if path == "/library/update":
@@ -1626,7 +2125,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                     return
 
                 if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
-                            "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder"}:
+                            "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder",
+                            "/radio/play"}:
                     # Readiness is monotonic for this process. A pending reset may
                     # not acknowledge a new queue/command and later erase it.
                     MPD_STARTUP.require_ready()
@@ -1634,6 +2134,40 @@ class ApiHandler(BaseHTTPRequestHandler):
 
                 def explicit_transport():
                     PASSIVE_SESSION_POLICY.explicit_transport(mpd)
+
+                def leave_radio():
+                    explicit_transport()
+                    if RADIO.station is not None or RADIO.pending_station is not None:
+                        RADIO.reconcile(mpd, mpd.state())
+                    RADIO.release(mpd)
+
+                if path == "/radio/play":
+                    if set(payload) != {"stationId"}:
+                        raise ApiError(400, "invalid_request", "Provide only stationId")
+                    station = RADIO_STATIONS.get(payload["stationId"])
+                    explicit_transport()
+                    RADIO.reconcile(mpd, mpd.state())
+                    RADIO.select(mpd, station)
+                    self._mpd_state_response()
+                    return
+
+                if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
+                            "/shuffle", "/repeat", "/queue/reorder"}:
+                    if RADIO.station is not None or RADIO.pending_station is not None:
+                        RADIO.reconcile(mpd, mpd.state())
+                    if RADIO.station is not None:
+                        if path not in {"/play", "/pause", "/stop"}:
+                            raise ApiError(409, "live_stream_operation",
+                                           "Live radio supports Play, Pause/Stop, and station selection")
+                        explicit_transport()
+                        if path == "/play":
+                            RADIO.resume(mpd)
+                        elif path == "/pause":
+                            RADIO.pause(mpd)
+                        else:
+                            RADIO.stop(mpd)
+                        self._mpd_state_response()
+                        return
 
                 if path == "/queue/reorder":
                     if set(payload) != {"songIds", "queueVersion"}:
@@ -1679,8 +2213,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                     seconds = payload.get("seconds")
                     if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
                         raise ApiError(400, "invalid_request", "seconds must be a number")
-                    if seconds < 0:
-                        raise ApiError(400, "invalid_request", "seconds cannot be negative")
+                    if not math.isfinite(seconds) or seconds < 0:
+                        raise ApiError(400, "invalid_request", "seconds must be finite and nonnegative")
                     with MPD_WRITE_LOCK:
                         mpd.command(f"seekcur {float(seconds):.3f}")
                     self._mpd_state_response()
@@ -1702,7 +2236,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
                 if path == "/queue/clear":
                     with MPD_WRITE_LOCK:
-                        explicit_transport()
+                        leave_radio()
                         mpd.command("clear")
                     self._mpd_state_response()
                     return
@@ -1737,7 +2271,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                         start_index=start_index,
                         play=play,
                         position_seconds=float(position_seconds),
-                        before_write=explicit_transport,
+                        before_write=leave_radio,
                     )
                     self._json(
                         200,
@@ -1745,6 +2279,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                             "service": SERVICE_NAME,
                             "version": SERVICE_VERSION,
                             "mpd": state,
+                            "source": RADIO.snapshot(state),
                         },
                     )
                     return
@@ -1757,7 +2292,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "error": "not_found",
                     },
                 )
-        except ApiError as exc:
+        except (ApiError, RadioError, SubwooferError) as exc:
             self._json(
                 exc.status,
                 {
@@ -1780,6 +2315,10 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    def stop_service(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop_service)
     SNAPCAST_MONITOR.start()
     PASSIVE_SESSION_POLICY.start()
     server = ThreadingHTTPServer((HTTP_BIND, HTTP_PORT), ApiHandler)
@@ -1793,7 +2332,10 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        PASSIVE_SESSION_POLICY._stop.set()
         server.server_close()
+        with MPD_WRITE_LOCK:
+            RADIO.listening.suspend(flush=True)
 
 
 if __name__ == "__main__":

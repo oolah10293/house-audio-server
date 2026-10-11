@@ -16,6 +16,16 @@ fi
 
 install -d -o root -g root -m 0755 "$INSTALL_DIR"
 install -o root -g root -m 0755 house_audio_server.py "$INSTALL_DIR/house_audio_server.py"
+install -o root -g root -m 0644 radio_metadata.py "$INSTALL_DIR/radio_metadata.py"
+install -o root -g root -m 0644 radio_history.py "$INSTALL_DIR/radio_history.py"
+install -o root -g root -m 0644 radio_stations.py "$INSTALL_DIR/radio_stations.py"
+for module in state_file.py subwoofers.py radio_listening.py; do
+    install -o root -g root -m 0644 "$module" "$INSTALL_DIR/$module"
+done
+install -d -o root -g root -m 0755 "$INSTALL_DIR/web"
+for asset in subwoofers.html subwoofers.css subwoofers.js; do
+    install -o root -g root -m 0644 "web/$asset" "$INSTALL_DIR/web/$asset"
+done
 install -o root -g root -m 0644 systemd/house-audio-server.service "$SERVICE_FILE"
 
 if [ ! -f "$DEFAULT_FILE" ]; then

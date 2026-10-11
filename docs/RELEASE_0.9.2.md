@@ -44,8 +44,12 @@ log is separate from the server RAM recorder and is not changed by this release.
 - House Music v0.1.1 source calls the retained controller APIs and does not call
   the deleted server endpoints.
 
-Physical Pi/phone/radio acceptance remains pending. The last confirmed installed
-server is v0.9.0. This release does not claim to resolve ESP32 audio dropouts.
+**Deployment update:** v0.9.2 is installed on the permanent Pi. The user's
+subsequent `/state` identified version `0.9.2`, ready startup and an active
+audible S3 session. On 2026-10-09, manual MPD playback of Radio Paradise was
+also confirmed audible through that S3; see the [field test record](https://github.com/oolah10293/house-audio-server/issues/5#issuecomment-6093245333).
+These observations do not mark every phone/radio acceptance check below as
+complete. This release does not claim to resolve ESP32 audio dropouts.
 
 ## Installation
 
