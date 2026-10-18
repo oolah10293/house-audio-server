@@ -6,6 +6,11 @@ a healthy v0.13.0 response later that day. The remote execution environment did
 not perform the installation itself. Live playlist restoration and physical
 audio acceptance remain pending.
 
+**2026-10-18 field failure:** the first reported House Music v0.4.0 restore
+stopped at `seekcur` with `Not seekable`. The startup-readiness source correction
+and its test evidence are in [PLAYLIST_RESUME.md](PLAYLIST_RESUME.md#field-failure-and-unreleased-source-fix--2026-10-18).
+The correction is not a packaged or deployed release yet.
+
 ## Pi deployment evidence — 2026-10-18
 
 The supplied terminal output shows checkout of release commit `bc2ef5f`,

@@ -5,7 +5,45 @@ Implemented and tested in source on 2026-10-17 for the House Music requirement i
 Packaging and deployment preparation were authorized on 2026-10-18.
 See [v0.13.0 release/install notes](RELEASE_0.13.0.md). User-provided terminal
 output confirmed Pi installation and healthy startup on 2026-10-18. Live
-playlist-restore/audio acceptance remains pending. The app button is separate work.
+playlist-restore/audio acceptance remains pending. House Music v0.4.0 delivered
+the button on 2026-10-18; its first reported live restore failed as documented below.
+
+## Field failure and unreleased source fix — 2026-10-18
+
+The user reported a failed restore from House Music v0.4.0. The Pi's `/state`
+response showed a 1,666-entry bookmark, source `unknown`, transport `pause`,
+resume status `uncertain`, and the exact error
+`ACK [5@0] {seekcur} Not seekable`. This establishes the failed MPD operation,
+not whether that particular file is permanently unseekable.
+
+The v0.13.0 restore issued Play, Pause and Seek without waiting for decoder
+startup. Review of upstream MPD v0.24.4 (commit
+`72077d76f11ffba21f6705fe912f47b0b5dc1d6e`) found a matching race:
+`DecoderControl::Start` retains the preceding decoder's seekability until
+`SetReady`; `IsUnseekableCurrentSong` also checks a decoder in `START` state.
+`Player::SeekDecoder` can therefore reject an early seek using the preceding
+radio stream's unseekable flag. `Player::ActivateDecoder` clears `status.audio`,
+which `CheckDecoderStartup` fills after initialization. This is a plausible
+explanation of the field error; the Pi's decoder timing and file seekability
+have not yet been measured.
+
+The unreleased fix keeps the selected file paused and polls read-only MPD state
+for its audio format before the single position seek. It checks the selected
+song ID, queue position/length, paused transport and decoder errors on each
+read. The readiness window is five seconds; each MPD read also retains the
+existing socket timeout. Timeout, changed selection, decoder failure, read loss,
+or an actual rejected seek leave the attempt uncertain with its error retained.
+No queue/seek write is retried and there is no silent fallback to position zero.
+
+Two delayed-decoder regressions reproduced the exact reported ACK with the old
+implementation and pass with the fix, including muted-only retention. Additional
+tests cover permanently unseekable input, readiness timeout, changed selection,
+decoder error and read loss. All 129 Python tests passed locally. The MPD model
+now uses the production queue normalizer so field names match the protocol.
+These are modeled tests, not real-MPD or home-Pi acceptance.
+
+No new release has been packaged or installed for this correction. Packaging
+and deployment require a new explicit user go-ahead.
 
 ## Behavior
 

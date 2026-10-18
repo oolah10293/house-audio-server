@@ -47,6 +47,7 @@ HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
 MPD_HOST = os.environ.get("MPD_HOST", "127.0.0.1")
 MPD_PORT = int(os.environ.get("MPD_PORT", "6600"))
 MPD_TIMEOUT = float(os.environ.get("MPD_TIMEOUT", "2.0"))
+PLAYLIST_DECODER_READY_SECONDS = 5.0
 
 SNAPSERVER_HOST = os.environ.get("SNAPSERVER_HOST", "127.0.0.1")
 SNAPSERVER_CONTROL_PORT = int(os.environ.get("SNAPSERVER_CONTROL_PORT", "1705"))
@@ -1136,6 +1137,30 @@ class RadioPlayback:
             self.playlist_resume.status = "ready"
             self.playlist_resume.error = None
 
+    def _wait_for_playlist_decoder(self, mpd, selected, queue_length):
+        """Read readiness while paused; never retry a playback/seek write.
+
+        MPD 0.24 clears status.audio until the new decoder is initialized.
+        A play ACK, pause state or tagged duration alone does not establish
+        readiness: an immediate seek can still see radio's old seekable flag.
+        """
+        deadline = time.monotonic() + PLAYLIST_DECODER_READY_SECONDS
+        while True:
+            state = mpd.state()
+            if state.get("error"):
+                raise MpdError("Restored playlist decoder failed: " + str(state["error"]))
+            if (state.get("transport") != "pause"
+                    or state.get("songId") != selected["id"]
+                    or state.get("songPosition") != selected["pos"]
+                    or state.get("queueLength") != queue_length):
+                raise MpdError("Restored playlist changed while waiting for its decoder")
+            if state.get("audio"):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MpdError("Timed out waiting for the restored playlist decoder to become ready")
+            time.sleep(min(0.05, remaining))
+
     def resume_playlist(self, mpd, snapshot_id, before_write=None, hold_paused=False,
                         on_paused=None):
         bookmark = self.playlist_resume
@@ -1171,11 +1196,13 @@ class RadioPlayback:
         try:
             mpd.run("stop", "clear", "clearerror", "random 0", "repeat 0", "single 0", "consume 0",
                     *(f"addid {mpd_quote(track)}" for track in saved["tracks"]))
-            if [row["file"] for row in mpd.queue()] != saved["tracks"]:
+            restored = mpd.queue()
+            if [row["file"] for row in restored] != saved["tracks"]:
                 raise MpdError("MPD did not retain the complete saved playlist in order")
             modes = saved["modes"]
-            mpd.run(f'play {saved["startIndex"]}', "pause 1",
-                    f'seekcur {saved["positionSeconds"]:.3f}',
+            mpd.run(f'play {saved["startIndex"]}', "pause 1")
+            self._wait_for_playlist_decoder(mpd, restored[saved["startIndex"]], len(restored))
+            mpd.run(f'seekcur {saved["positionSeconds"]:.3f}',
                     f'single {modes["single"]}', f'consume {int(modes["consume"])}',
                     f'random {int(modes["random"])}', f'repeat {int(modes["repeat"])}')
             if not hold_paused:
