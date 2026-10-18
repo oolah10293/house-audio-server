@@ -898,3 +898,103 @@ class MpdStartupBoundary:
     def __init__(self):
         self._lock = threading.Lock()
         self._ready = False
+        self._last_error = None
+
+    def snapshot(self):
+        with self._lock:
+            return {"ready": self._ready, "lastError": self._last_error}
+
+    def require_ready(self):
+        if not self.snapshot()["ready"]:
+            raise ApiError(503, "startup_pending",
+                           "MPD fresh-idle startup reset is not complete; retry after startup.ready")
+
+    def ensure_ready(self, mpd):
+        with MPD_WRITE_LOCK:
+            if self.snapshot()["ready"]:
+                return
+            try:
+                # Stop first, abandon the old queue, and remove leftover drain
+                # modes. Passive startup sets Shuffle/Repeat All for its new queue.
+                mpd.run("stop", "clear", "single 0", "consume 0", "repeat 0", "random 0")
+                state = mpd.state()
+                if (state.get("transport") != "stop" or state.get("queueLength") != 0
+                        or state.get("singleMode") != "0"
+                        or any(state.get(mode) is not False for mode in ("consume", "repeat", "random"))):
+                    raise MpdError("MPD did not reach fresh idle at service startup")
+            except (OSError, MpdError) as exc:
+                with self._lock:
+                    self._last_error = str(exc)
+                raise
+            with self._lock:
+                self._ready = True
+                self._last_error = None
+
+
+MPD_STARTUP = MpdStartupBoundary()
+
+
+class RadioPlayback:
+    """Transient live-session intent; MPD remains the only playback engine.
+
+    All methods run under MPD_WRITE_LOCK. Bookmarks survive restarts; intent,
+    retry timers and the old library options deliberately do not.
+    """
+
+    def __init__(self, stations, clock=time.monotonic, history=None, listening=None):
+        self.history = history if history is not None else RadioHistory(clock=clock)
+        self.listening = listening if listening is not None else RadioListening(clock=clock)
+        self.stations = stations
+        self.clock = clock
+        self.station = None
+        self.intent = "stop"
+        self.auto_paused = False
+        self.saved_modes = None
+        self.song_id = None
+        self.status = "idle"
+        self.error = None
+        self.metadata_error = None
+        self._name_attempted = None
+        self.pending_station = None
+        self.empty_selection = False
+        self.ending = False
+        self._reset_retry()
+
+    def _reset_retry(self):
+        self.listening.suspend(flush=True)
+        self.retry_attempt = 0
+        self.retry_at = None
+        self.last_progress = self.clock()
+        self.last_elapsed = None
+        self.healthy_since = None
+
+    def _matching_queue(self, mpd, state):
+        if (self.station is not None and (self.empty_selection or self.ending)
+                and state.get("queueLength") == 0):
+            return True
+        if self.station is None or state.get("queueLength") != 1:
+            return False
+        song = state.get("song") or {}
+        if not song.get("file"):
+            queue = mpd.queue()
+            song = queue[0] if len(queue) == 1 else {}
+        return (song.get("file") == self.station["url"]
+                and (self.song_id is None or song.get("id") == self.song_id))
+
+    def reconcile(self, mpd, state):
+        if self.pending_station is not None:
+            # A lost ACK can leave the old station, the new station, or an empty
+            # queue. Resolve that actual result before surrendering ownership.
+            if not self._matching_queue(mpd, state):
+                queue = mpd.queue()
+                if not queue or (len(queue) == 1 and queue[0].get("file") == self.pending_station["url"]):
+                    self.station = self.pending_station
+                    self.song_id = queue[0].get("id") if queue else None
+                    self.empty_selection = not queue
+                else:
+                    self.forget()
+                    return False
+            self.pending_station = None
+        if self.station is not None and not self._matching_queue(mpd, state):
+            # Another MPD writer or an MPD restart replaced the queue. Never
+            # recreate our old station over that new authority.
