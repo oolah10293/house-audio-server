@@ -2,14 +2,17 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-**Current source release: v0.13.0 — Resume Playlist.** The server saves the
-previous folder queue, selected track, position and playback modes when switching
-to radio, and exposes a guarded restore API for the planned House Music button.
-See [release/install notes](docs/RELEASE_0.13.0.md) and the
-[API contract](docs/PLAYLIST_RESUME.md). The Android button is separate work.
-Pi installation and health checks passed on 2026-10-18, confirmed by the user's
-terminal output. Playlist restoration and physical transition timing still
-need live acceptance; see the release notes.
+**Current source release: v0.13.1 — Resume Playlist decoder-readiness fix.**
+The server waits for the restored file's decoder while keeping the track paused,
+then restores its saved position once. This addresses a startup race matching the
+`seekcur: Not seekable` failure reported with House Music v0.4.0.
+See [release/install notes](docs/RELEASE_0.13.1.md) and the
+[API contract](docs/PLAYLIST_RESUME.md). Keep the delivered House Music v0.4.0;
+this correction changes the Pi server only.
+
+The user confirmed that the same file seeks normally in ordinary playback.
+The fix's tests cover delayed readiness and failure paths; installation and
+successful Resume Playlist on the home Pi remain pending.
 
 The prior Pi source baseline was **v0.12.0**, imported on 2026-10-17.
 Its radio bookmark/history/listening support and subwoofer settings interface
