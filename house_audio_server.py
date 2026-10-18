@@ -1998,3 +1998,203 @@ class ApiHandler(BaseHTTPRequestHandler):
                         "library": library,
                     },
                 )
+                return
+
+            self._json(
+                404,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": "not_found",
+                },
+            )
+        except (ApiError, RadioError, SubwooferError) as exc:
+            self._json(
+                exc.status,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": exc.code,
+                    "detail": exc.detail,
+                },
+            )
+        except (OSError, MpdError) as exc:
+            self._json(
+                503,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": "mpd_unavailable",
+                    "detail": str(exc),
+                },
+            )
+
+    def do_POST(self) -> None:
+        parsed = urlsplit(self.path)
+        path = parsed.path
+
+        try:
+            if path.startswith("/api/subwoofers"):
+                self._subwoofer_write_guard()
+            payload = self._read_json()
+
+            if path == "/api/subwoofers":
+                with MPD_WRITE_LOCK:
+                    config = SUBWOOFERS.save(payload, SNAPCAST_MONITOR.snapshot())
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                 "subwoofer": config})
+                return
+            status_match = re.fullmatch(r"/api/subwoofers/([A-Za-z0-9_.:-]+)/status", path)
+            if status_match:
+                with MPD_WRITE_LOCK:
+                    status = SUBWOOFERS.report(status_match[1], payload)
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                 "status": status})
+                return
+
+            if path == "/radio/stations":
+                if set(payload) - {"url", "name"} or "url" not in payload:
+                    raise ApiError(400, "invalid_request", "Provide url and optional name")
+                url = validate_stream_url(payload["url"])
+                name = validate_station_name(payload["name"]) if "name" in payload else None
+                # Network probes must never block transport, controller
+                # heartbeats, policy ticks, or another listener's station switch.
+                existing = next((s for s in RADIO_STATIONS.list() if s["url"] == url), None)
+                if existing is not None:
+                    station, created = existing, False
+                else:
+                    generated = probe_station(url)
+                    station, created = RADIO_STATIONS.add(url, name, generated_name=generated)
+                self._json(201 if created else 200, {
+                    "service": SERVICE_NAME, "version": SERVICE_VERSION,
+                    "station": station, "created": created,
+                })
+                return
+
+            if path in {"/radio/stations/rename", "/radio/stations/delete"}:
+                expected = {"stationId", "name"} if path.endswith("rename") else {"stationId"}
+                if set(payload) != expected:
+                    raise ApiError(400, "invalid_request", "Provide " + ", ".join(sorted(expected)))
+                if path.endswith("rename"):
+                    station = RADIO_STATIONS.rename(payload["stationId"], payload["name"])
+                else:
+                    station = RADIO_STATIONS.delete(payload["stationId"])
+                with MPD_WRITE_LOCK:
+                    if path.endswith("delete"):
+                        RADIO.listening.remove(station["id"])
+                    if RADIO.station is not None and RADIO.station["id"] == station["id"]:
+                        RADIO.station = dict(station)
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                 "station": station})
+                return
+
+            with MPD_WRITE_LOCK:
+                if path == "/library/update":
+                    if set(payload) - {"force"} or type(payload.get("force", False)) is not bool:
+                        raise ApiError(400, "invalid_request", "Provide only optional boolean force")
+                    result = LIBRARY_UPDATES.request(MpdClient(), payload.get("force", False))
+                    self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                     "library": result})
+                    return
+
+                controller_commands = {
+                    "/controllers/attach": CONTROLLERS.attach,
+                    "/controllers/heartbeat": CONTROLLERS.heartbeat,
+                    "/controllers/detach": CONTROLLERS.detach,
+                }
+                if path in controller_commands:
+                    with MPD_WRITE_LOCK:
+                        result = controller_commands[path](payload)
+                    self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, **result})
+                    return
+
+                if path == "/settings":
+                    if set(payload) != {"passiveDefaultFolder"}:
+                        raise ApiError(
+                            400, "invalid_request",
+                            "Provide only passiveDefaultFolder",
+                        )
+                    settings = PASSIVE_DEFAULT_SETTINGS.set_default_folder(
+                        payload["passiveDefaultFolder"]
+                    )
+                    self._json(200, {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "settings": settings,
+                    })
+                    return
+
+                if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
+                            "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder",
+                            "/radio/play"}:
+                    # Readiness is monotonic for this process. A pending reset may
+                    # not acknowledge a new queue/command and later erase it.
+                    MPD_STARTUP.require_ready()
+                mpd = MpdClient()
+
+                def explicit_transport():
+                    PASSIVE_SESSION_POLICY.explicit_transport(mpd)
+
+                def leave_radio():
+                    explicit_transport()
+                    if RADIO.station is not None or RADIO.pending_station is not None:
+                        RADIO.reconcile(mpd, mpd.state())
+                    RADIO.release(mpd)
+
+                if path == "/radio/play":
+                    if set(payload) != {"stationId"}:
+                        raise ApiError(400, "invalid_request", "Provide only stationId")
+                    station = RADIO_STATIONS.get(payload["stationId"])
+                    explicit_transport()
+                    RADIO.reconcile(mpd, mpd.state())
+                    RADIO.select(mpd, station)
+                    self._mpd_state_response()
+                    return
+
+                if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
+                            "/shuffle", "/repeat", "/queue/reorder"}:
+                    if RADIO.station is not None or RADIO.pending_station is not None:
+                        RADIO.reconcile(mpd, mpd.state())
+                    if RADIO.station is not None:
+                        if path not in {"/play", "/pause", "/stop"}:
+                            raise ApiError(409, "live_stream_operation",
+                                           "Live radio supports Play, Pause/Stop, and station selection")
+                        explicit_transport()
+                        if path == "/play":
+                            RADIO.resume(mpd)
+                        elif path == "/pause":
+                            RADIO.pause(mpd)
+                        else:
+                            RADIO.stop(mpd)
+                        self._mpd_state_response()
+                        return
+
+                if path == "/queue/reorder":
+                    if set(payload) != {"songIds", "queueVersion"}:
+                        raise ApiError(400, "invalid_request", "Provide only songIds and queueVersion")
+                    state = mpd.reorder_queue(payload["songIds"], payload["queueVersion"])
+                    self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, "mpd": state})
+                    return
+
+                if path == "/play":
+                    with MPD_WRITE_LOCK:
+                        explicit_transport()
+                        mpd.command("play")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/pause":
+                    with MPD_WRITE_LOCK:
+                        explicit_transport()
+                        mpd.command("pause 1")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/stop":
+                    with MPD_WRITE_LOCK:
+                        explicit_transport()
+                        mpd.command("stop")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/next":
