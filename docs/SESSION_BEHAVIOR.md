@@ -152,6 +152,19 @@ The independent Android apps replace the previous unresolved whole-queue departu
 
 No pause/drain reconstruction is required after a `house-audio-server` restart: restart is a fresh-session boundary (§13). Source implementation and field-validation status are recorded separately in the API docs and README.
 
+### Resume Playlist during radio — 2026-10-17
+
+The requested House Music button returns from radio to the preceding folder
+queue, preserving list order, selected track/occurrence, position, Shuffle, and
+Repeat. The Pi owns that bookmark across station changes and controller reopen;
+it is not a second playing queue or a phone-owned session. An explicit Resume
+requests playback without changing local output mute/eligibility.
+
+Server implementation and testing were authorized on 2026-10-17. The source/API
+and failure behavior are documented in [PLAYLIST_RESUME.md](PLAYLIST_RESUME.md).
+The existing completed-session and restart boundaries still discard the prior
+bookmark. Packaging, deployment and the app update are separate steps.
+
 ## 11. MPD boundary artifact; §4 remains authoritative
 
 The useful v0.6.1 discovery is preserved: MPD 0.24 `single oneshot` can finish the final track and land in **Pause at 0.0 seconds on the next old-queue track**, rather than reporting transport `stop`.

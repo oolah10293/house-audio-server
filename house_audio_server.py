@@ -934,6 +934,64 @@ class MpdStartupBoundary:
 MPD_STARTUP = MpdStartupBoundary()
 
 
+class PlaylistResume:
+    """One in-memory library bookmark and one non-replayable restore attempt.
+
+    Owned by the house session, never a phone. All access uses MPD_WRITE_LOCK.
+    A new process intentionally starts empty under the fresh-session rule.
+    """
+
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.saved = None
+        self.token = None
+        self.status = "none"
+        self.error = None
+
+    def capture(self, mpd):
+        self.clear()
+        before = mpd.state()
+        rows = mpd.queue()
+        if not rows:
+            return
+        tracks = [validate_relative_path(row["file"]) for row in rows]
+        if any(not path for path in tracks):
+            raise ApiError(409, "playlist_not_resumable", "Queue contains an invalid library path")
+        # Freeze before measuring position. Stop can discard the selected item
+        # or elapsed time; pausing retains both. No queue has been cleared yet.
+        if before.get("transport") == "play":
+            mpd.command("pause 1")
+        state = mpd.state()
+        if (state.get("queueVersion") != before.get("queueVersion")
+                or state.get("queueLength") != len(rows)):
+            raise ApiError(409, "stale_queue", "Queue changed while saving; refresh before selecting radio")
+        index = state.get("songPosition")
+        if index is None and state.get("transport") == "stop":
+            index = 0
+            position = 0.0
+        else:
+            if (type(index) is not int or not 0 <= index < len(rows)
+                    or rows[index].get("id") != state.get("songId")):
+                raise ApiError(409, "stale_queue", "Cannot identify the selected library entry")
+            position = state.get("elapsedSeconds") or 0.0
+        if not math.isfinite(position) or position < 0:
+            raise ApiError(409, "playlist_not_resumable", "Invalid library playback position")
+        self.saved = {"tracks": tracks, "startIndex": index, "positionSeconds": position,
+                      "modes": {"random": bool(state.get("random")),
+                                "repeat": bool(state.get("repeat")),
+                                "single": PassiveSessionPolicy._safe_single_mode(state),
+                                "consume": bool(state.get("consume"))}}
+        self.token = secrets.token_urlsafe(24)
+        self.status = "ready"
+
+    def view(self):
+        return {"available": self.status == "ready" and self.saved is not None,
+                "snapshotId": self.token, "status": self.status, "lastError": self.error,
+                "trackCount": len(self.saved["tracks"]) if self.saved is not None else 0}
+
+
 class RadioPlayback:
     """Transient live-session intent; MPD remains the only playback engine.
 
@@ -950,6 +1008,7 @@ class RadioPlayback:
         self.intent = "stop"
         self.auto_paused = False
         self.saved_modes = None
+        self.playlist_resume = PlaylistResume()
         self.song_id = None
         self.status = "idle"
         self.error = None
@@ -982,6 +1041,10 @@ class RadioPlayback:
                 and (self.song_id is None or song.get("id") == self.song_id))
 
     def reconcile(self, mpd, state):
+        if self.playlist_resume.status == "uncertain":
+            # A partially acknowledged restore must not be mistaken for an
+            # unrelated queue replacement, nor trigger automatic station retry.
+            return False
         if self.pending_station is not None:
             # A lost ACK can leave the old station, the new station, or an empty
             # queue. Resolve that actual result before surrendering ownership.
@@ -1001,7 +1064,7 @@ class RadioPlayback:
             self.forget()
         return self.station is not None
 
-    def forget(self):
+    def forget(self, keep_playlist=False):
         self.history.end()
         self.station = None
         self.intent = "stop"
@@ -1016,6 +1079,8 @@ class RadioPlayback:
         self.empty_selection = False
         self.ending = False
         self._reset_retry()
+        if not keep_playlist:
+            self.playlist_resume.clear()
 
     def _capture_history(self, mpd):
         if self.station is not None:
@@ -1029,6 +1094,9 @@ class RadioPlayback:
     def select(self, mpd, station):
         self._capture_history(mpd)
         self.history.end()
+        recovering = self.playlist_resume.status == "uncertain"
+        if self.station is None and not recovering and self.pending_station is None:
+            self.playlist_resume.capture(mpd)
         if self.saved_modes is None:
             state = mpd.state()
             self.saved_modes = {
@@ -1061,6 +1129,68 @@ class RadioPlayback:
             self.status, self.error = "error", str(exc)
             raise
         self.intent, self.status = "play", "connecting"
+        if recovering:
+            # Explicit station selection abandons the uncertain attempt but
+            # keeps the original library bookmark, never the partial queue.
+            self.playlist_resume.token = secrets.token_urlsafe(24)
+            self.playlist_resume.status = "ready"
+            self.playlist_resume.error = None
+
+    def resume_playlist(self, mpd, snapshot_id, before_write=None, hold_paused=False,
+                        on_paused=None):
+        bookmark = self.playlist_resume
+        if not isinstance(snapshot_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32}", snapshot_id):
+            raise ApiError(400, "invalid_request", "Provide the snapshotId from source.resumePlaylist")
+        if snapshot_id != bookmark.token:
+            raise ApiError(409, "stale_playlist_resume", "Saved playlist changed or expired; refresh state")
+        if bookmark.status == "completed":
+            return  # Lost HTTP response/double tap: never play, seek, or clear again.
+        if bookmark.status == "uncertain":
+            raise ApiError(409, "playlist_resume_uncertain",
+                           "Restore was not fully acknowledged; inspect state or explicitly select a station/folder")
+        self.reconcile(mpd, mpd.state())
+        if self.station is None or bookmark.saved is None or snapshot_id != bookmark.token:
+            raise ApiError(409, "no_saved_playlist", "No previous library playlist is available")
+        saved = bookmark.saved
+        # Check the current MPD index before stopping the station. Preserve
+        # duplicates and exact occurrence/index; never silently skip lost files.
+        indexed = set(mpd.library_files(""))
+        missing = [path for path in dict.fromkeys(saved["tracks"]) if path not in indexed]
+        if missing:
+            raise ApiError(409, "playlist_tracks_missing", f"Saved library files are missing: {missing[0]}")
+        if before_write is not None:
+            before_write()
+        self._capture_history(mpd)
+        self.history.end()
+        self.intent = "stop"
+        self.auto_paused = False
+        self._reset_retry()
+        # Set before the first write: an MPD response can be lost after applying
+        # it. Such an attempt is never blindly repeated, even after GET /state.
+        bookmark.status = "uncertain"
+        try:
+            mpd.run("stop", "clear", "clearerror", "random 0", "repeat 0", "single 0", "consume 0",
+                    *(f"addid {mpd_quote(track)}" for track in saved["tracks"]))
+            if [row["file"] for row in mpd.queue()] != saved["tracks"]:
+                raise MpdError("MPD did not retain the complete saved playlist in order")
+            modes = saved["modes"]
+            mpd.run(f'play {saved["startIndex"]}', "pause 1",
+                    f'seekcur {saved["positionSeconds"]:.3f}',
+                    f'single {modes["single"]}', f'consume {int(modes["consume"])}',
+                    f'random {int(modes["random"])}', f'repeat {int(modes["repeat"])}')
+            if not hold_paused:
+                mpd.command("pause 0")
+            elif on_paused is not None:
+                on_paused(mpd.state())
+        except (OSError, MpdError) as exc:
+            bookmark.error = str(exc)
+            # Cancel radio retries and passive autoplay until a deliberate
+            # station/folder selection or session end resolves the uncertainty.
+            raise
+        self.forget(keep_playlist=True)
+        bookmark.saved = None
+        bookmark.status = "completed"
+        bookmark.error = None
 
     def resume(self, mpd, automatic=False):
         self.history.suspend()
@@ -1100,6 +1230,7 @@ class RadioPlayback:
     def release(self, mpd, clear=False):
         """End radio, restoring the pre-radio library modes before replacement."""
         if self.station is None:
+            self.playlist_resume.clear()
             return
         self._capture_history(mpd)
         self.history.end()
@@ -1178,10 +1309,15 @@ class RadioPlayback:
         self.status = "connecting"
 
     def snapshot(self, state):
-        if self.station is None:
-            return {"type": "library" if state.get("queueLength", 0) else "none",
+        resume = self.playlist_resume.view()
+        if self.station is None or resume["status"] == "uncertain":
+            source_type = ("unknown" if resume["status"] == "uncertain" else
+                           "library" if state.get("queueLength", 0) else "none")
+            return {"type": source_type,
                     "live": False, "station": None, "status": state.get("transport"),
-                    "canSeek": True, "canSkip": True, "canShuffle": True, "canRepeat": True}
+                    "resumePlaylist": resume,
+                    "canSeek": resume["status"] != "uncertain", "canSkip": resume["status"] != "uncertain",
+                    "canShuffle": resume["status"] != "uncertain", "canRepeat": resume["status"] != "uncertain"}
         station = dict(self.station)
         saved = True
         try:
@@ -1191,6 +1327,7 @@ class RadioPlayback:
                 raise
             saved = False
         return {"type": "radio", "live": True, "station": station, "stationSaved": saved,
+                "resumePlaylist": resume,
                 "status": self.status, "playIntent": self.intent, "autoPaused": self.auto_paused,
                 "lastError": state.get("error") or self.error,
                 "metadataError": self.metadata_error, "retryAttempt": self.retry_attempt,
@@ -1442,6 +1579,8 @@ class PassiveSessionPolicy:
         # the fresh-default path, not resume yesterday's controller-selected queue.
         mpd.command("stop")
         self._restore_options(mpd, "final_track_completed_session_idle")
+        if self.radio is not None:
+            self.radio.playlist_resume.clear()
 
     @staticmethod
     def _session_identity(state):
@@ -1472,6 +1611,8 @@ class PassiveSessionPolicy:
         if auto_paused is not None:
             if presence["presentCount"] == 0:
                 mpd.command("stop")
+                if self.radio is not None:
+                    self.radio.playlist_resume.clear()
                 with self._lock:
                     self._auto_paused_state = None
                 self._record("last_muted_controller_left_session_idle")
@@ -1495,6 +1636,15 @@ class PassiveSessionPolicy:
             self.startup.ensure_ready(self.mpd_factory())
         snap = self.monitor.snapshot()
         presence = self.controllers.snapshot(snap)
+        if self.radio is not None and self.radio.playlist_resume.status == "uncertain":
+            self.radio.listening.suspend()
+            if self.enabled and snap.get("reachable") and presence["presentCount"] == 0:
+                self.radio.release(self.mpd_factory(), clear=True)
+                self._auto_paused_state = None
+                self._record("playlist_restore_abandoned_session_idle")
+            else:
+                self._record("playlist_restore_uncertain_explicit_selection_required")
+            return
         if self.radio is not None and self.radio.station is not None:
             mpd = self.mpd_factory()
             state = mpd.state()
@@ -2126,7 +2276,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
                 if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
                             "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder",
-                            "/radio/play"}:
+                            "/radio/play", "/radio/resume-playlist"}:
                     # Readiness is monotonic for this process. A pending reset may
                     # not acknowledge a new queue/command and later erase it.
                     MPD_STARTUP.require_ready()
@@ -2141,6 +2291,24 @@ class ApiHandler(BaseHTTPRequestHandler):
                         RADIO.reconcile(mpd, mpd.state())
                     RADIO.release(mpd)
 
+                if path == "/radio/resume-playlist":
+                    if set(payload) != {"snapshotId"}:
+                        raise ApiError(400, "invalid_request", "Provide only snapshotId")
+                    snap = SNAPCAST_MONITOR.snapshot()
+                    presence = CONTROLLERS.snapshot(snap)
+                    hold = (PASSIVE_SESSION_POLICY.enabled and bool(snap.get("reachable"))
+                            and presence["controllerCount"] > 0 and presence["audibleCount"] == 0)
+                    def mark_retained_pause(state):
+                        if state.get("transport") != "pause":
+                            raise MpdError("MPD did not retain the restored playlist paused")
+                        with PASSIVE_SESSION_POLICY._lock:
+                            PASSIVE_SESSION_POLICY._auto_paused_state = PASSIVE_SESSION_POLICY._session_identity(state)
+
+                    RADIO.resume_playlist(mpd, payload["snapshotId"], explicit_transport,
+                                          hold, mark_retained_pause)
+                    self._mpd_state_response()
+                    return
+
                 if path == "/radio/play":
                     if set(payload) != {"stationId"}:
                         raise ApiError(400, "invalid_request", "Provide only stationId")
@@ -2148,6 +2316,16 @@ class ApiHandler(BaseHTTPRequestHandler):
                     explicit_transport()
                     RADIO.reconcile(mpd, mpd.state())
                     RADIO.select(mpd, station)
+                    self._mpd_state_response()
+                    return
+
+                if RADIO.playlist_resume.status == "uncertain" and path in {
+                        "/play", "/pause", "/stop", "/next", "/previous", "/seek",
+                        "/shuffle", "/repeat", "/queue/reorder"}:
+                    if path not in {"/pause", "/stop"}:
+                        raise ApiError(409, "playlist_resume_uncertain", "Explicitly select a station or folder first")
+                    explicit_transport()
+                    mpd.command("stop" if path == "/stop" else "pause 1")
                     self._mpd_state_response()
                     return
 

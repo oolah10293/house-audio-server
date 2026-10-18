@@ -2,6 +2,11 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
+**Unreleased source work:** [Resume Playlist](docs/PLAYLIST_RESUME.md) adds a
+server-owned library queue/position bookmark while listening to radio and a
+guarded resume API for the planned House Music button. Implementation and tests
+only; no release package or Pi deployment, and no Android change in this branch.
+
 Current source and confirmed Pi deployment: **v0.12.0**. The repository was resynchronized on 2026-10-17 from the live deployed `/opt/house-audio-server` source and the imported files were verified byte-for-byte against that snapshot. v0.12.0 includes the existing MPD/Snapserver session controller plus the deployed radio bookmark/history/listening support and subwoofer registration/demand/status web interface. See [DEPLOYED_0.12.0.md](docs/DEPLOYED_0.12.0.md) for snapshot provenance and exact hashes. Android release/acceptance details remain in [smb-music-player](https://github.com/oolah10293/smb-music-player), especially its [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md); ESP32 renderer details remain in [house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
 
 **Current Android apps, 2026-10-01:** separate, completely independent **SMB Music v0.5.0** and **House Music v0.1.0**. No automatic/manual handoff, shared queue/song/position, SMB-triggered HOUSE queue reset, or cross-app coordination. SMB Music keeps standalone playback; House Music controls/renders only the Pi session. Both independent implementations are now in the Android repository; exact build/artifact and pending device-test status are recorded in its [SMB release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.5.0.md) and [House release](https://github.com/oolah10293/smb-music-player/blob/main/house-app/docs/RELEASE_0.1.0.md). That October 1 app split did not change the HOUSE architecture; the server has since advanced to the deployed v0.12.0 source captured here.
