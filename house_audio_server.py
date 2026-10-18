@@ -1798,3 +1798,203 @@ class ApiHandler(BaseHTTPRequestHandler):
         if not raw:
             return {}
 
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ApiError(400, "invalid_json", "Request body must be valid UTF-8 JSON") from exc
+
+        if not isinstance(payload, dict):
+            raise ApiError(400, "invalid_json", "JSON body must be an object")
+        return payload
+
+    def _subwoofer_presence(self):
+        snap = SNAPCAST_MONITOR.snapshot()
+        return snap, CONTROLLERS.snapshot(snap)
+
+    def _subwoofer_response(self):
+        snap, presence = self._subwoofer_presence()
+        return {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                **SUBWOOFERS.snapshot(snap, presence)}
+
+    def _page_asset(self, filename, content_type):
+        body = (Path(__file__).parent / "web" / filename).read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; object-src 'none'")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _subwoofer_write_guard(self):
+        # LAN API, no credentials. Prevent another website submitting edits from
+        # a browser; ordinary JSON ESP32 requests have no Origin header.
+        if self.headers.get_content_type() != "application/json":
+            raise ApiError(415, "json_required", "Use application/json")
+        origin = self.headers.get("Origin")
+        if ((origin is not None and origin != "http://" + self.headers.get("Host", ""))
+                or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+            raise ApiError(403, "origin_not_allowed", "Open settings directly on the house server")
+
+    def _mpd_state_response(self) -> None:
+        snap = SNAPCAST_MONITOR.snapshot()
+        with MPD_WRITE_LOCK:
+            mpd = MpdClient()
+            state = mpd.state()
+            RADIO.reconcile(mpd, state)
+            source = RADIO.snapshot(state)
+            radio_history = RADIO.history.snapshot()
+        self._json(
+            200,
+            {
+                "service": SERVICE_NAME,
+                "version": SERVICE_VERSION,
+                "mpd": state,
+                "source": source,
+                "radioHistory": radio_history,
+                "renderers": {
+                    "snapserverReachable": snap.get("reachable", False),
+                    "connectedCount": snap.get("connectedCount", 0),
+                    "presentCount": snap.get("presentCount", 0),
+                    "audibleCount": snap.get("audibleCount", 0),
+                },
+                "sessionPolicy": PASSIVE_SESSION_POLICY.snapshot(),
+            },
+        )
+
+    def do_GET(self) -> None:
+        parsed = urlsplit(self.path)
+        path = parsed.path
+
+        try:
+            assets = {"/subwoofers": ("subwoofers.html", "text/html; charset=utf-8"),
+                      "/subwoofers/": ("subwoofers.html", "text/html; charset=utf-8"),
+                      "/subwoofers.js": ("subwoofers.js", "text/javascript; charset=utf-8"),
+                      "/subwoofers.css": ("subwoofers.css", "text/css; charset=utf-8")}
+            if path in assets:
+                self._page_asset(*assets[path])
+                return
+            if path == "/api/subwoofers":
+                with MPD_WRITE_LOCK:
+                    result = self._subwoofer_response()
+                self._json(200, result)
+                return
+            demand_match = re.fullmatch(r"/api/subwoofers/([A-Za-z0-9_.:-]+)/demand", path)
+            if demand_match:
+                with MPD_WRITE_LOCK:
+                    _, presence = self._subwoofer_presence()
+                    result = SUBWOOFERS.demand(demand_match[1], presence)
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, **result})
+                return
+            if path == "/radio/stations":
+                with MPD_WRITE_LOCK:
+                    stations = RADIO.listening.rank(RADIO_STATIONS.list())
+                    listening = RADIO.listening.snapshot()
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                 "stations": stations, "count": len(stations),
+                                 "sort": "listening_time", "listening": listening})
+                return
+            if path == "/controllers":
+                self._json(200, {
+                    "service": SERVICE_NAME, "version": SERVICE_VERSION,
+                    "presence": CONTROLLERS.snapshot(SNAPCAST_MONITOR.snapshot()),
+                })
+                return
+
+            if path == "/settings":
+                self._json(200, {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "settings": PASSIVE_DEFAULT_SETTINGS.snapshot(),
+                })
+                return
+
+            if path == "/health":
+                snap = SNAPCAST_MONITOR.snapshot()
+                try:
+                    protocol_version = MpdClient().ping()
+                    mpd_status = {
+                        "reachable": True,
+                        "protocolVersion": protocol_version,
+                    }
+                except (OSError, MpdError) as exc:
+                    mpd_status = {
+                        "reachable": False,
+                        "error": str(exc),
+                    }
+
+                startup = MPD_STARTUP.snapshot()
+                healthy = startup["ready"] and bool(mpd_status["reachable"]) and bool(
+                    snap.get("reachable", False)
+                )
+                self._json(
+                    200,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "status": "ok" if healthy else "degraded",
+                        "mpd": mpd_status,
+                        "snapserver": snap,
+                        "startup": startup,
+                    },
+                )
+                return
+
+            if path == "/state":
+                self._mpd_state_response()
+                return
+
+            if path == "/renderers":
+                snap = SNAPCAST_MONITOR.snapshot()
+                self._json(
+                    200,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "snapserver": snap,
+                    },
+                )
+                return
+
+            if path == "/session":
+                self._json(
+                    200,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "sessionPolicy": PASSIVE_SESSION_POLICY.snapshot(),
+                    },
+                )
+                return
+
+            if path == "/queue":
+                queue = MpdClient().queue()
+                self._json(
+                    200,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "count": len(queue),
+                        "queue": queue,
+                    },
+                )
+                return
+
+            if path == "/browse":
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                browse_path = validate_relative_path(query.get("path", [""])[0])
+                mpd = MpdClient()
+                library = mpd.library_status()
+                entries = mpd.browse(browse_path)
+                self._json(
+                    200,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "path": browse_path,
+                        "count": len(entries),
+                        "entries": entries,
+                        "library": library,
+                    },
+                )
