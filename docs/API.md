@@ -1,5 +1,19 @@
 # HTTP control API
 
+**v0.13.0 addition, 2026-10-18:** server-owned radio-to-library resume is
+implemented in source through `POST /radio/resume-playlist` and
+`source.resumePlaylist` in state responses. See [the complete contract and
+verification limits](PLAYLIST_RESUME.md) and [installation notes](RELEASE_0.13.0.md).
+Pi deployment and live audio acceptance are pending.
+The current deployed-source baseline is the [v0.12.0 snapshot](DEPLOYED_0.12.0.md);
+the older version/test/deployment statements below are historical.
+
+**Current route inventory, reviewed 2026-10-18:** the v0.12.0 source baseline has
+no `/session/handoff/{prepare,commit,status,cancel}` or `/diagnostics` handlers.
+They return 404. Their descriptions below apply to older versions only. The
+Resume Playlist PR replaces tests of the removed classes with HTTP checks of
+these unavailable routes; it does not remove any runtime endpoint.
+
 Current source: **v0.9.1** (125 local tests pass). Last confirmed Pi deployment: **v0.9.0**; v0.9.1 deployment is pending. The 2026-10-01 health output reports service OK, startup ready, and MPD/Snapserver reachable. Android field evidence, including successful S8/synchronization and failed handoffs, is tracked in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md).
 
 **Current Android split, 2026-10-01:** independent SMB Music v0.5.0 and House Music v0.1.0 implementations use separate packages, with no automatic/manual transfer or shared playback state. House Music retains the ordinary controller, queue, library, settings and transport APIs below. The handoff endpoints below remain documented because they are implemented in shipped v0.9.0; they are legacy functionality and must not be used by the independent apps. No endpoint or runtime behavior changes in this documentation update. [SESSION_BEHAVIOR §8](SESSION_BEHAVIOR.md) supersedes earlier transfer requirements in the dated implementation notes below.

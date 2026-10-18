@@ -421,6 +421,28 @@ class ControllerHttpTests(ControllerFixture):
                         {"controllerId": "phone", "extra": True}, []):
             self.assertEqual(self.request("/controllers/attach", payload)[0], 400)
 
+    def test_removed_handoff_routes_cannot_modify_house_playback(self):
+        # The independent-app baseline no longer ships ReturnHomeHandoffs.
+        payload = {"controllerId": "phone", "handoffId": "arrival-1",
+                   "tracks": ["Rap/A.mp3"], "startIndex": 0,
+                   "positionSeconds": 47.125, "shuffle": False, "repeat": True}
+        mpd = Mock(spec=h.MpdClient)
+        with patch.object(h, "MpdClient", return_value=mpd):
+            for action in ("prepare", "commit", "status", "cancel"):
+                with self.subTest(action=action):
+                    status, body = self.request("/session/handoff/" + action, payload)
+                    self.assertEqual(status, 404)
+                    self.assertEqual(body["error"], "not_found")
+        self.assertEqual(mpd.mock_calls, [])
+
+    def test_removed_diagnostics_route_is_not_advertised_as_available(self):
+        with patch.object(h, "MpdClient", side_effect=AssertionError("Unexpected MPD access")):
+            for path in ("/diagnostics", "/diagnostics?limit=50"):
+                with self.subTest(path=path):
+                    status, body = self.request(path)
+                    self.assertEqual(status, 404)
+                    self.assertEqual(body["error"], "not_found")
+
     def test_explicit_pause_via_http_prevents_auto_resume_but_passive_arrival_can_resume(self):
         lease = self.pause_for_muted_phone()
         with patch.object(h, "MpdClient", return_value=self.mpd):

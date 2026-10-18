@@ -2,7 +2,21 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-Current source and confirmed Pi deployment: **v0.12.0**. The repository was resynchronized on 2026-10-17 from the live deployed `/opt/house-audio-server` source and the imported files were verified byte-for-byte against that snapshot. v0.12.0 includes the existing MPD/Snapserver session controller plus the deployed radio bookmark/history/listening support and subwoofer registration/demand/status web interface. See [DEPLOYED_0.12.0.md](docs/DEPLOYED_0.12.0.md) for snapshot provenance and exact hashes. Android release/acceptance details remain in [smb-music-player](https://github.com/oolah10293/smb-music-player), especially its [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md); ESP32 renderer details remain in [house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
+**Current source release: v0.13.0 — Resume Playlist.** The server saves the
+previous folder queue, selected track, position and playback modes when switching
+to radio, and exposes a guarded restore API for the planned House Music button.
+See [release/install notes](docs/RELEASE_0.13.0.md) and the
+[API contract](docs/PLAYLIST_RESUME.md). The Android button is separate work.
+Pi installation and live audio acceptance of v0.13.0 are pending.
+
+The last recorded Pi source baseline is **v0.12.0**, imported on 2026-10-17.
+Its radio bookmark/history/listening support and subwoofer settings interface
+are included in this release. See [DEPLOYED_0.12.0.md](docs/DEPLOYED_0.12.0.md)
+for snapshot provenance; that historical import is not evidence of a v0.13.0
+deployment. Android release/acceptance details remain in
+[smb-music-player](https://github.com/oolah10293/smb-music-player), and ESP32
+renderer details remain in
+[house-audio-esp32](https://github.com/oolah10293/house-audio-esp32).
 
 **Current Android apps, 2026-10-01:** separate, completely independent **SMB Music v0.5.0** and **House Music v0.1.0**. No automatic/manual handoff, shared queue/song/position, SMB-triggered HOUSE queue reset, or cross-app coordination. SMB Music keeps standalone playback; House Music controls/renders only the Pi session. Both independent implementations are now in the Android repository; exact build/artifact and pending device-test status are recorded in its [SMB release](https://github.com/oolah10293/smb-music-player/blob/main/docs/RELEASE_0.5.0.md) and [House release](https://github.com/oolah10293/smb-music-player/blob/main/house-app/docs/RELEASE_0.1.0.md). That October 1 app split did not change the HOUSE architecture; the server has since advanced to the deployed v0.12.0 source captured here.
 
@@ -20,7 +34,7 @@ The important session distinctions are:
 - Every completed drain ends the session. The next passive power-on loads a newly shuffled queue from the currently configured default, even if MPD retained yesterday's CD/Rap queue in `pause @ 0.0`. Do not persist/continue the completed shuffle order or force a different first song; chance repeats are allowed. Only the default folder setting is intended to persist.
 - HOUSE authority is separate from local output mute. The shipped Android app gates HOUSE rendering on Bluetooth audio: no Bluetooth means a muted phone, including after Play/Resume and queue changes; the queued manual override below will change that restriction. Route disconnect mutes the phone; the existing server policy pauses/retains only when no audible output remains. Route connection joins existing playback and may resume a server-owned automatic pause, but does not start fresh idle or override deliberate Pause/Stop. Full output, Quit, and independent-app rules are in [docs/SESSION_BEHAVIOR.md](docs/SESSION_BEHAVIOR.md); Android-local SMB Bluetooth lifecycle is defined in its linked Android contract.
 
-**Current requirements and implementation status:** the 2026-10-01 independent-app decision in [SESSION_BEHAVIOR §8](docs/SESSION_BEHAVIOR.md) supersedes the former active-SMB return-home requirement. The deployed v0.9.0 handoff API remains legacy functionality; independent apps must not call it. Existing single-HOUSE authority, passive startup, pause/retention, and final-node rules remain in force. Bluetooth automation is retained; House Music v0.1.1 implements manual mute/unmute for outputs including a headphone jack, pending phone acceptance as tracked in the [Android roadmap](https://github.com/oolah10293/smb-music-player/blob/main/docs/ROADMAP.md). Regression evidence and checks live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Dated release sections below describe their historical implementations.
+**Current requirements and implementation status:** the 2026-10-01 independent-app decision in [SESSION_BEHAVIOR §8](docs/SESSION_BEHAVIOR.md) supersedes the former active-SMB return-home requirement. The former v0.9.0 handoff API is absent from the v0.12.0 source baseline; independent apps must not call it. The historical diagnostics recorder is also absent; both sets of old endpoints return 404, as checked by the current HTTP tests. Existing single-HOUSE authority, passive startup, pause/retention, and final-node rules remain in force. Bluetooth automation is retained; House Music v0.1.1 implements manual mute/unmute for outputs including a headphone jack, pending phone acceptance as tracked in the [Android roadmap](https://github.com/oolah10293/smb-music-player/blob/main/docs/ROADMAP.md). Regression evidence and checks live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Dated release sections below describe their historical implementations.
 
 The accepted browser interface is another folder-first controller alongside the Android and Windows players. It should share their Pi-side control service rather than introduce a different player or queue. Detailed edge cases and implementation questions are explicitly separated from confirmed decisions in the behavior document.
 
