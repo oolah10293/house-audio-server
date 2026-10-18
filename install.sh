@@ -15,7 +15,28 @@ if ! id houseaudio >/dev/null 2>&1; then
 fi
 
 install -d -o root -g root -m 0755 "$INSTALL_DIR"
-install -o root -g root -m 0755 house_audio_server.py "$INSTALL_DIR/house_audio_server.py"
+
+for file in \
+    house_audio_server.py \
+    radio_history.py \
+    radio_listening.py \
+    radio_metadata.py \
+    radio_stations.py \
+    state_file.py \
+    subwoofers.py
+do
+    install -o root -g root -m 0755 "$file" "$INSTALL_DIR/$file"
+done
+
+install -d -o root -g root -m 0755 "$INSTALL_DIR/web"
+for file in \
+    web/subwoofers.css \
+    web/subwoofers.html \
+    web/subwoofers.js
+do
+    install -o root -g root -m 0644 "$file" "$INSTALL_DIR/$file"
+done
+
 install -o root -g root -m 0644 systemd/house-audio-server.service "$SERVICE_FILE"
 
 if [ ! -f "$DEFAULT_FILE" ]; then

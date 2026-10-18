@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Subwoofers · House Audio</title>
+<link rel="stylesheet" href="/subwoofers.css"><script src="/subwoofers.js" defer></script>
+</head>
+<body>
+<main>
+<header><a class="brand" href="/subwoofers">HOUSE AUDIO</a><span id="connection" class="badge">Connecting…</span></header>
+<section class="intro"><div><p class="eyebrow">SPEAKER SETTINGS</p><h1>Subwoofers</h1><p>Choose which speakers wake each sub. Any selected speaker can activate it.</p></div><button id="add" type="button">+ Add subwoofer</button></section>
+<p id="message" role="status" aria-live="polite"></p>
+<section id="registration" class="card" hidden>
+<h2>Add a subwoofer</h2><p class="muted">Power on the sub and its speakers first so they appear in the lists.</p>
+<form id="add-form"><label>Name<input id="new-name" maxlength="120" required placeholder="Bose Sub" autocomplete="off"></label>
+<label>Subwoofer device<select id="new-renderer" required></select></label>
+<fieldset><legend>Speakers that activate this sub</legend><div id="new-parents" class="choices"></div></fieldset>
+<div class="actions"><button type="submit">Register subwoofer</button><button id="cancel" class="secondary" type="button">Cancel</button></div></form>
+</section>
+<div id="cards"></div>
+<section id="empty" class="empty" hidden><h2>No subwoofers registered yet</h2><p>Add your Bose sub, then select the speakers it should follow.</p><p class="muted">Registration tells the server this is a dependent sub. Automatic standby and status feedback also need the new subwoofer firmware.</p></section>
+<footer><strong>30-second standby delay</strong><p>In Auto, the sub waits 30 seconds after its last assigned speaker disappears. Manual modes live in the sub’s existing controls. Status here is reported by the sub; a missing report is shown as unknown.</p></footer>
+</main>
+</body></html>
