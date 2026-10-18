@@ -998,3 +998,203 @@ class RadioPlayback:
         if self.station is not None and not self._matching_queue(mpd, state):
             # Another MPD writer or an MPD restart replaced the queue. Never
             # recreate our old station over that new authority.
+            self.forget()
+        return self.station is not None
+
+    def forget(self):
+        self.history.end()
+        self.station = None
+        self.intent = "stop"
+        self.auto_paused = False
+        self.saved_modes = None
+        self.song_id = None
+        self.status = "idle"
+        self.error = None
+        self.metadata_error = None
+        self._name_attempted = None
+        self.pending_station = None
+        self.empty_selection = False
+        self.ending = False
+        self._reset_retry()
+
+    def _capture_history(self, mpd):
+        if self.station is not None:
+            try:
+                state = mpd.state()
+                if self._matching_queue(mpd, state):
+                    self.history.observe(self.station, state, self.intent)
+            except (OSError, MpdError):
+                self.history.suspend()
+
+    def select(self, mpd, station):
+        self._capture_history(mpd)
+        self.history.end()
+        if self.saved_modes is None:
+            state = mpd.state()
+            self.saved_modes = {
+                "random": bool(state.get("random")), "repeat": bool(state.get("repeat")),
+                "single": PassiveSessionPolicy._safe_single_mode(state),
+                "consume": bool(state.get("consume")),
+            }
+        # Keep the old owner until the replacement queue is acknowledged. The
+        # pending candidate lets reconcile settle an ambiguous failed write.
+        self.pending_station = dict(station)
+        self.intent = "stop"  # A partially failed write never enables retries.
+        self.auto_paused = False
+        self.ending = False
+        self.error = None
+        self.metadata_error = None
+        self._name_attempted = None
+        self._reset_retry()
+        try:
+            mpd.run("stop", "clear", "clearerror", "random 0", "repeat 0",
+                    "single 0", "consume 0", f'add {mpd_quote(station["url"])}')
+            queue = mpd.queue()
+            if len(queue) != 1 or queue[0].get("file") != station["url"]:
+                raise MpdError("MPD did not retain the selected station")
+            self.station = dict(station)
+            self.song_id = queue[0].get("id")
+            self.pending_station = None
+            self.empty_selection = False
+            mpd.command("play 0")
+        except (OSError, MpdError) as exc:
+            self.status, self.error = "error", str(exc)
+            raise
+        self.intent, self.status = "play", "connecting"
+
+    def resume(self, mpd, automatic=False):
+        self.history.suspend()
+        self.intent = "stop"
+        self.auto_paused = False
+        self._reset_retry()
+        try:
+            # Stop first discards any pre-pause buffer and reconnects live.
+            mpd.run("stop", "clearerror", "play 0")
+        except (OSError, MpdError) as exc:
+            self.status, self.error = "error", str(exc)
+            if automatic:
+                # An eligible returning listener still wants this station.
+                # Retain that intent and use the normal bounded retry path.
+                self.intent, self.status = "play", "retrying"
+                self.retry_at = self.clock() + 2
+            raise
+        self.intent, self.status, self.error = "play", "connecting", None
+
+    def pause(self, mpd, automatic=False):
+        self._capture_history(mpd)
+        self.history.suspend()
+        # Cancel retry before I/O, including when the stop acknowledgement fails.
+        self.intent, self.status = "pause", "paused"
+        self.auto_paused = automatic
+        self._reset_retry()
+        mpd.command("stop")
+
+    def stop(self, mpd):
+        self._capture_history(mpd)
+        self.history.end()
+        self.intent, self.status = "stop", "stopped"
+        self.auto_paused = False
+        self._reset_retry()
+        mpd.command("stop")
+
+    def release(self, mpd, clear=False):
+        """End radio, restoring the pre-radio library modes before replacement."""
+        if self.station is None:
+            return
+        self._capture_history(mpd)
+        self.history.end()
+        self.intent = "stop"
+        self.auto_paused = False
+        self.ending = self.ending or clear
+        self._reset_retry()
+        modes = self.saved_modes or {"single": "0", "consume": False,
+                                    "random": False, "repeat": True}
+        commands = ["stop"]
+        commands.extend((f'single {modes["single"]}',
+                         f'consume {int(modes["consume"])}',
+                         f'random {int(modes["random"])}',
+                         f'repeat {int(modes["repeat"])}'))
+        if clear:
+            commands.append("clear")
+        mpd.run(*commands)
+        self.forget()
+
+    def observe(self, mpd, state):
+        """Called only with known presence and the still-owned station queue."""
+        now = self.clock()
+        name = (state.get("song") or {}).get("stationName")
+        if name and name != self._name_attempted:
+            self._name_attempted = name
+            try:
+                self.station = self.stations.update_generated_name(self.station["id"], name)
+                self.metadata_error = None
+            except RadioError as exc:
+                if exc.status != 404:  # Deleting a bookmark never stops playback.
+                    self.metadata_error = exc.detail
+        if self.intent != "play":
+            # Retry a failed stop write without ever reconnecting playback.
+            if state.get("transport") != "stop":
+                mpd.command("stop")
+            return
+        if state.get("transport") == "pause":
+            self.pause(mpd)  # Respect an out-of-band native pause as well.
+            return
+        elapsed = state.get("elapsedSeconds")
+        progressing = (state.get("transport") == "play" and elapsed is not None
+                       and elapsed != self.last_elapsed)
+        if progressing:
+            self.last_elapsed, self.last_progress = elapsed, now
+            if self.healthy_since is None:
+                self.healthy_since = now
+            if now - self.healthy_since >= 30:
+                self.retry_attempt = 0
+        failed = (bool(state.get("error")) or state.get("transport") == "stop"
+                  or now - self.last_progress >= 20)
+        if not failed:
+            self.retry_at = None
+            self.error = None
+            self.status = "playing" if state.get("audio") or (elapsed or 0) > 0 else "connecting"
+            return
+        self.healthy_since = None
+        self.error = state.get("error") or "Station stopped or made no progress for 20 seconds"
+        self.status = "retrying"
+        if self.retry_at is None:
+            delay = (2, 5, 10, 30)[min(self.retry_attempt, 3)]
+            self.retry_at = now + delay
+            return
+        if now < self.retry_at:
+            return
+        self.retry_attempt += 1
+        self.retry_at = None
+        self.last_progress, self.last_elapsed = now, None
+        self.history.suspend()
+        # Never clear/add here: a retry may only reopen the queue we still own.
+        try:
+            mpd.run("stop", "clearerror", "play 0")
+        except (OSError, MpdError) as exc:
+            self.error = str(exc)
+            self.retry_at = now + (2, 5, 10, 30)[min(self.retry_attempt, 3)]
+            raise
+        self.status = "connecting"
+
+    def snapshot(self, state):
+        if self.station is None:
+            return {"type": "library" if state.get("queueLength", 0) else "none",
+                    "live": False, "station": None, "status": state.get("transport"),
+                    "canSeek": True, "canSkip": True, "canShuffle": True, "canRepeat": True}
+        station = dict(self.station)
+        saved = True
+        try:
+            station = self.stations.get(station["id"])
+        except RadioError as exc:
+            if exc.status != 404:
+                raise
+            saved = False
+        return {"type": "radio", "live": True, "station": station, "stationSaved": saved,
+                "status": self.status, "playIntent": self.intent, "autoPaused": self.auto_paused,
+                "lastError": state.get("error") or self.error,
+                "metadataError": self.metadata_error, "retryAttempt": self.retry_attempt,
+                "retryInSeconds": (max(0, round(self.retry_at - self.clock(), 2))
+                                   if self.retry_at is not None else None),
+                "canSeek": False, "canSkip": False, "canShuffle": False, "canRepeat": False}
+
