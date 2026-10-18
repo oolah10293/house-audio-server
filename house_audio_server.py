@@ -1198,3 +1198,203 @@ class RadioPlayback:
                                    if self.retry_at is not None else None),
                 "canSeek": False, "canSkip": False, "canShuffle": False, "canRepeat": False}
 
+
+class PassiveSessionPolicy:
+    """One house session policy for passive radios and controlling nodes.
+
+    Current behavior:
+    - fresh idle + passive renderer present/arrives -> start the default folder;
+    - renderer joining active playback -> leave the existing queue untouched;
+    - final passive renderer leaves during playback -> finish current track,
+      then stop;
+    - renderer returns before that track ends -> cancel the pending stop.
+    - controllers without audible outputs hold an automatic retained pause;
+    - last controller leaving that automatic pause ends the session immediately.
+
+    Each genuinely fresh session gets a new default-folder shuffle. Completed
+    drains end the old session, even when MPD lands paused on its next track.
+    An ordinary paused session, or a return before the drain ends, is retained.
+    """
+
+    def __init__(
+        self,
+        monitor: SnapcastMonitor,
+        mpd_factory=MpdClient,
+        enabled: bool = PASSIVE_SESSION_POLICY_ENABLED,
+        poll_seconds: float = PASSIVE_SESSION_POLICY_POLL_SECONDS,
+        default_folder: str = PASSIVE_DEFAULT_FOLDER,
+        shuffle: Optional[Callable[[List[str]], None]] = None,
+        settings: Optional[PassiveDefaultSettings] = None,
+        controllers: Optional[ControllerRegistry] = None,
+        startup: Optional[MpdStartupBoundary] = None,
+        radio: Optional[RadioPlayback] = None,
+    ) -> None:
+        self.monitor = monitor
+        self.mpd_factory = mpd_factory
+        self.enabled = enabled
+        self.poll_seconds = poll_seconds
+        self.settings = settings
+        self.startup = startup
+        self.radio = radio
+        self.controllers = controllers if controllers is not None else ControllerRegistry()
+        self.default_folder = (
+            str(settings.snapshot()["passiveDefaultFolder"])
+            if settings is not None else validate_relative_path(default_folder)
+        )
+        # OS entropy; never reset a deterministic seed or save a cross-session
+        # rotation. Injection lets tests exercise chance repeats without luck.
+        self._shuffle = (
+            shuffle if shuffle is not None else random.SystemRandom().shuffle
+        )
+        if not self.default_folder:
+            raise ValueError("PASSIVE_DEFAULT_FOLDER must not be empty")
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._previous_present_count: Optional[int] = None
+        self._previous_presence: Optional[dict] = None
+        self._auto_paused_state: Optional[tuple] = None
+        self._pending_final_stop = False
+        self._pending_song_id: Optional[int] = None
+        self._saved_repeat = False
+        self._saved_single_mode = "0"
+        self._last_action = "waiting_for_presence_baseline"
+        self._last_action_epoch = time.time()
+
+    def start(self) -> None:
+        if not self.enabled and self.startup is None:
+            with self._lock:
+                self._last_action = "disabled"
+                self._last_action_epoch = time.time()
+            return
+
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(
+                target=self._run,
+                name="passive-session-policy",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            return {
+                "enabled": self.enabled,
+                "mode": "controllers_and_renderers",
+                "defaultFolder": self._default_folder(),
+                "presentCount": self._previous_present_count,
+                "controllerCount": (self._previous_presence or {}).get("controllerCount"),
+                "passiveCount": (self._previous_presence or {}).get("passiveCount"),
+                "audibleCount": (self._previous_presence or {}).get("audibleCount"),
+                "autoPaused": self._auto_paused_state is not None,
+                "pauseReason": "no_audible_output" if self._auto_paused_state is not None else None,
+                "pendingFinalStop": self._pending_final_stop,
+                "pendingSongId": self._pending_song_id,
+                "lastAction": self._last_action,
+                "lastActionEpoch": self._last_action_epoch,
+                "freshIdleAutoStartImplemented": True,
+                "freshSessionShuffleImplemented": True,
+                "defaultShufflePolicy": "new_each_fresh_session",
+                "runtimeDefaultFolderImplemented": self.settings is not None,
+                "controllerPresenceImplemented": True,
+                "startup": self.startup.snapshot() if self.startup is not None else None,
+            }
+
+    def _record(self, action: str) -> None:
+        with self._lock:
+            self._last_action = action
+            self._last_action_epoch = time.time()
+
+    @staticmethod
+    def _safe_single_mode(state: Dict[str, object]) -> str:
+        value = state.get("singleMode")
+        if value in ("0", "1", "oneshot"):
+            return str(value)
+        return "1" if state.get("single") is True else "0"
+
+    def _default_folder(self) -> str:
+        if self.settings is not None:
+            return str(self.settings.snapshot()["passiveDefaultFolder"])
+        return self.default_folder
+
+    def _start_default_session(self, mpd: MpdClient) -> None:
+        # Take one selection at the start of this fresh session. A setting
+        # change after this point belongs to the next fresh session.
+        folder = self._default_folder()
+        tracks = mpd.library_files(folder)
+        if not tracks:
+            raise MpdError(f"Default folder {folder!r} is empty")
+        if self.radio is not None:
+            self.radio.release(mpd)
+        self._shuffle(tracks)
+        # Explicitly randomize the actual queue as well as enabling MPD Random.
+        # Starting item zero is unbiased because the entire list was shuffled.
+        # A chance repeat of the first song (or order) is allowed, never rerolled.
+        commands = [
+            "random 0",
+            "clear",
+            *(f"add {mpd_quote(track)}" for track in tracks),
+            "repeat 1",
+            "single 0",
+            "consume 0",
+            "random 1",
+            "play 0",
+        ]
+        with MPD_WRITE_LOCK:
+            mpd.run(*commands)
+
+        state = mpd.state()
+        if state.get("queueLength", 0) == 0:
+            raise MpdError(
+                f"Default folder {folder!r} produced an empty queue"
+            )
+        if state.get("transport") != "play":
+            raise MpdError(
+                f"MPD did not start default folder {folder!r}"
+            )
+        self._record("started_default_session")
+
+    def _handle_renderer_arrival(self, mpd: MpdClient, baseline: bool = False) -> None:
+        state = mpd.state()
+        transport = state.get("transport")
+
+        if transport == "stop":
+            self._start_default_session(mpd)
+        elif transport == "play":
+            self._record(
+                "presence_baseline_active_session"
+                if baseline
+                else "renderer_joined_existing_session"
+            )
+        elif transport == "pause":
+            # Passive-radio arrival is an explicit request for audible music.
+            # Resume the existing paused house queue/position; do not replace
+            # it with the default MP3s queue.
+            with MPD_WRITE_LOCK:
+                mpd.command("play")
+            self._record(
+                "presence_baseline_resumed_paused_session"
+                if baseline
+                else "renderer_resumed_paused_session"
+            )
+        else:
+            self._record("renderer_arrival_unknown_mpd_state")
+
+    def _begin_final_stop(self, mpd: MpdClient, state: Dict[str, object]) -> None:
+        saved_repeat = bool(state.get("repeat", False))
+        saved_single = self._safe_single_mode(state)
+        commands: List[str] = []
+
+        # Repeat + Single repeats the same song, so Repeat must be temporarily
+        # disabled for "finish this song, then stop".
+        if saved_repeat:
+            commands.append("repeat 0")
+        commands.append("single oneshot")
+
+        with MPD_WRITE_LOCK:
+            mpd.run(*commands)
+
+        with self._lock:
+            self._saved_repeat = saved_repeat
