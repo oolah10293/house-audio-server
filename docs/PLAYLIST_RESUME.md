@@ -79,6 +79,7 @@ presence decisions.
 | Expired or replaced ID | 409 `stale_playlist_resume`; refresh state |
 | Radio queue externally replaced | 409 `no_saved_playlist`; adopt current state |
 | A saved track is absent from MPD's index | 409 `playlist_tracks_missing`; station and bookmark remain intact |
+| MPD index cannot be read before restore | 503 `mpd_unavailable`; station and bookmark remain intact; retry is safe |
 | MPD failure during restore, including a lost acknowledgment | 503 `mpd_unavailable`; bookmark status becomes `uncertain` |
 | Repeated attempt after an uncertain write | 409 `playlist_resume_uncertain`; no replay |
 
@@ -106,18 +107,25 @@ The new tests use the real HTTP handler and session policy with a stateful MPD
 model, covering queue/position/mode restore, duplicates, station switches,
 phone reopen, paused/stopped/empty queues, invalid/missing files, external queue
 replacement, session/restart boundaries, muted output, concurrent/double
-requests, partial writes, and lost MPD/HTTP-state acknowledgments.
+requests, partial writes, and lost MPD/HTTP-state acknowledgments. Review added
+cases for an unavailable MPD index before any write and an incomplete restored
+queue that must stay stopped and cannot be blindly replayed.
 
 Before this change, full discovery ran 125 tests with 27 errors referencing
-removed `ReturnHomeHandoffs` and `DiagnosticsRecorder` classes. Those historical
-tests are retained unchanged, and their failures are not claimed as fixed.
-Final verification: **21 new tests pass; full discovery runs 146 tests, with
-119 passing and the same 27 pre-existing errors**. A comparison against an
-isolated checkout of baseline `1bd11d9` confirmed identical failing test IDs and
-no new failures. Python syntax compilation and `git diff --check` also pass.
-Run the focused suite with:
+removed `ReturnHomeHandoffs` and `DiagnosticsRecorder` classes in baseline
+`1bd11d9`. The 2026-10-18 review removed those obsolete tests and replaced them
+with HTTP checks that the four historical handoff routes and `/diagnostics`
+return 404 without calling MPD. No runtime endpoints were removed by this PR;
+the v0.12.0 source baseline already lacks them. Older implementation tests remain
+available in Git history.
+
+Local verification on 2026-10-18: **all 123 tests pass**, comprising 98 unchanged
+current-behavior tests, 23 Resume Playlist tests, and two removed-route tests.
+Python syntax compilation and `git diff --check` also pass. Run the full suite
+and focused suite with:
 
 ```sh
+python3 -m unittest discover -s tests -v
 python3 -m unittest discover -s tests -p test_playlist_resume.py -v
 ```
 

@@ -238,6 +238,36 @@ class PlaylistResumeTests(unittest.TestCase):
         self.assertEqual(self.resume(token)[0], 409)
         self.assertEqual(self.mpd.commands, before)
 
+    def test_index_read_failure_preserves_radio_and_allows_later_resume(self):
+        token = self.select()
+        before = list(self.mpd.commands)
+        with patch.object(self.mpd, "library_files", side_effect=OSError("MPD index unavailable")):
+            self.assertEqual(self.resume(token)[0], 503)
+        self.assertEqual(self.mpd.commands, before)
+        self.assertEqual(self.mpd.paths, [self.a["url"]])
+        state = self.request("/state")[1]
+        self.assertEqual(state["source"]["type"], "radio")
+        self.assertTrue(state["source"]["resumePlaylist"]["available"])
+        self.assertEqual(self.resume(token)[0], 200)
+        self.assertEqual(self.mpd.paths, self.original)
+
+    def test_unverified_restored_queue_is_never_started_or_replayed(self):
+        token = self.select()
+        queue = self.mpd.queue
+        def incomplete_queue():
+            rows = queue()
+            # Simulate a lost entry between MPD accepting adds and verification.
+            return rows[:-1] if self.mpd.paths == self.original else rows
+        with patch.object(self.mpd, "queue", incomplete_queue):
+            status, _ = self.resume(token)
+        self.assertEqual(status, 503)
+        self.assertEqual(self.mpd.values["transport"], "stop")
+        self.assertEqual(self.radio.playlist_resume.status, "uncertain")
+        before = list(self.mpd.commands)
+        self.assertEqual(self.resume(token)[0], 409)
+        self.policy._tick()
+        self.assertEqual(self.mpd.commands, before)
+
     def test_explicit_folder_and_clear_discard_bookmark(self):
         for path, payload in (("/queue/replace", {"tracks": ["Rap/B.mp3"]}), ("/queue/clear", {})):
             token = self.select()
