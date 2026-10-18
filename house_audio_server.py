@@ -798,3 +798,103 @@ class SnapcastMonitor:
 
                 client_id = client.get("id")
                 configured_name = config.get("name")
+                host_name = host.get("name")
+                display_name = configured_name or host_name or client_id
+
+                clients.append(
+                    {
+                        "id": client_id,
+                        "name": display_name,
+                        "connected": connected,
+                        "present": present,
+                        "audible": audible,
+                        "muted": client_muted,
+                        "volumePercent": volume.get("percent"),
+                        "latencyMs": config.get("latency"),
+                        "lastSeenEpoch": last_seen_epoch,
+                        "lastSeenAgeSeconds": (
+                            round(last_seen_age, 3)
+                            if last_seen_age is not None
+                            else None
+                        ),
+                        "groupId": group_id,
+                        "groupName": group_name,
+                        "groupMuted": group_muted,
+                        "streamId": stream_id,
+                        "host": {
+                            "name": host_name,
+                            "ip": host.get("ip"),
+                            "mac": host.get("mac"),
+                            "os": host.get("os"),
+                            "arch": host.get("arch"),
+                        },
+                        "snapclient": {
+                            "name": snapclient.get("name"),
+                            "version": snapclient.get("version"),
+                            "protocolVersion": snapclient.get("protocolVersion"),
+                        },
+                    }
+                )
+
+        connected_count = sum(1 for client in clients if client["connected"])
+        present_count = sum(1 for client in clients if client["present"])
+        audible_count = sum(1 for client in clients if client["audible"])
+
+        normalized_streams: List[Dict[str, object]] = []
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            uri = stream.get("uri")
+            if not isinstance(uri, dict):
+                uri = {}
+            normalized_streams.append(
+                {
+                    "id": stream.get("id"),
+                    "status": stream.get("status"),
+                    "uri": uri.get("raw"),
+                }
+            )
+
+        with self._lock:
+            self._snapshot_received_at = time.monotonic()
+            self._snapshot = {
+                "reachable": True,
+                "host": self.host,
+                "controlPort": self.port,
+                "serverVersion": snapserver_info.get("version"),
+                "controlProtocolVersion": snapserver_info.get(
+                    "controlProtocolVersion"
+                ),
+                "connectedCount": connected_count,
+                "presentCount": present_count,
+                "audibleCount": audible_count,
+                "clients": clients,
+                "streams": normalized_streams,
+                "staleAfterSeconds": self.stale_after_seconds,
+            }
+
+    def _run(self) -> None:
+        wait_seconds = self.poll_seconds
+        while not self._stop.is_set():
+            try:
+                self._apply_status(self._fetch_status())
+                wait_seconds = self.poll_seconds
+            except (OSError, SnapcastError) as exc:
+                self._set_disconnected(str(exc))
+                wait_seconds = self.retry_seconds
+            self._stop.wait(wait_seconds)
+
+
+SNAPCAST_MONITOR = SnapcastMonitor()
+
+
+class MpdStartupBoundary:
+    """Forget the old MPD session once per service process, before new writes.
+
+    A delayed/partially failed reset is retried. Once ready, routine dependency
+    reconnects must never reset a session created during this process.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._ready = False
