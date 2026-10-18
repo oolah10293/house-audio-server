@@ -2198,3 +2198,145 @@ class ApiHandler(BaseHTTPRequestHandler):
                     return
 
                 if path == "/next":
+                    with MPD_WRITE_LOCK:
+                        mpd.command("next")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/previous":
+                    with MPD_WRITE_LOCK:
+                        mpd.command("previous")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/seek":
+                    seconds = payload.get("seconds")
+                    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+                        raise ApiError(400, "invalid_request", "seconds must be a number")
+                    if not math.isfinite(seconds) or seconds < 0:
+                        raise ApiError(400, "invalid_request", "seconds must be finite and nonnegative")
+                    with MPD_WRITE_LOCK:
+                        mpd.command(f"seekcur {float(seconds):.3f}")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/shuffle":
+                    enabled = bool_field(payload, "enabled")
+                    with MPD_WRITE_LOCK:
+                        mpd.command(f"random {1 if enabled else 0}")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/repeat":
+                    enabled = bool_field(payload, "enabled")
+                    with MPD_WRITE_LOCK:
+                        mpd.command(f"repeat {1 if enabled else 0}")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/queue/clear":
+                    with MPD_WRITE_LOCK:
+                        leave_radio()
+                        mpd.command("clear")
+                    self._mpd_state_response()
+                    return
+
+                if path == "/queue/replace":
+                    tracks = payload.get("tracks")
+                    if not isinstance(tracks, list) or not all(
+                        isinstance(item, str) for item in tracks
+                    ):
+                        raise ApiError(
+                            400, "invalid_request", "tracks must be an array of strings"
+                        )
+
+                    start_index = payload.get("startIndex", 0)
+                    if not isinstance(start_index, int) or isinstance(start_index, bool):
+                        raise ApiError(400, "invalid_request", "startIndex must be an integer")
+
+                    play = payload.get("play", True)
+                    if not isinstance(play, bool):
+                        raise ApiError(400, "invalid_request", "play must be true or false")
+
+                    position_seconds = payload.get("positionSeconds", 0.0)
+                    if not isinstance(position_seconds, (int, float)) or isinstance(
+                        position_seconds, bool
+                    ):
+                        raise ApiError(
+                            400, "invalid_request", "positionSeconds must be a number"
+                        )
+
+                    state = mpd.replace_queue(
+                        tracks=tracks,
+                        start_index=start_index,
+                        play=play,
+                        position_seconds=float(position_seconds),
+                        before_write=leave_radio,
+                    )
+                    self._json(
+                        200,
+                        {
+                            "service": SERVICE_NAME,
+                            "version": SERVICE_VERSION,
+                            "mpd": state,
+                            "source": RADIO.snapshot(state),
+                        },
+                    )
+                    return
+
+                self._json(
+                    404,
+                    {
+                        "service": SERVICE_NAME,
+                        "version": SERVICE_VERSION,
+                        "error": "not_found",
+                    },
+                )
+        except (ApiError, RadioError, SubwooferError) as exc:
+            self._json(
+                exc.status,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": exc.code,
+                    "detail": exc.detail,
+                },
+            )
+        except (OSError, MpdError) as exc:
+            self._json(
+                503,
+                {
+                    "service": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "error": "mpd_unavailable",
+                    "detail": str(exc),
+                },
+            )
+
+
+def main() -> None:
+    def stop_service(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop_service)
+    SNAPCAST_MONITOR.start()
+    PASSIVE_SESSION_POLICY.start()
+    server = ThreadingHTTPServer((HTTP_BIND, HTTP_PORT), ApiHandler)
+    print(
+        f"{SERVICE_NAME} {SERVICE_VERSION} listening on "
+        f"{HTTP_BIND}:{HTTP_PORT}; MPD={MPD_HOST}:{MPD_PORT}; "
+        f"Snapserver={SNAPSERVER_HOST}:{SNAPSERVER_CONTROL_PORT}"
+    )
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        PASSIVE_SESSION_POLICY._stop.set()
+        server.server_close()
+        with MPD_WRITE_LOCK:
+            RADIO.listening.suspend(flush=True)
+
+
+if __name__ == "__main__":
+    main()
