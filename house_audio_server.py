@@ -1398,3 +1398,203 @@ class PassiveSessionPolicy:
 
         with self._lock:
             self._saved_repeat = saved_repeat
+            self._saved_single_mode = saved_single
+            self._pending_final_stop = True
+            song_id = state.get("songId")
+            self._pending_song_id = song_id if isinstance(song_id, int) else None
+        self._record("armed_finish_current_track")
+
+    def _restore_options(self, mpd: MpdClient, action: str) -> None:
+        with self._lock:
+            saved_repeat = self._saved_repeat
+            saved_single = self._saved_single_mode
+
+        commands = [
+            f"single {saved_single}",
+            f"repeat {1 if saved_repeat else 0}",
+        ]
+        with MPD_WRITE_LOCK:
+            mpd.run(*commands)
+
+        with self._lock:
+            self._pending_final_stop = False
+            self._pending_song_id = None
+        self._record(action)
+
+    def _tick(self) -> None:
+        # Keep the state decision and its writes together relative to API writes.
+        # A failed MPD command must not kill the policy thread or lose a drain.
+        try:
+            with MPD_WRITE_LOCK:
+                self._tick_locked()
+        except (OSError, MpdError) as exc:
+            # Keep the previous successful sample so a failed departure/pause
+            # write is retried, not lost by treating the next poll as a baseline.
+            with MPD_WRITE_LOCK:
+                if self.radio is not None:
+                    self.radio.history.suspend()
+                    self.radio.listening.suspend()
+            self._record(f"policy_waiting_for_mpd: {exc}")
+
+    def _complete_final_stop(self, mpd: MpdClient) -> None:
+        # Normalize MPD's pause-at-next-track artifact to stopped BEFORE restoring
+        # options. A later arrival (including after a service restart) must take
+        # the fresh-default path, not resume yesterday's controller-selected queue.
+        mpd.command("stop")
+        self._restore_options(mpd, "final_track_completed_session_idle")
+
+    @staticmethod
+    def _session_identity(state):
+        return state.get("songId"), state.get("queueVersion")
+
+    def explicit_transport(self, mpd):
+        """Called under MPD_WRITE_LOCK before deliberate play/pause/stop/queue edits."""
+        if self.radio is not None:
+            self.radio.listening.suspend(flush=True)
+        if self._pending_final_stop:
+            self._restore_options(mpd, "pending_stop_cancelled_explicit_command")
+        with self._lock:
+            self._auto_paused_state = None
+
+    def _apply_controller_pause(self, mpd, presence):
+        state = mpd.state()
+        transport = state.get("transport")
+        with self._lock:
+            auto_paused = self._auto_paused_state
+        if auto_paused is not None and (
+            transport != "pause" or self._session_identity(state) != auto_paused
+        ):
+            # A deliberate/out-of-band transport or queue edit supersedes our
+            # automatic pause. Controller arrival must not override manual Pause.
+            with self._lock:
+                self._auto_paused_state = None
+            auto_paused = None
+        if auto_paused is not None:
+            if presence["presentCount"] == 0:
+                mpd.command("stop")
+                with self._lock:
+                    self._auto_paused_state = None
+                self._record("last_muted_controller_left_session_idle")
+            elif presence["audibleCount"] > 0:
+                mpd.command("play")
+                with self._lock:
+                    self._auto_paused_state = None
+                self._record("audible_node_resumed_retained_session")
+        elif (transport == "play" and presence["controllerCount"] > 0
+              and presence["audibleCount"] == 0):
+            mpd.command("pause 1")
+            with self._lock:
+                self._auto_paused_state = self._session_identity(state)
+            self._record("paused_muted_controllers_only")
+
+    def _tick_locked(self) -> None:
+        # A process restart ends the old session even if Snapserver is offline
+        # or automatic presence policy is disabled. Never infer old pause/drain
+        # ownership. New controller registrations are allowed while this retries.
+        if self.startup is not None:
+            self.startup.ensure_ready(self.mpd_factory())
+        snap = self.monitor.snapshot()
+        presence = self.controllers.snapshot(snap)
+        if self.radio is not None and self.radio.station is not None:
+            mpd = self.mpd_factory()
+            state = mpd.state()
+            if self.radio.reconcile(mpd, state):
+                self.radio.history.observe(self.radio.station, state, self.radio.intent)
+                volumes = {c.get("id"): c.get("volumePercent") for c in snap.get("clients", [])}
+                audible = bool(snap.get("reachable")) and any(
+                    r["audible"] and not r.get("dependent") and volumes.get(r["rendererId"]) != 0
+                    for r in presence["renderers"])
+                saved = any(s["id"] == self.radio.station["id"] for s in self.radio.stations.list())
+                self.radio.listening.observe(self.radio.station if saved else None, state,
+                                             audible, self.radio.intent)
+        elif self.radio is not None:
+            self.radio.listening.suspend()
+        if not self.enabled:
+            self._record("disabled")
+            return
+        if not bool(snap.get("reachable", False)):
+            # Unknown renderer state is not proof of departure or inaudibility.
+            with self._lock:
+                self._previous_present_count = None
+                self._previous_presence = None
+            self._record("waiting_for_snapserver")
+            return
+        present_count = presence["presentCount"]
+        with self._lock:
+            previous = self._previous_presence
+            pending = self._pending_final_stop
+        mpd = self.mpd_factory()
+        passive_arrival = bool(set(presence["passiveIds"]) - set((previous or {}).get("passiveIds", [])))
+
+        if self.radio is not None and self.radio.reconcile(mpd, mpd.state()):
+            self._tick_radio(mpd, presence, passive_arrival)
+            with self._lock:
+                self._previous_present_count = present_count
+                self._previous_presence = presence
+            return
+
+        # Resolve the known drain before interpreting any kind of arrival.
+        if pending:
+            state = mpd.state()
+            transport = state.get("transport")
+            boundary_pause = (transport == "pause" and self._pending_song_id is not None
+                              and state.get("songId") != self._pending_song_id)
+            if transport == "stop" or boundary_pause:
+                self._complete_final_stop(mpd)
+                if presence["passiveCount"] > 0:
+                    self._start_default_session(mpd)
+                # A late controller, even with audible output, cannot restart
+                # the completed old queue or auto-start the fresh default.
+            elif present_count > 0 and transport in ("play", "pause"):
+                self._restore_options(mpd, "pending_stop_cancelled_renderer_returned"
+                                      if presence["passiveCount"] else "pending_stop_cancelled_controller_returned")
+                if transport == "pause" and presence["passiveCount"] > 0:
+                    mpd.command("play")
+                self._apply_controller_pause(mpd, presence)
+        else:
+            if passive_arrival:
+                self._handle_renderer_arrival(mpd, baseline=previous is None)
+            elif previous is None:
+                self._record("presence_baseline_established")
+            self._apply_controller_pause(mpd, presence)
+            if previous is not None and previous["presentCount"] > 0 and present_count == 0:
+                state = mpd.state()
+                if state.get("transport") == "play":
+                    self._begin_final_stop(mpd, state)
+                elif state.get("transport") != "stop":
+                    self._record("last_renderer_left_transport_not_playing")
+        with self._lock:
+            self._previous_present_count = present_count
+            self._previous_presence = presence
+
+    def _tick_radio(self, mpd, presence, passive_arrival):
+        radio = self.radio
+        if radio.ending:
+            # Finish failed final cleanup before considering a returning node.
+            radio.release(mpd, clear=True)
+            self._auto_paused_state = None
+            if presence["passiveCount"] > 0:
+                self._start_default_session(mpd)
+            return
+        if presence["presentCount"] == 0:
+            # A live broadcast has no track boundary. Also handles a stream
+            # selected before our first presence sample or during monitor loss.
+            radio.release(mpd, clear=True)
+            self._auto_paused_state = None
+            self._record("radio_last_node_left_session_idle")
+            return
+        if passive_arrival and radio.intent == "stop":
+            self._start_default_session(mpd)
+            self._auto_paused_state = None
+            return
+        if ((passive_arrival and radio.intent == "pause")
+                or (radio.auto_paused and presence["audibleCount"] > 0)):
+            radio.resume(mpd, automatic=True)
+            self._record("radio_resumed_live")
+        if (radio.intent == "play" and presence["controllerCount"] > 0
+                and presence["audibleCount"] == 0):
+            radio.pause(mpd, automatic=True)
+            self._record("radio_paused_muted_controllers_only")
+        self._auto_paused_state = ("radio", radio.station["id"]) if radio.auto_paused else None
+        radio.observe(mpd, mpd.state())
+
