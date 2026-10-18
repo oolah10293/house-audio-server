@@ -1598,3 +1598,203 @@ class PassiveSessionPolicy:
         self._auto_paused_state = ("radio", radio.station["id"]) if radio.auto_paused else None
         radio.observe(mpd, mpd.state())
 
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._tick()
+            self._stop.wait(self.poll_seconds)
+
+
+class LibraryUpdates:
+    """Coalesce browser scans across phones; explicit Refresh bypasses cooldown."""
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.last_started = None
+
+    def request(self, mpd, force=False):
+        with MPD_WRITE_LOCK:
+            current = mpd.library_status()
+            if current["updating"]:
+                return current
+            now = self.clock()
+            if not force and self.last_started is not None and now - self.last_started < 60:
+                return current
+            result = mpd.update_library()
+            self.last_started = now
+            return result
+
+
+LIBRARY_UPDATES = LibraryUpdates()
+PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
+SUBWOOFERS = Subwoofers(SUBWOOFERS_FILE)
+CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE, subwoofers=SUBWOOFERS)
+RADIO_STATIONS = StationStore(RADIO_STATIONS_FILE)
+RADIO = RadioPlayback(RADIO_STATIONS, history=RadioHistory(RADIO_HISTORY_FILE),
+                      listening=RadioListening(RADIO_LISTENING_FILE))
+PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
+    SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS,
+    startup=MPD_STARTUP, radio=RADIO,
+)
+
+
+def parse_mpd_fields(lines: List[str]) -> Dict[str, str]:
+    result: Dict[str, str] = {}
+    for line in lines:
+        key, sep, value = line.partition(": ")
+        if sep:
+            result[key.lower()] = value
+    return result
+
+
+def parse_mpd_records(
+    lines: List[str], record_start_keys: set[str]
+) -> List[Dict[str, str]]:
+    records: List[Dict[str, str]] = []
+    current: Dict[str, str] = {}
+
+    for line in lines:
+        key, sep, value = line.partition(": ")
+        if not sep:
+            continue
+        lower_key = key.lower()
+
+        if lower_key in record_start_keys and current:
+            records.append(current)
+            current = {}
+
+        current[lower_key] = value
+
+    if current:
+        records.append(current)
+
+    return records
+
+
+def normalize_song(fields: Dict[str, str]) -> Optional[Dict[str, object]]:
+    if not fields:
+        return None
+
+    song = {
+        "file": fields.get("file"),
+        "title": fields.get("title"),
+        "stationName": fields.get("name"),
+        "artist": fields.get("artist"),
+        "albumArtist": fields.get("albumartist"),
+        "album": fields.get("album"),
+        "track": fields.get("track"),
+        "date": fields.get("date"),
+        "lastModified": fields.get("last-modified"),
+        "durationSeconds": (
+            to_float(fields.get("duration"))
+            if fields.get("duration") is not None
+            else to_float(fields.get("time"))
+        ),
+        "pos": to_int(fields.get("pos")),
+        "id": to_int(fields.get("id")),
+    }
+
+    if str(song.get("file") or "").lower().startswith(("http://", "https://")):
+        return normalize_radio_metadata(song)
+    return song
+
+
+def normalize_library_entry(fields: Dict[str, str]) -> Dict[str, object]:
+    if "directory" in fields:
+        kind = "directory"
+        path = fields["directory"]
+    elif "file" in fields:
+        kind = "file"
+        path = fields["file"]
+    elif "playlist" in fields:
+        kind = "playlist"
+        path = fields["playlist"]
+    else:
+        kind = "unknown"
+        path = ""
+
+    entry: Dict[str, object] = {
+        "type": kind,
+        "path": path,
+        "name": path.rsplit("/", 1)[-1] if path else "",
+        "lastModified": fields.get("last-modified"),
+    }
+
+    if kind == "file":
+        entry.update(
+            {
+                "title": fields.get("title"),
+                "artist": fields.get("artist"),
+                "albumArtist": fields.get("albumartist"),
+                "album": fields.get("album"),
+                "track": fields.get("track"),
+                "date": fields.get("date"),
+                "durationSeconds": (
+                    to_float(fields.get("duration"))
+                    if fields.get("duration") is not None
+                    else to_float(fields.get("time"))
+                ),
+            }
+        )
+
+    return entry
+
+
+def to_int(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_float(value: Optional[str]) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def bool_field(payload: Dict[str, object], key: str) -> bool:
+    value = payload.get(key)
+    if not isinstance(value, bool):
+        raise ApiError(400, "invalid_request", f"{key} must be true or false")
+    return value
+
+
+class ApiHandler(BaseHTTPRequestHandler):
+    server_version = f"HouseAudioServer/{SERVICE_VERSION}"
+
+    def log_message(self, fmt: str, *args) -> None:
+        print(f"{self.address_string()} - {fmt % args}")
+
+    def _json(self, status: int, payload: Dict[str, object]) -> None:
+        body = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(
+            "utf-8"
+        )
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json(self) -> Dict[str, object]:
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None:
+            return {}
+
+        try:
+            length = int(raw_length)
+        except ValueError as exc:
+            raise ApiError(400, "invalid_content_length", "Invalid Content-Length") from exc
+
+        if length < 0 or length > MAX_JSON_BODY:
+            raise ApiError(413, "request_too_large", "JSON request body is too large")
+
+        raw = self.rfile.read(length)
+        if not raw:
+            return {}
+
