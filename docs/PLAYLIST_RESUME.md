@@ -1,9 +1,10 @@
-# Resume Playlist — unreleased server implementation
+# Resume Playlist — server v0.13.0
 
 Implemented and tested in source on 2026-10-17 for the House Music requirement in
 [app issue #14](https://github.com/oolah10293/smb-music-player/issues/14).
-No installer, release package, version increment, or Pi deployment is part of
-this change. The app button remains separate work.
+Packaging and deployment preparation were authorized on 2026-10-18.
+See [v0.13.0 release/install notes](RELEASE_0.13.0.md). Pi installation and live
+audio acceptance are pending. The app button remains separate work.
 
 ## Behavior
 
@@ -48,7 +49,7 @@ physical acceptance check.
 
 The count above is illustrative. Use the returned ID verbatim; never create one
 on the phone. Availability and the opaque ID are the capability check; this
-unreleased source retains the deployed service version string. A missing field
+server release identifies itself as v0.13.0. A missing field
 on an older server means the feature is unsupported.
 
 `POST /radio/resume-playlist` accepts exactly:

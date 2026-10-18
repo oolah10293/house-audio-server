@@ -1,9 +1,10 @@
 # HTTP control API
 
-**Unreleased addition, 2026-10-17:** server-owned radio-to-library resume is
+**v0.13.0 addition, 2026-10-18:** server-owned radio-to-library resume is
 implemented in source through `POST /radio/resume-playlist` and
 `source.resumePlaylist` in state responses. See [the complete contract and
-verification limits](PLAYLIST_RESUME.md). It is not deployed or packaged.
+verification limits](PLAYLIST_RESUME.md) and [installation notes](RELEASE_0.13.0.md).
+Pi deployment and live audio acceptance are pending.
 The current deployed-source baseline is the [v0.12.0 snapshot](DEPLOYED_0.12.0.md);
 the older version/test/deployment statements below are historical.
 

@@ -163,7 +163,9 @@ requests playback without changing local output mute/eligibility.
 Server implementation and testing were authorized on 2026-10-17. The source/API
 and failure behavior are documented in [PLAYLIST_RESUME.md](PLAYLIST_RESUME.md).
 The existing completed-session and restart boundaries still discard the prior
-bookmark. Packaging, deployment and the app update are separate steps.
+bookmark. Packaging/deployment preparation for server v0.13.0 was authorized
+on 2026-10-18; [release notes](RELEASE_0.13.0.md) track verification and pending
+Pi installation. The app update remains separate work.
 
 ## 11. MPD boundary artifact; §4 remains authoritative
 
