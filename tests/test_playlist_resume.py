@@ -30,16 +30,23 @@ class MpdModel(h.MpdClient):
         self.fail_command = None
         self.fail_after = False
         self.block = None
+        self.decoder_delay_reads = 0
+        self.decoder_pending_reads = 0
+        self.seekable = True
 
     def state(self):
         state = dict(self.values, queueLength=len(self.paths))
         index = state["songPosition"]
         state["songId"] = self.ids[index] if index is not None else None
         state["song"] = self.queue()[index] if index is not None else {}
+        # MPD clears status.audio while starting a new decoder, even though
+        # status already says play/pause and carries the selected track's tags.
+        state["audio"] = "44100:16:2" if self.decoder_pending_reads == 0 else None
+        self.decoder_pending_reads = max(0, self.decoder_pending_reads - 1)
         return state
 
     def queue(self):
-        return [dict(file=path, id=ident, position=i)
+        return [h.normalize_song({"file": path, "id": str(ident), "pos": str(i)})
                 for i, (path, ident) in enumerate(zip(self.paths, self.ids))]
 
     def library_files(self, folder):
@@ -83,9 +90,12 @@ class MpdModel(h.MpdClient):
             if v["songPosition"] is None:
                 v["songPosition"] = 0
             v["transport"] = "play"
+            self.decoder_pending_reads = self.decoder_delay_reads
         elif op == "pause":
             v["transport"] = "pause" if args[0] == "1" else "play"
         elif op == "seekcur":
+            if self.decoder_pending_reads or not self.seekable:
+                raise h.MpdError("ACK [5@0] {seekcur} Not seekable")
             v["elapsedSeconds"] = float(args[0])
         elif op in {"repeat", "random", "consume"}:
             v[op] = args[0] == "1"
@@ -163,6 +173,88 @@ class PlaylistResumeTests(unittest.TestCase):
                 self.assertEqual(body["source"]["type"], "library")
                 self.assertFalse(body["source"]["resumePlaylist"]["available"])
                 self.assertEqual(self.mpd.values["transport"], "play")
+
+    def test_slow_decoder_after_radio_is_ready_before_single_position_restore(self):
+        token = self.select()
+        self.mpd.decoder_delay_reads = 3
+        status, body = self.resume(token)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertEqual(self.mpd.values["songPosition"], 2)
+        self.assertEqual(self.mpd.values["elapsedSeconds"], 47.125)
+        self.assertEqual(self.mpd.commands.count("seekcur 47.125"), 1)
+        self.assertEqual(body["source"]["resumePlaylist"]["status"], "completed")
+
+    def test_slow_decoder_muted_restore_keeps_paused_policy_and_position(self):
+        token = self.select()
+        self.monitor.nodes.clear()
+        self.registry.attach({"controllerId": "phone"})
+        self.mpd.decoder_delay_reads = 3
+        status, body = self.resume(token)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.mpd.values["elapsedSeconds"], 47.125)
+        self.assertEqual(body["mpd"]["transport"], "pause")
+        self.assertTrue(body["sessionPolicy"]["autoPaused"])
+        self.assertNotIn("pause 0", self.mpd.commands)
+
+    def test_decoder_timeout_does_not_seek_unpause_or_replay_restore(self):
+        token = self.select()
+        self.mpd.decoder_delay_reads = 100
+        with patch.object(h, "PLAYLIST_DECODER_READY_SECONDS", 0):
+            status, body = self.resume(token)
+        self.assertEqual(status, 503, body)
+        self.assertIn("Timed out waiting", body["detail"])
+        self.assertEqual(self.mpd.values["transport"], "pause")
+        self.assertFalse(any(c.startswith("seekcur") or c == "pause 0" for c in self.mpd.commands))
+        before = list(self.mpd.commands)
+        self.assertEqual(self.resume(token)[0], 409)
+        self.policy._tick()
+        self.assertEqual(self.mpd.commands, before)
+
+    def test_ready_but_unseekable_track_keeps_error_and_never_falls_back_to_start(self):
+        token = self.select()
+        self.mpd.seekable = False
+        status, body = self.resume(token)
+        self.assertEqual(status, 503, body)
+        self.assertEqual(body["detail"], "ACK [5@0] {seekcur} Not seekable")
+        self.assertEqual(self.mpd.commands.count("seekcur 47.125"), 1)
+        self.assertNotIn("pause 0", self.mpd.commands)
+        self.assertEqual(self.radio.playlist_resume.status, "uncertain")
+        before = list(self.mpd.commands)
+        self.assertEqual(self.resume(token)[0], 409)
+        self.assertEqual(self.mpd.commands, before)
+
+    def test_decoder_error_or_changed_track_aborts_before_seek(self):
+        for field, value in (("error", "decoder failed to open file"), ("songId", 9999),
+                             ("songPosition", 0), ("queueLength", 2), ("transport", "stop")):
+            with self.subTest(field=field):
+                token = self.select()
+                state = self.mpd.state
+                def changed_state():
+                    result = state()
+                    if self.mpd.paths == self.original:
+                        result[field] = value
+                    return result
+                with patch.object(self.mpd, "state", changed_state):
+                    status, body = self.resume(token)
+                self.assertEqual(status, 503, body)
+                self.assertEqual(self.radio.playlist_resume.status, "uncertain")
+                self.assertFalse(any(c.startswith("seekcur") or c == "pause 0" for c in self.mpd.commands))
+
+    def test_readiness_connection_loss_never_replays_writes(self):
+        token = self.select()
+        state = self.mpd.state
+        def lost_read():
+            if self.mpd.paths == self.original:
+                raise OSError("MPD readiness read connection lost")
+            return state()
+        with patch.object(self.mpd, "state", lost_read):
+            self.assertEqual(self.resume(token)[0], 503)
+        self.assertEqual(self.radio.playlist_resume.status, "uncertain")
+        before = list(self.mpd.commands)
+        self.assertEqual(self.resume(token)[0], 409)
+        self.assertEqual(self.mpd.commands, before)
+        self.assertFalse(any(c.startswith("seekcur") or c == "pause 0" for c in before))
 
     def test_station_switch_pause_stop_and_phone_reopen_keep_original_snapshot(self):
         token = self.select()
