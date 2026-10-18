@@ -598,3 +598,203 @@ class SnapcastMonitor:
     Snapcast clients also carry a lastSeen timestamp that is updated by their
     periodic time-sync traffic. Policy should therefore use `present`, not
     Snapserver's raw `connected` flag alone.
+
+    A short local Server.GetStatus poll keeps lastSeen fresh for healthy
+    clients and lets the service age out abruptly powered-off renderers even
+    before the kernel/Snapserver finally tears down the stale TCP socket.
+    """
+
+    def __init__(
+        self,
+        host: str = SNAPSERVER_HOST,
+        port: int = SNAPSERVER_CONTROL_PORT,
+        connect_timeout: float = SNAPSERVER_CONNECT_TIMEOUT,
+        retry_seconds: float = SNAPSERVER_RETRY_SECONDS,
+        poll_seconds: float = SNAPSERVER_POLL_SECONDS,
+        stale_after_seconds: float = SNAPSERVER_STALE_AFTER_SECONDS,
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.connect_timeout = connect_timeout
+        self.retry_seconds = retry_seconds
+        self.poll_seconds = poll_seconds
+        self.stale_after_seconds = stale_after_seconds
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._request_id = 0
+        self._snapshot_received_at = None
+        self._snapshot: Dict[str, object] = {
+            "reachable": False,
+            "host": self.host,
+            "controlPort": self.port,
+            "connectedCount": 0,
+            "presentCount": 0,
+            "audibleCount": 0,
+            "clients": [],
+            "streams": [],
+            "staleAfterSeconds": self.stale_after_seconds,
+            "error": "not connected yet",
+        }
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(
+                target=self._run,
+                name="snapcast-monitor",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            result = copy.deepcopy(self._snapshot)
+            if (result.get("reachable") and self._snapshot_received_at is not None
+                    and time.monotonic() - self._snapshot_received_at > self.stale_after_seconds):
+                result.update(reachable=False, error="Snapserver observation is stale")
+            return result
+
+    def _next_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
+
+    def _fetch_status(self) -> Dict[str, object]:
+        request_id = self._next_id()
+        request = {
+            "id": request_id,
+            "jsonrpc": "2.0",
+            "method": "Server.GetStatus",
+        }
+
+        with socket.create_connection(
+            (self.host, self.port), timeout=self.connect_timeout
+        ) as sock:
+            sock.settimeout(self.connect_timeout)
+            stream = sock.makefile("rwb", buffering=0)
+            stream.write(
+                (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
+            )
+            stream.flush()
+
+            while True:
+                raw = stream.readline()
+                if not raw:
+                    raise SnapcastError("Snapserver closed the control connection")
+
+                try:
+                    message = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+
+                if not isinstance(message, dict) or message.get("id") != request_id:
+                    continue
+
+                if "error" in message:
+                    raise SnapcastError(str(message["error"]))
+
+                result = message.get("result")
+                if not isinstance(result, dict):
+                    raise SnapcastError("Invalid Server.GetStatus response")
+
+                status = result.get("server")
+                if not isinstance(status, dict):
+                    raise SnapcastError("Server.GetStatus omitted server data")
+                return status
+
+    def _set_disconnected(self, error: str) -> None:
+        with self._lock:
+            previous = self._snapshot
+            self._snapshot = {
+                "reachable": False,
+                "host": self.host,
+                "controlPort": self.port,
+                "connectedCount": 0,
+                "presentCount": 0,
+                "audibleCount": 0,
+                "clients": [],
+                "streams": [],
+                "serverVersion": previous.get("serverVersion"),
+                "controlProtocolVersion": previous.get("controlProtocolVersion"),
+                "staleAfterSeconds": self.stale_after_seconds,
+                "error": error,
+            }
+
+    @staticmethod
+    def _last_seen_epoch(client: Dict[str, object]) -> Optional[float]:
+        last_seen = client.get("lastSeen")
+        if not isinstance(last_seen, dict):
+            return None
+        sec = last_seen.get("sec")
+        usec = last_seen.get("usec", 0)
+        if not isinstance(sec, (int, float)) or isinstance(sec, bool):
+            return None
+        if not isinstance(usec, (int, float)) or isinstance(usec, bool):
+            usec = 0
+        return float(sec) + float(usec) / 1_000_000.0
+
+    def _apply_status(self, status: Dict[str, object]) -> None:
+        groups = status.get("groups")
+        streams = status.get("streams")
+        server_info = status.get("server")
+
+        if not isinstance(groups, list):
+            groups = []
+        if not isinstance(streams, list):
+            streams = []
+        if not isinstance(server_info, dict):
+            server_info = {}
+
+        snapserver_info = server_info.get("snapserver")
+        if not isinstance(snapserver_info, dict):
+            snapserver_info = {}
+
+        now = time.time()
+        clients: List[Dict[str, object]] = []
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = group.get("id")
+            group_name = group.get("name")
+            group_muted = bool(group.get("muted", False))
+            stream_id = group.get("stream_id")
+
+            raw_clients = group.get("clients")
+            if not isinstance(raw_clients, list):
+                continue
+
+            for client in raw_clients:
+                if not isinstance(client, dict):
+                    continue
+                config = client.get("config")
+                host = client.get("host")
+                snapclient = client.get("snapclient")
+                if not isinstance(config, dict):
+                    config = {}
+                if not isinstance(host, dict):
+                    host = {}
+                if not isinstance(snapclient, dict):
+                    snapclient = {}
+                volume = config.get("volume")
+                if not isinstance(volume, dict):
+                    volume = {}
+
+                connected = bool(client.get("connected", False))
+                last_seen_epoch = self._last_seen_epoch(client)
+                last_seen_age = (
+                    max(0.0, now - last_seen_epoch)
+                    if last_seen_epoch is not None
+                    else None
+                )
+                fresh = (
+                    last_seen_age is not None
+                    and last_seen_age <= self.stale_after_seconds
+                )
+                present = connected and fresh
+
+                client_muted = bool(volume.get("muted", False))
+                audible = present and not client_muted and not group_muted
+
+                client_id = client.get("id")
+                configured_name = config.get("name")
