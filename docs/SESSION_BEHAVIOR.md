@@ -164,8 +164,9 @@ Server implementation and testing were authorized on 2026-10-17. The source/API
 and failure behavior are documented in [PLAYLIST_RESUME.md](PLAYLIST_RESUME.md).
 The existing completed-session and restart boundaries still discard the prior
 bookmark. Packaging/deployment preparation for server v0.13.0 was authorized
-on 2026-10-18; [release notes](RELEASE_0.13.0.md) track verification and pending
-Pi installation. The app update remains separate work.
+on 2026-10-18. User-provided terminal output then confirmed installation and
+healthy startup; [release notes](RELEASE_0.13.0.md) distinguish that deployment
+check from pending live playlist-restore acceptance. The app update is separate work.
 
 ## 11. MPD boundary artifact; §4 remains authoritative
 

@@ -1,9 +1,27 @@
 # house-audio-server v0.13.0
 
 Prepared on 2026-10-18 after authorization to package and deploy the server
-update. Pi installation and physical audio acceptance remain pending until
-confirmed by the live server/user. The remote execution environment cannot
-reach the recorded Pi LAN address.
+update. The user installed it on the Pi and supplied terminal output confirming
+a healthy v0.13.0 response later that day. The remote execution environment did
+not perform the installation itself. Live playlist restoration and physical
+audio acceptance remain pending.
+
+## Pi deployment evidence — 2026-10-18
+
+The supplied terminal output shows checkout of release commit `bc2ef5f`,
+completion of `install.sh`, and the service restart. The first health request
+was refused; a subsequent response reported:
+
+- `service: house-audio-server`, `version: 0.13.0`, `status: ok`
+- `startup.ready: true`, `startup.lastError: null`
+- MPD reachable, reporting protocol version `0.24.0`
+- Snapserver reachable, server version `0.31.0`
+- Two clients connected, present and reported audible: Basement stereo and Bose Sub
+- Default stream status `playing`
+
+The user reported that it "seems ok". This establishes the installation/health
+checkpoint. The submitted output contains no Resume Playlist request or queue/
+position comparison, so it does not establish feature or acoustic acceptance.
 
 ## Changes
 

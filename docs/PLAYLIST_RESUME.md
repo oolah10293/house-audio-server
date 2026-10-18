@@ -3,8 +3,9 @@
 Implemented and tested in source on 2026-10-17 for the House Music requirement in
 [app issue #14](https://github.com/oolah10293/smb-music-player/issues/14).
 Packaging and deployment preparation were authorized on 2026-10-18.
-See [v0.13.0 release/install notes](RELEASE_0.13.0.md). Pi installation and live
-audio acceptance are pending. The app button remains separate work.
+See [v0.13.0 release/install notes](RELEASE_0.13.0.md). User-provided terminal
+output confirmed Pi installation and healthy startup on 2026-10-18. Live
+playlist-restore/audio acceptance remains pending. The app button is separate work.
 
 ## Behavior
 

@@ -4,8 +4,9 @@
 implemented in source through `POST /radio/resume-playlist` and
 `source.resumePlaylist` in state responses. See [the complete contract and
 verification limits](PLAYLIST_RESUME.md) and [installation notes](RELEASE_0.13.0.md).
-Pi deployment and live audio acceptance are pending.
-The current deployed-source baseline is the [v0.12.0 snapshot](DEPLOYED_0.12.0.md);
+Pi v0.13.0 installation and health checks passed on 2026-10-18, based on user-
+provided terminal output. Live playlist-restore/audio acceptance is pending.
+The prior source baseline is the [v0.12.0 snapshot](DEPLOYED_0.12.0.md);
 the older version/test/deployment statements below are historical.
 
 **Current route inventory, reviewed 2026-10-18:** the v0.12.0 source baseline has

@@ -7,9 +7,11 @@ previous folder queue, selected track, position and playback modes when switchin
 to radio, and exposes a guarded restore API for the planned House Music button.
 See [release/install notes](docs/RELEASE_0.13.0.md) and the
 [API contract](docs/PLAYLIST_RESUME.md). The Android button is separate work.
-Pi installation and live audio acceptance of v0.13.0 are pending.
+Pi installation and health checks passed on 2026-10-18, confirmed by the user's
+terminal output. Playlist restoration and physical transition timing still
+need live acceptance; see the release notes.
 
-The last recorded Pi source baseline is **v0.12.0**, imported on 2026-10-17.
+The prior Pi source baseline was **v0.12.0**, imported on 2026-10-17.
 Its radio bookmark/history/listening support and subwoofer settings interface
 are included in this release. See [DEPLOYED_0.12.0.md](docs/DEPLOYED_0.12.0.md)
 for snapshot provenance; that historical import is not evidence of a v0.13.0
