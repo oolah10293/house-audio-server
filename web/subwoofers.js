@@ -29,8 +29,19 @@ function choices(container, selected, excluded) {
   if (!container.childElementCount) container.append(element('p','No normal speakers discovered yet. Power one on, then reopen this form.','muted'));
 }
 function selected(container) { return Array.from(container.querySelectorAll('input:checked')).map(e=>e.value); }
-function statusText(status) {
-  if (!status.fresh) return status.ageSeconds===null?'Unknown — no report yet':'Unknown — not responding';
+function statusText(status, present) {
+  // A node can be a healthy Snapcast renderer without implementing the separate
+  // Pi subwoofer status-reporting protocol (e.g. Rio before firmware upgrade).
+  if (!status.fresh) {
+    if (present === true) return 'Connected — no control report';
+    if (present === false) return 'Offline — no control report';
+    return 'Unknown — presence unavailable';
+  }
+  if (status.state==='audio_active' || status.state==='audio_muted') {
+    const connection=present===true?'Connected — ':present===false?'Offline — last reported ':'';
+    return connection+(status.state==='audio_muted'?'audio muted':'audio active')+' (amplifier powered)';
+  }
+  if (status.state==='unknown' && present===true) return 'Connected — control state unknown';
   if (status.state==='standby_pending') return status.standbyRemainingSeconds>0
     ?'Standby in '+Math.ceil(status.standbyRemainingSeconds)+' seconds…':'Waiting for standby report';
   if (status.state==='standby') return status.acknowledged?'Standby — acknowledged':'Standby requested';
@@ -39,12 +50,15 @@ function statusText(status) {
 }
 function updateStatus(card, sub) {
   card.config=sub;
-  card.title.textContent=sub.name; card.state.textContent=statusText(sub.status);
   const names=new Map(data.renderers.map(r=>[r.id,r.name]));
+  const renderer=data.renderers.find(r=>r.id===sub.rendererId);
+  card.title.textContent=sub.name;
+  card.state.textContent=statusText(sub.status, renderer ? renderer.present : null);
   card.parents.textContent='Follows: '+sub.parentRendererIds.map(id=>names.get(id)||id).join(' · ');
   card.mode.textContent=modeNames[sub.status.mode] || 'Not reported';
   card.demand.textContent=sub.demand.known?(sub.demand.needed?'Needed':'Not needed'):'Unknown';
-  card.feedback.textContent=sub.status.fresh?'Received '+Math.floor(sub.status.ageSeconds)+'s ago':sub.status.detail;
+  card.feedback.textContent=sub.status.fresh?'Received '+Math.floor(sub.status.ageSeconds)+'s ago':
+    'Control feedback unavailable ('+sub.status.detail.toLowerCase()+')';
   card.detail.textContent=sub.status.fresh?sub.status.detail:'';
 }
 function makeCard(sub) {
