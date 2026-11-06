@@ -142,7 +142,8 @@ class Subwoofers:
                 self._invalid('Status renderer does not match registration', 409)
             if payload['mode'] not in ('auto', 'force_standby', 'force_awake'):
                 self._invalid('Invalid mode')
-            if payload['state'] not in ('awake', 'standby', 'standby_pending', 'waking', 'unknown', 'error'):
+            if payload['state'] not in ('awake', 'standby', 'standby_pending', 'waking', 'unknown', 'error',
+                                        'audio_active', 'audio_muted'):
                 self._invalid('Invalid state')
             remaining = payload.get('standbyRemainingSeconds')
             if payload['state'] == 'standby_pending':
