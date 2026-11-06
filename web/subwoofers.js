@@ -41,6 +41,7 @@ function statusText(status, present) {
     const connection=present===true?'Connected — ':present===false?'Offline — last reported ':'';
     return connection+(status.state==='audio_muted'?'audio muted':'audio active')+' (amplifier powered)';
   }
+  if (status.state==='unknown' && present===true) return 'Connected — control state unknown';
   if (status.state==='standby_pending') return status.standbyRemainingSeconds>0
     ?'Standby in '+Math.ceil(status.standbyRemainingSeconds)+' seconds…':'Waiting for standby report';
   if (status.state==='standby') return status.acknowledged?'Standby — acknowledged':'Standby requested';
