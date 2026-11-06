@@ -37,8 +37,10 @@ function statusText(status, present) {
     if (present === false) return 'Offline — no control report';
     return 'Unknown — presence unavailable';
   }
-  if (status.state==='audio_active') return 'Audio active — amplifier powered';
-  if (status.state==='audio_muted') return 'Audio muted — amplifier powered';
+  if (status.state==='audio_active' || status.state==='audio_muted') {
+    const connection=present===true?'Connected — ':present===false?'Offline — last reported ':'';
+    return connection+(status.state==='audio_muted'?'audio muted':'audio active')+' (amplifier powered)';
+  }
   if (status.state==='standby_pending') return status.standbyRemainingSeconds>0
     ?'Standby in '+Math.ceil(status.standbyRemainingSeconds)+' seconds…':'Waiting for standby report';
   if (status.state==='standby') return status.acknowledged?'Standby — acknowledged':'Standby requested';
