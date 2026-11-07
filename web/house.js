@@ -192,6 +192,7 @@ function renderPlayer() {
   byId("resume").disabled = current.busy;
   tickClock();
 }
+let scrubbingSeek = false;
 function tickClock() {
   const mpd = current.state?.mpd || {};
   const source = current.state?.source || {};
@@ -202,7 +203,7 @@ function tickClock() {
     elapsed += Math.min((Date.now() - current.stateReceivedAt) / 1000, 10);
   }
   if (length) elapsed = Math.min(length, elapsed);
-  if (document.activeElement !== byId("seek")) {
+  if (!scrubbingSeek) {
     byId("seek").value = String(length ? Math.round(elapsed / length * 1000) : 0);
   }
   byId("elapsed").textContent = live ? "LIVE" : formatTime(elapsed);
@@ -212,6 +213,7 @@ async function loadBrowse(path = "") {
   const ticket = ++current.browseRequest;
   current.folder = path;
   current.search = "";
+  current.entries = [];
   drawBrowse();
   try {
     const data = await request("/browse?path=" + encodeURIComponent(path));
@@ -502,7 +504,10 @@ byId("shuffle").addEventListener("click", () =>
   command("/shuffle", { enabled: !current.state?.mpd?.random }));
 byId("repeat").addEventListener("click", () =>
   command("/repeat", { enabled: !current.state?.mpd?.repeat }));
+byId("seek").addEventListener("pointerdown", () => { scrubbingSeek = true; });
+byId("seek").addEventListener("pointerup", () => { scrubbingSeek = false; });
 byId("seek").addEventListener("change", (event) => {
+  scrubbingSeek = false;
   const length = Number(current.state?.mpd?.durationSeconds) || 0;
   if (length > 0 && current.state?.source?.canSeek !== false &&
       current.state?.source?.type !== "radio") {
