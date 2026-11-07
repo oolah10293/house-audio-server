@@ -234,6 +234,20 @@ Rules:
 
 Use `/queue/replace` for a new folder/filtered PLAY LIST or selected-track queue. To sort the existing queue while preserving playback, use `/queue/reorder` below.
 
+### `POST /queue/play` — House Music browser controller
+
+Select an entry already in the current MPD queue without rebuilding the queue:
+
+```json
+{"songId": 42}
+```
+
+The id is the MPD queue entry `id` returned by `GET /queue` (not its position).
+Rejects missing/extra fields or invalid IDs with 400. Rejects stale IDs with
+409 `stale_queue`; live radio and uncertain radio-playlist restores cannot
+be selected using this command. Refresh the queue after an error. Selection is
+an explicit playback request and clears any server-owned automatic pause.
+
 ### `POST /queue/reorder` — v0.8.2
 
 Reorder the existing queue by MPD entry ID, without replacing files or restarting/seeking playback:
@@ -797,3 +811,23 @@ Malformed payloads/values return HTTP 400 (`invalid_handoff`, `invalid_controlle
 `GET /browse?path=MP3s` retains its previous fields and additionally includes the same `library` status. When `updating` is true, fetch again after the job finishes before treating the listing as current. The app polls every two seconds during scanning, then returns to its normal 30-second visible-browser check. The server automatically coalesces those checks to at most one new scan per minute. Reads alone do not initiate indexing. These operations do not participate in handoff, change the passive-default selection, or issue playback/queue commands.
 
 MPD update protocol: <https://mpd.readthedocs.io/en/stable/protocol.html#the-music-database>.
+
+## Browser interface (House Music Web)
+
+The built-in page is at `GET /` (also `GET /house`). Its local assets are
+`/house.css` and `/house.js`, served by the same HTTP process on port 8787.
+The browser uses the HTTP endpoints described above; it is a control-only client
+and does **not** receive or play Snapcast audio. It attaches to
+`/controllers/attach` with `rendererId: null`, reports muted/not-ready every
+five seconds, and attempts detachment when leaving the page; leases expire if
+browser timers are suspended. The browser shows read-only Snapcast speaker status
+and links to the existing subwoofer configuration page; it deliberately avoids
+changing per-node Snapcast volume/attenuation.
+
+To install, update a checkout containing the new code and run the existing
+`sudo sh install.sh`. This copies the three browser assets alongside the
+existing subwoofer assets and restarts only the HOUSE control server. The
+running Pi will then serve `http://192.168.1.12:8787/` on the home LAN.
+Like any control-service restart, an update resets the listening session.
+The page is LAN-only unless separately and deliberately exposed; no user
+login or Internet exposure mechanism has been added.

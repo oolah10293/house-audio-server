@@ -39,7 +39,7 @@ from radio_stations import (RadioError, StationStore, probe_station,
                             validate_stream_url, validate_station_name)
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.13.1"
+SERVICE_VERSION = "0.14.0"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -2045,7 +2045,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         try:
-            assets = {"/subwoofers": ("subwoofers.html", "text/html; charset=utf-8"),
+            assets = {"/": ("house.html", "text/html; charset=utf-8"),
+                      "/house": ("house.html", "text/html; charset=utf-8"),
+                      "/house/": ("house.html", "text/html; charset=utf-8"),
+                      "/house.js": ("house.js", "text/javascript; charset=utf-8"),
+                      "/house.css": ("house.css", "text/css; charset=utf-8"),
+                      "/subwoofers": ("subwoofers.html", "text/html; charset=utf-8"),
                       "/subwoofers/": ("subwoofers.html", "text/html; charset=utf-8"),
                       "/subwoofers.js": ("subwoofers.js", "text/javascript; charset=utf-8"),
                       "/subwoofers.css": ("subwoofers.css", "text/css; charset=utf-8")}
@@ -2303,7 +2308,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
                 if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
                             "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder",
-                            "/radio/play", "/radio/resume-playlist"}:
+                            "/queue/play", "/radio/play", "/radio/resume-playlist"}:
                     # Readiness is monotonic for this process. A pending reset may
                     # not acknowledge a new queue/command and later erase it.
                     MPD_STARTUP.require_ready()
@@ -2373,6 +2378,21 @@ class ApiHandler(BaseHTTPRequestHandler):
                             RADIO.stop(mpd)
                         self._mpd_state_response()
                         return
+
+                if path == "/queue/play":
+                    if set(payload) != {"songId"} or type(payload["songId"]) is not int or payload["songId"] < 0:
+                        raise ApiError(400, "invalid_request", "Provide a nonnegative songId")
+                    if RADIO.playlist_resume.status == "uncertain":
+                        raise ApiError(409, "playlist_resume_uncertain", "Select a station or folder first")
+                    RADIO.reconcile(mpd, mpd.state())
+                    if RADIO.station is not None:
+                        raise ApiError(409, "live_stream_operation", "Select a folder to play library queue entries")
+                    if not any(song.get("id") == payload["songId"] for song in mpd.queue()):
+                        raise ApiError(409, "stale_queue", "Queue entry no longer exists; refresh the queue")
+                    explicit_transport()
+                    mpd.command(f"playid {payload['songId']}")
+                    self._mpd_state_response()
+                    return
 
                 if path == "/queue/reorder":
                     if set(payload) != {"songIds", "queueVersion"}:
