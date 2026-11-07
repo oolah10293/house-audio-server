@@ -30,6 +30,9 @@ done
 
 install -d -o root -g root -m 0755 "$INSTALL_DIR/web"
 for file in \
+    web/house.css \
+    web/house.html \
+    web/house.js \
     web/subwoofers.css \
     web/subwoofers.html \
     web/subwoofers.js
