@@ -50,7 +50,8 @@ function notice(message) {
 }
 async function request(url, body) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeoutMs = url === "/queue/replace" || url === "/queue/reorder" ? 120000 : 15000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method: body === undefined ? "GET" : "POST",
