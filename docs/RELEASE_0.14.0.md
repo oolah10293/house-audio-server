@@ -64,7 +64,9 @@ exists on the Pi; verify the checkout location before running these commands.
 - The browser JavaScript was syntax-checked in the code environment.
 - New Python regression tests exercise static routes, successful existing-queue
   selection, malformed/stale IDs, and rejection during radio.
-- Automated CI results and Pi/browser behavior are to be recorded after runs.
+- GitHub Actions job for PR #15 completed successfully: Python compilation and
+  **138 unit tests passed**, including five new browser/queue-selection tests.
+  The final source-only changes require a new job result after they are committed.
 - Still requires a live browser and Pi smoke test: root page loads without
   injected URL query parameters, folder navigation, selected-song queue playback,
   now playing progress, pause/seek/skip/shuffle, queue reorder, radio station
