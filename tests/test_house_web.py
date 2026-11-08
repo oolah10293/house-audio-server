@@ -6,6 +6,17 @@ import house_audio_server as h
 
 
 class HouseWebRouteTests(unittest.TestCase):
+    def test_cd_browse_exposes_disc_and_track_tags(self):
+        result = h.normalize_library_entry({
+            "file": "CDs/Album/201-song.mp3",
+            "track": "1/12",
+            "disc": "2/3",
+            "last-modified": "2026-10-01T12:00:00Z",
+        })
+        self.assertEqual(result["track"], "1/12")
+        self.assertEqual(result["disc"], "2/3")
+        self.assertEqual(result["lastModified"], "2026-10-01T12:00:00Z")
+
     def test_browser_assets_are_served_by_existing_http_handler(self):
         cases = {
             "/": ("house.html", "text/html; charset=utf-8"),
