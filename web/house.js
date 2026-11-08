@@ -6,11 +6,130 @@
 const byId = (id) => document.getElementById(id);
 const current = {
   view: "browse", folder: "", entries: [], search: "",
+  displayMode: readBrowsePreferences().displayMode,
+  sortModes: readBrowsePreferences().sortModes,
   state: null, stateReceivedAt: 0, queue: [], queueVersion: null,
   stations: [], speakers: [], busy: false, online: false,
   pollInFlight: false, browseRequest: 0, notifyTimer: null,
   lastRadioId: null, lastSongId: null
 };
+
+const BROWSE_PREF_KEY = "house_music_library_preferences_v1";
+const SORT_CHOICES = {
+  filename: [
+    ["name_asc", "Name A–Z"],
+    ["name_desc", "Name Z–A"],
+    ["date_desc", "Modified New–Old"],
+    ["date_asc", "Modified Old–New"],
+    ["track", "Track Number"]
+  ],
+  metadata: [
+    ["title_asc", "Title A–Z"],
+    ["title_desc", "Title Z–A"],
+    ["artist", "Artist"],
+    ["album", "Album"],
+    ["track", "Track Number"]
+  ]
+};
+function readBrowsePreferences() {
+  const fallback = { displayMode: "metadata", sortModes: { filename: null, metadata: null } };
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(BROWSE_PREF_KEY) || "null");
+    if (!saved || typeof saved !== "object") return fallback;
+    const displayMode = saved.displayMode === "filename" ? "filename" : "metadata";
+    const sortModes = {};
+    for (const mode of ["filename", "metadata"]) {
+      const requested = saved.sortModes && saved.sortModes[mode];
+      sortModes[mode] = SORT_CHOICES[mode].some(([id]) => id === requested) ? requested : null;
+    }
+    return { displayMode, sortModes };
+  } catch (_) { return fallback; }
+}
+function saveBrowsePreferences() {
+  try {
+    window.localStorage.setItem(BROWSE_PREF_KEY, JSON.stringify({
+      displayMode: current.displayMode, sortModes: current.sortModes
+    }));
+  } catch (_) { /* Optional storage must not prevent library browsing. */ }
+}
+function activeBrowseSort() {
+  const stored = current.sortModes[current.displayMode];
+  if (SORT_CHOICES[current.displayMode].some(([id]) => id === stored)) return stored;
+  // Album folders default to track order; playlists default to names/titles.
+  if (current.folder.startsWith("CDs/")) return "track";
+  return current.displayMode === "filename" ? "name_asc" : "title_asc";
+}
+const compareLibraryText = (a, b) =>
+  String(a || "").localeCompare(String(b || ""), undefined, { numeric: true, sensitivity: "base" });
+function tagNumber(value) {
+  const found = String(value ?? "").trim().match(/^(\\d+)/);
+  return found ? Number(found[1]) : null;
+}
+function albumPosition(entry) {
+  const filename = entry.name || fileName(entry.path);
+  // Disc prefixes used by some CD rips: 101, 102, ..., 201, 202, ...
+  const numberedDisc = filename.match(/^([1-9])(\\d{2})(?=\\D|$)/);
+  const numberedTrack = filename.match(/^(\\d{1,2})(?=\\D|$)/);
+  const disc = tagNumber(entry.disc) ?? (numberedDisc ? Number(numberedDisc[1]) : 1);
+  const track = tagNumber(entry.track) ??
+    (numberedDisc ? Number(numberedDisc[2]) : numberedTrack ? Number(numberedTrack[1]) : null);
+  return { disc, track };
+}
+function compareAlbumPosition(a, b) {
+  const left = albumPosition(a);
+  const right = albumPosition(b);
+  const byDisc = left.disc - right.disc;
+  if (byDisc) return byDisc;
+  const byTrack = (left.track ?? Infinity) - (right.track ?? Infinity);
+  return Number.isNaN(byTrack) ? 0 : byTrack;
+}
+function compareDates(a, b, descending) {
+  const left = Date.parse(a.lastModified || "");
+  const right = Date.parse(b.lastModified || "");
+  const leftValid = Number.isFinite(left);
+  const rightValid = Number.isFinite(right);
+  if (!leftValid || !rightValid) return leftValid === rightValid ? 0 : leftValid ? -1 : 1;
+  return descending ? right - left : left - right;
+}
+function compareLibraryFiles(a, b, mode) {
+  const byName = () => compareLibraryText(a.name, b.name);
+  if (mode === "name_desc") return -byName();
+  if (mode === "date_desc" || mode === "date_asc")
+    return compareDates(a, b, mode === "date_desc") || byName();
+  if (mode === "title_asc" || mode === "title_desc") {
+    const compared = compareLibraryText(a.title || a.name, b.title || b.name);
+    return (mode === "title_desc" ? -compared : compared) || byName();
+  }
+  if (mode === "artist")
+    return compareLibraryText(a.artist || a.albumArtist, b.artist || b.albumArtist) ||
+      compareLibraryText(a.album, b.album) || compareAlbumPosition(a, b) || byName();
+  if (mode === "album")
+    return compareLibraryText(a.album, b.album) ||
+      compareLibraryText(a.albumArtist || a.artist, b.albumArtist || b.artist) ||
+      compareAlbumPosition(a, b) || byName();
+  if (mode === "track") return compareAlbumPosition(a, b) || byName();
+  return byName();
+}
+function sortedLibraryFiles() {
+  const mode = activeBrowseSort();
+  return current.entries.filter((entry) => entry.type === "file")
+    .sort((a, b) => compareLibraryFiles(a, b, mode));
+}
+function librarySelect(label, selected, options, onChange) {
+  const wrapper = node("label", "library-select");
+  wrapper.append(node("span", "library-select-caption", label));
+  const select = node("select", "action browse-select");
+  select.setAttribute("aria-label", label + " library entries");
+  for (const [value, text] of options) {
+    const option = node("option", "", text);
+    option.value = value;
+    select.append(option);
+  }
+  select.value = selected;
+  select.addEventListener("change", (event) => onChange(event.target.value));
+  wrapper.append(select);
+  byId("view-actions").append(wrapper);
+}
 
 function node(tag, className, text) {
   const result = document.createElement(tag);
@@ -243,9 +362,21 @@ function drawBrowse() {
     bread.append(node("span", "crumb-separator", "/"),
       button(chunk, "", () => loadBrowse(path)));
   }
-  const files = current.entries.filter((entry) => entry.type === "file");
-  const playable = files.length > 0;
-  action("▶ Play folder", () => playFiles(files, 0), true, !playable);
+  librarySelect("Display", current.displayMode,
+    [["filename", "Filename"], ["metadata", "Metadata"]], (value) => {
+      if (value !== "filename" && value !== "metadata") return;
+      current.displayMode = value;
+      saveBrowsePreferences();
+      drawBrowse();
+    });
+  librarySelect("Sort", activeBrowseSort(), SORT_CHOICES[current.displayMode], (value) => {
+    if (!SORT_CHOICES[current.displayMode].some(([id]) => id === value)) return;
+    current.sortModes[current.displayMode] = value;
+    saveBrowsePreferences();
+    drawBrowseList();
+  });
+  const playable = current.entries.some((entry) => entry.type === "file");
+  action("▶ Play folder", () => playFiles(sortedLibraryFiles(), 0), true, !playable);
   action("⟳ Rescan", async () => {
     const ok = await command("/library/update", { force: true });
     if (ok) { notice("Library scan started"); await loadBrowse(current.folder); }
@@ -265,28 +396,27 @@ function drawBrowseList() {
   const items = byId("items");
   items.replaceChildren();
   const filter = current.search.trim().toLocaleLowerCase();
-  const entries = current.entries.filter((entry) =>
-    !filter || (entry.name + " " + (entry.title || "") + " " + (entry.artist || "")).toLocaleLowerCase().includes(filter));
-  const sorted = [...entries].sort((a, b) => {
-    if (a.type !== b.type) return a.type === "directory" ? -1 : b.type === "directory" ? 1 : 0;
-    return String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" });
-  });
-  if (!sorted.length) {
+  const matches = (entry) => !filter ||
+    (entry.name + " " + (entry.title || "") + " " + (entry.artist || ""))
+      .toLocaleLowerCase().includes(filter);
+  const folders = current.entries.filter((entry) => entry.type === "directory" && matches(entry))
+    .sort((a, b) => compareLibraryText(a.name, b.name));
+  const allFiles = sortedLibraryFiles();
+  const files = allFiles.filter(matches);
+  if (!folders.length && !files.length) {
     empty(current.search ? "No matches" : "Nothing here", current.search ?
       "Try another search term." : "Open another folder or rescan the music library.");
     return;
   }
-  const allFiles = current.entries.filter((entry) => entry.type === "file");
-  for (const entry of sorted) {
-    if (entry.type === "directory") {
-      row("▤", entry.name, "Folder", () => loadBrowse(entry.path), { iconClass: "folder" });
-    } else if (entry.type === "file") {
-      const index = allFiles.indexOf(entry);
-      const title = entry.title || entry.name;
-      const detail = [entry.artist, entry.album].filter(Boolean).join(" · ") || entry.path;
-      row("♫", title, detail, () => playFiles(allFiles, index),
-        { right: entry.durationSeconds ? formatTime(entry.durationSeconds) : "" });
-    }
+  for (const entry of folders) {
+    row("▤", entry.name, "Folder", () => loadBrowse(entry.path), { iconClass: "folder" });
+  }
+  for (const entry of files) {
+    const index = allFiles.findIndex((file) => file.path === entry.path);
+    const title = current.displayMode === "filename" ? entry.name : (entry.title || entry.name);
+    const detail = [entry.artist, entry.album].filter(Boolean).join(" · ") || entry.path;
+    row("♫", title, detail, () => playFiles(allFiles, index),
+      { right: entry.durationSeconds ? formatTime(entry.durationSeconds) : "" });
   }
 }
 async function playFiles(files, startIndex) {
@@ -296,7 +426,10 @@ async function playFiles(files, startIndex) {
     notice("This folder is too large for a single queue request.");
     return;
   }
-  await command("/queue/replace", payload);
+  const ok = await command("/queue/replace", payload);
+  // Album folders should advance in track order, even if the previous playlist was shuffled.
+  if (ok && current.folder.startsWith("CDs/") && current.state?.mpd?.random)
+    await command("/shuffle", { enabled: false });
 }
 async function loadQueue() {
   if (current.view !== "queue") return;
