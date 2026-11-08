@@ -6,8 +6,8 @@
 const byId = (id) => document.getElementById(id);
 const current = {
   view: "browse", folder: "", entries: [], search: "",
-  displayMode: readBrowsePreferences().displayMode,
-  sortModes: readBrowsePreferences().sortModes,
+  displayMode: "metadata",
+  sortModes: { filename: null, metadata: null },
   state: null, stateReceivedAt: 0, queue: [], queueVersion: null,
   stations: [], speakers: [], busy: false, online: false,
   pollInFlight: false, browseRequest: 0, notifyTimer: null,
@@ -62,14 +62,14 @@ function activeBrowseSort() {
 const compareLibraryText = (a, b) =>
   String(a || "").localeCompare(String(b || ""), undefined, { numeric: true, sensitivity: "base" });
 function tagNumber(value) {
-  const found = String(value ?? "").trim().match(/^(\\d+)/);
+  const found = String(value ?? "").trim().match(/^(\d+)/);
   return found ? Number(found[1]) : null;
 }
 function albumPosition(entry) {
   const filename = entry.name || fileName(entry.path);
   // Disc prefixes used by some CD rips: 101, 102, ..., 201, 202, ...
-  const numberedDisc = filename.match(/^([1-9])(\\d{2})(?=\\D|$)/);
-  const numberedTrack = filename.match(/^(\\d{1,2})(?=\\D|$)/);
+  const numberedDisc = filename.match(/^([1-9])(\d{2})(?=\D|$)/);
+  const numberedTrack = filename.match(/^(\d{1,2})(?=\D|$)/);
   const disc = tagNumber(entry.disc) ?? (numberedDisc ? Number(numberedDisc[1]) : 1);
   const track = tagNumber(entry.track) ??
     (numberedDisc ? Number(numberedDisc[2]) : numberedTrack ? Number(numberedTrack[1]) : null);
@@ -130,6 +130,8 @@ function librarySelect(label, selected, options, onChange) {
   wrapper.append(select);
   byId("view-actions").append(wrapper);
 }
+
+Object.assign(current, readBrowsePreferences());
 
 function node(tag, className, text) {
   const result = document.createElement(tag);
