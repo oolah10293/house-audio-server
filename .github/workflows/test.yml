@@ -17,3 +17,7 @@ jobs:
         run: python -m py_compile house_audio_server.py
       - name: Unit tests
         run: python -m unittest discover -s tests -v
+      - name: Browser JavaScript syntax and sorting tests
+        run: |
+          node --check web/house.js
+          node tests/test_house_browse.js
