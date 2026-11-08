@@ -1904,6 +1904,7 @@ def normalize_library_entry(fields: Dict[str, str]) -> Dict[str, object]:
                 "albumArtist": fields.get("albumartist"),
                 "album": fields.get("album"),
                 "track": fields.get("track"),
+                "disc": fields.get("disc"),
                 "date": fields.get("date"),
                 "durationSeconds": (
                     to_float(fields.get("duration"))
