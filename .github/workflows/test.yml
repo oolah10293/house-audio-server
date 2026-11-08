@@ -21,3 +21,13 @@ jobs:
         run: |
           node --check web/house.js
           node tests/test_house_browse.js
+      - name: Package installable House Music source
+        run: |
+          git archive --format=zip --output=house-audio-server-v0.14.1.zip HEAD
+          sha256sum house-audio-server-v0.14.1.zip
+      - name: Upload install package
+        uses: actions/upload-artifact@v4
+        with:
+          name: house-audio-server-v0.14.1
+          path: house-audio-server-v0.14.1.zip
+          if-no-files-found: error
