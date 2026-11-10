@@ -35,6 +35,8 @@ class Subwoofers:
         self._lock = threading.RLock()
         self._configs = []
         self._reports = {}
+        # One-shot resets, rearmed when a parent returns or the sub disconnects.
+        self._fallback_applied = {}
         if self.path is not None:
             try:
                 raw = self.path.read_text(encoding='utf-8')
@@ -47,7 +49,8 @@ class Subwoofers:
                 raise ValueError('Invalid subwoofer settings version')
             configs = data.get('subwoofers')
             self._validate_all(configs)
-            self._configs = configs
+            self._configs = [dict(c, fallbackVolumePercent=c.get("fallbackVolumePercent", 25))
+                             for c in configs]
 
     @staticmethod
     def _invalid(detail, status=400):
@@ -59,8 +62,12 @@ class Subwoofers:
             cls._invalid('At most 32 subwoofers are supported')
         ids, renderers = set(), set()
         for item in configs:
-            if not isinstance(item, dict) or set(item) != {'id', 'name', 'rendererId', 'parentRendererIds'}:
-                cls._invalid('Provide name, rendererId and parentRendererIds')
+            required = {'id', 'name', 'rendererId', 'parentRendererIds'}
+            if not isinstance(item, dict) or not required <= set(item) or set(item) - (required | {'fallbackVolumePercent'}):
+                cls._invalid('Provide name, rendererId, parentRendererIds and optional fallbackVolumePercent')
+            volume = item.get('fallbackVolumePercent', 25)
+            if type(volume) is not int or not 0 <= volume <= 100:
+                cls._invalid('Fallback volume must be a whole percentage from 0 to 100')
             if not identifier(item['id']) or not identifier(item['rendererId']):
                 cls._invalid('Invalid subwoofer or renderer ID')
             name = item['name']
@@ -90,11 +97,13 @@ class Subwoofers:
 
     def save(self, payload, snap):
         with self._lock:
-            if set(payload) - {'id', 'name', 'rendererId', 'parentRendererIds'}:
+            if set(payload) - {'id', 'name', 'rendererId', 'parentRendererIds', 'fallbackVolumePercent'}:
                 self._invalid('Unknown configuration field')
             sub_id = payload.get('id')
             old = self._get(sub_id) if sub_id is not None else None
-            candidate = dict(payload, id=old['id'] if old else 'sub-' + secrets.token_hex(8))
+            candidate = dict(payload, id=old['id'] if old else 'sub-' + secrets.token_hex(8),
+                             fallbackVolumePercent=payload.get(
+                                 'fallbackVolumePercent', old.get('fallbackVolumePercent', 25) if old else 25))
             updated = [candidate if s['id'] == sub_id else s for s in self._configs]
             if old is None:
                 updated.append(candidate)
@@ -117,6 +126,55 @@ class Subwoofers:
                 raise SubwooferError(503, 'subwoofer_write_failed',
                                      'Could not confirm settings save; reload before retrying') from exc
             return copy.deepcopy(candidate)
+
+    def fallback_targets(self, snap):
+        """Plan a one-time Snapcast volume reset using only healthy presence data.
+
+        A reachable Snapserver with no present assigned parent qualifies as a
+        departure. A missing/unreachable Snapserver never does. Only a present
+        subwoofer is targeted, preserving its existing Snapcast mute flag.
+        """
+        with self._lock:
+            if not snap.get('reachable'):
+                # Unknown is not a disconnect. Keep the one-shot record so
+                # recovery does not override a manual volume adjustment.
+                return []
+            clients = {c['id']: c for c in snap.get('clients', [])
+                       if isinstance(c, dict) and identifier(c.get('id'))}
+            targets = []
+            registered = set()
+            for config in self._configs:
+                sub_id, renderer_id = config['id'], config['rendererId']
+                registered.add(sub_id)
+                token = (renderer_id, config.get('fallbackVolumePercent', 25),
+                         tuple(config['parentRendererIds']))
+                child = clients.get(renderer_id)
+                if (any(clients.get(p, {}).get('present') for p in config['parentRendererIds'])
+                        or child is None or not child.get('present')):
+                    self._fallback_applied.pop(sub_id, None)
+                    continue
+                if self._fallback_applied.get(sub_id) == token:
+                    continue
+                current = child.get('volumePercent')
+                if type(current) is int and current == token[1]:
+                    self._fallback_applied[sub_id] = token
+                    continue
+                targets.append((sub_id, renderer_id, token[1], bool(child.get('muted')), token))
+            for sub_id in set(self._fallback_applied) - registered:
+                self._fallback_applied.pop(sub_id, None)
+            return targets
+
+    def mark_fallback_applied(self, sub_id, token):
+        """Acknowledge only successful commands for the still-current settings."""
+        with self._lock:
+            try:
+                config = self._get(sub_id)
+            except SubwooferError:
+                return
+            current = (config['rendererId'], config.get('fallbackVolumePercent', 25),
+                       tuple(config['parentRendererIds']))
+            if current == token:
+                self._fallback_applied[sub_id] = token
 
     def demand(self, sub_id, presence):
         with self._lock:

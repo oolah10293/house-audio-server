@@ -1,5 +1,9 @@
 """Regression coverage for the shared HOUSE browser controller."""
 import unittest
+import http.client
+import threading
+from pathlib import Path
+from http.server import ThreadingHTTPServer
 from unittest.mock import Mock, patch
 
 import house_audio_server as h
@@ -36,6 +40,39 @@ class HouseWebRouteTests(unittest.TestCase):
                 handler.do_GET()
                 handler._page_asset.assert_called_once_with(*asset)
                 handler._json.assert_not_called()
+
+    def test_real_http_serves_browser_and_subwoofer_assets(self):
+        # Prevent another fallback-only build from silently removing the
+        # established root browser UI while retaining a green API test suite.
+        server = ThreadingHTTPServer(("127.0.0.1", 0), h.ApiHandler)
+        thread = threading.Thread(target=server.serve_forever,
+                                  kwargs={"poll_interval": 0.01}, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        for path, expected in (
+            ("/", b"<html"), ("/house.js", b"const "),
+            ("/house.css", b"body"), ("/subwoofers", b"Fallback"),
+            ("/subwoofers.js", b"fallbackVolumePercent"),
+        ):
+            with self.subTest(path=path):
+                conn = http.client.HTTPConnection(*server.server_address, timeout=2)
+                try:
+                    conn.request("GET", path)
+                    resp = conn.getresponse()
+                    body = resp.read()
+                finally:
+                    conn.close()
+                self.assertEqual(resp.status, 200)
+                self.assertIn(expected.lower(), body.lower())
+
+    def test_installer_retains_every_house_browser_asset(self):
+        installer = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
+        for filename in ("house.html", "house.css", "house.js",
+                         "subwoofers.html", "subwoofers.css", "subwoofers.js"):
+            self.assertIn("web/" + filename, installer)
+
 
 
 class ExistingQueueSelectionTests(unittest.TestCase):
