@@ -8,17 +8,18 @@
 <body>
 <main>
 <header><a class="brand" href="/subwoofers">HOUSE AUDIO</a><span id="connection" class="badge">Connecting…</span></header>
-<section class="intro"><div><p class="eyebrow">SPEAKER SETTINGS</p><h1>Subwoofers</h1><p>Choose which speakers wake each sub. Any selected speaker can activate it.</p></div><button id="add" type="button">+ Add subwoofer</button></section>
+<section class="intro"><div><p class="eyebrow">SPEAKER SETTINGS</p><h1>Subwoofers</h1><p>Choose which speakers wake each sub, and set the volume it returns to when all assigned speakers leave.</p></div><button id="add" type="button">+ Add subwoofer</button></section>
 <p id="message" role="status" aria-live="polite"></p>
 <section id="registration" class="card" hidden>
 <h2>Add a subwoofer</h2><p class="muted">Power on the sub and its speakers first so they appear in the lists.</p>
 <form id="add-form"><label>Name<input id="new-name" maxlength="120" required placeholder="Bose Sub" autocomplete="off"></label>
 <label>Subwoofer device<select id="new-renderer" required></select></label>
 <fieldset><legend>Speakers that activate this sub</legend><div id="new-parents" class="choices"></div></fieldset>
+<label>Fallback volume when all assigned speakers disconnect<input id="new-fallback" type="range" min="0" max="100" step="1" value="25"><output id="new-fallback-value" for="new-fallback">25%</output></label>
 <div class="actions"><button type="submit">Register subwoofer</button><button id="cancel" class="secondary" type="button">Cancel</button></div></form>
 </section>
 <div id="cards"></div>
 <section id="empty" class="empty" hidden><h2>No subwoofers registered yet</h2><p>Add your Bose sub, then select the speakers it should follow.</p><p class="muted">Registration tells the server this is a dependent sub. Automatic standby and status feedback also need the new subwoofer firmware.</p></section>
-<footer><strong>30-second standby delay</strong><p>In Auto, the sub waits 30 seconds after its last assigned speaker disappears. Manual modes live in the sub’s existing controls. Status here is reported by the sub; a missing report is shown as unknown.</p></footer>
+<footer><strong>30-second standby delay</strong><p>In Auto, the Bose waits 30 seconds before standby. A missing assigned speaker resets Snapcast volume once to the configured fallback level; a Snapserver outage does not. The sub’s existing mute/standby and Home Assistant tuning remain unchanged.</p></footer>
 </main>
 </body></html>
