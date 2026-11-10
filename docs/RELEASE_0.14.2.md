@@ -81,8 +81,12 @@ git switch --detach e5c598224aa59d10cb37b58a9ff08927c3fe7932
 sudo sh ./install.sh
 ```
 
-This returns to the pre-integration browser source and does not delete
-saved subwoofer settings. Its software simply ignores the additional
-fallback field when reading old settings (the file is still version 1);
-the extra field is accepted only on v0.14.2 settings writes, so do not
-change sub assignments on v0.14.1 until you re-upgrade.
+**Important:** The pre-release v0.14.1 server accepts only the four original
+configuration keys. If any subwoofer settings were saved using v0.14.2,
+the persisted entries may include `fallbackVolumePercent`, and the older
+server **will fail on startup** until those fields are removed. Do not
+attempt a downgrade with such settings unchanged. Back up
+`/var/lib/house-audio-server/subwoofers.json` and strip only the new
+`fallbackVolumePercent` keys before restarting v0.14.1. This sacrifices
+custom fallback values but preserves the assigned renderers and names.
+The stored subwoofer config path can be overridden by the service environment.
