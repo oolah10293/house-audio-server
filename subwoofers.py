@@ -136,7 +136,8 @@ class Subwoofers:
         """
         with self._lock:
             if not snap.get('reachable'):
-                self._fallback_applied.clear()
+                # Unknown is not a disconnect. Keep the one-shot record so
+                # recovery does not override a manual volume adjustment.
                 return []
             clients = {c['id']: c for c in snap.get('clients', [])
                        if isinstance(c, dict) and identifier(c.get('id'))}

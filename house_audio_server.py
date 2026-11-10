@@ -39,7 +39,7 @@ from radio_stations import (RadioError, StationStore, probe_station,
                             validate_stream_url, validate_station_name)
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.13.2"
+SERVICE_VERSION = "0.14.2"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -625,7 +625,7 @@ class SnapcastMonitor:
         self._thread: Optional[threading.Thread] = None
         self._request_id = 0
         self._snapshot_received_at = None
-        self.volume_fallback = None  # Set after Subwoofers store is loaded.
+        self.volume_fallback = None  # Registered after Subwoofers is loaded.
         self._snapshot: Dict[str, object] = {
             "reachable": False,
             "host": self.host,
@@ -706,7 +706,7 @@ class SnapcastMonitor:
                 return status
 
     def _set_client_volume(self, renderer_id: str, percent: int, muted: bool) -> None:
-        """Change a single Snapcast client's software volume, preserving mute."""
+        """Set one Snapcast client volume while retaining its mute flag."""
         request_id = self._next_id()
         request = {
             "id": request_id, "jsonrpc": "2.0", "method": "Client.SetVolume",
@@ -912,16 +912,15 @@ class SnapcastMonitor:
         while not self._stop.is_set():
             try:
                 self._apply_status(self._fetch_status())
-                # A healthy snapshot is required before changing volume.
-                # These are one-shot changes, not continuous enforcement.
+                # Only healthy Snapserver observations can trigger a one-shot
+                # fallback; this never changes music, transport, or other nodes.
                 if self.volume_fallback is not None:
                     for sub_id, renderer_id, percent, muted, token in self.volume_fallback.fallback_targets(self.snapshot()):
                         try:
                             self._set_client_volume(renderer_id, percent, muted)
                         except (OSError, SnapcastError) as exc:
-                            # A failed volume command is retried on the next
-                            # healthy poll. It doesn't invalidate presence.
-                            print(f"Subwoofer {sub_id} fallback volume pending: {exc}", flush=True)
+                            # Keep the volume pending for the next healthy poll.
+                            print(f"Subwoofer {sub_id} fallback pending: {exc}", flush=True)
                         else:
                             self.volume_fallback.mark_fallback_applied(sub_id, token)
                 wait_seconds = self.poll_seconds
@@ -1950,6 +1949,7 @@ def normalize_library_entry(fields: Dict[str, str]) -> Dict[str, object]:
                 "albumArtist": fields.get("albumartist"),
                 "album": fields.get("album"),
                 "track": fields.get("track"),
+                "disc": fields.get("disc"),
                 "date": fields.get("date"),
                 "durationSeconds": (
                     to_float(fields.get("duration"))
@@ -2091,7 +2091,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         try:
-            assets = {"/subwoofers": ("subwoofers.html", "text/html; charset=utf-8"),
+            assets = {"/": ("house.html", "text/html; charset=utf-8"),
+                      "/house": ("house.html", "text/html; charset=utf-8"),
+                      "/house/": ("house.html", "text/html; charset=utf-8"),
+                      "/house.js": ("house.js", "text/javascript; charset=utf-8"),
+                      "/house.css": ("house.css", "text/css; charset=utf-8"),
+                      "/subwoofers": ("subwoofers.html", "text/html; charset=utf-8"),
                       "/subwoofers/": ("subwoofers.html", "text/html; charset=utf-8"),
                       "/subwoofers.js": ("subwoofers.js", "text/javascript; charset=utf-8"),
                       "/subwoofers.css": ("subwoofers.css", "text/css; charset=utf-8")}
@@ -2349,7 +2354,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
                 if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
                             "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder",
-                            "/radio/play", "/radio/resume-playlist"}:
+                            "/queue/play", "/radio/play", "/radio/resume-playlist"}:
                     # Readiness is monotonic for this process. A pending reset may
                     # not acknowledge a new queue/command and later erase it.
                     MPD_STARTUP.require_ready()
@@ -2419,6 +2424,21 @@ class ApiHandler(BaseHTTPRequestHandler):
                             RADIO.stop(mpd)
                         self._mpd_state_response()
                         return
+
+                if path == "/queue/play":
+                    if set(payload) != {"songId"} or type(payload["songId"]) is not int or payload["songId"] < 0:
+                        raise ApiError(400, "invalid_request", "Provide a nonnegative songId")
+                    if RADIO.playlist_resume.status == "uncertain":
+                        raise ApiError(409, "playlist_resume_uncertain", "Select a station or folder first")
+                    RADIO.reconcile(mpd, mpd.state())
+                    if RADIO.station is not None:
+                        raise ApiError(409, "live_stream_operation", "Select a folder to play library queue entries")
+                    if not any(song.get("id") == payload["songId"] for song in mpd.queue()):
+                        raise ApiError(409, "stale_queue", "Queue entry no longer exists; refresh the queue")
+                    explicit_transport()
+                    mpd.command(f"playid {payload['songId']}")
+                    self._mpd_state_response()
+                    return
 
                 if path == "/queue/reorder":
                     if set(payload) != {"songIds", "queueVersion"}:

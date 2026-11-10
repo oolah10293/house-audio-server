@@ -2,7 +2,15 @@
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-**Current source release: v0.13.1 — Resume Playlist decoder-readiness fix.**
+**Current source release: v0.14.1 — House Music browser library sorting.**
+Adds independently selectable Filename/Metadata display and context-sensitive
+sorting in the browser Library. Folder playback follows the chosen order,
+with disc-aware CD album sequencing and modified-date options. The Resume
+Playlist control is repositioned. This retains the v0.14.0 browser features
+and v0.13.1 server corrections. See
+[release notes](docs/RELEASE_0.14.1.md).
+
+**Previous source release: v0.13.1 — Resume Playlist decoder-readiness fix.**
 The server waits for the restored file's decoder while keeping the track paused,
 then restores its saved position once. This addresses a startup race matching the
 `seekcur: Not seekable` failure reported with House Music v0.4.0.
@@ -41,7 +49,18 @@ The important session distinctions are:
 
 **Current requirements and implementation status:** the 2026-10-01 independent-app decision in [SESSION_BEHAVIOR §8](docs/SESSION_BEHAVIOR.md) supersedes the former active-SMB return-home requirement. The former v0.9.0 handoff API is absent from the v0.12.0 source baseline; independent apps must not call it. The historical diagnostics recorder is also absent; both sets of old endpoints return 404, as checked by the current HTTP tests. Existing single-HOUSE authority, passive startup, pause/retention, and final-node rules remain in force. Bluetooth automation is retained; House Music v0.1.1 implements manual mute/unmute for outputs including a headphone jack, pending phone acceptance as tracked in the [Android roadmap](https://github.com/oolah10293/smb-music-player/blob/main/docs/ROADMAP.md). Regression evidence and checks live in [HOUSE_VALIDATION.md](https://github.com/oolah10293/smb-music-player/blob/main/docs/HOUSE_VALIDATION.md). Dated release sections below describe their historical implementations.
 
-The accepted browser interface is another folder-first controller alongside the Android and Windows players. It should share their Pi-side control service rather than introduce a different player or queue. Detailed edge cases and implementation questions are explicitly separated from confirmed decisions in the behavior document.
+The browser interface is implemented in the v0.14.1
+source at `/` (also `/house`) on the existing server's port 8787.
+Its three assets are `web/house.html`, `web/house.css`, and `web/house.js`.
+The page browses folder-first, controls transport and playlists, sorts and
+selects existing queue entries, manages radio stations and Resume Playlist,
+changes the passive default folder, and shows read-only speaker status.
+It shares the same Pi control/session service as Android and Windows, not a
+separate player. Browser audio rendering is not required. The phone app and
+subwoofer settings web page remain independent and unchanged.
+Deployment and device/browser acceptance are pending. Detailed contract and
+installation notes are in [docs/API.md](docs/API.md) and
+[docs/RELEASE_0.14.1.md](docs/RELEASE_0.14.1.md).
 
 ## Permanent server host
 

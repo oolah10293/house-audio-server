@@ -90,6 +90,22 @@ class SubFallbackTests(unittest.TestCase):
         self.snap["reachable"] = True
         self.assertEqual(len(self.targets()), 1)
 
+    def test_server_outage_does_not_reapply_previous_reset(self):
+        self.snap["clients"][1]["present"] = False
+        self.apply()
+        self.snap["clients"][0]["volumePercent"] = 70
+        self.snap["reachable"] = False
+        self.assertEqual(self.targets(), [])
+        self.snap["reachable"] = True
+        # Restored server visibility alone must not reset the manually set 70%.
+        self.assertEqual(self.targets(), [])
+
+    def test_unmuted_sub_remains_unmuted_after_reset(self):
+        self.snap["clients"][1]["present"] = False
+        self.snap["clients"][0]["muted"] = False
+        action = self.apply()
+        self.assertEqual(action[0][1:4], (SUB, 25, False))
+
     def test_offline_sub_waits_until_present(self):
         self.snap["clients"][1]["present"] = False
         self.snap["clients"][0]["present"] = False

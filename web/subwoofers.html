@@ -7,8 +7,8 @@
 </head>
 <body>
 <main>
-<header><a class="brand" href="/subwoofers">HOUSE AUDIO</a><span id="connection" class="badge">Connecting…</span></header>
-<section class="intro"><div><p class="eyebrow">SPEAKER SETTINGS</p><h1>Subwoofers</h1><p>Choose which speakers wake each sub, and set the volume it returns to when all assigned speakers leave.</p></div><button id="add" type="button">+ Add subwoofer</button></section>
+<header><a class="brand" href="/">← HOUSE MUSIC</a><span id="connection" class="badge">Connecting…</span></header>
+<section class="intro"><div><p class="eyebrow">SPEAKER SETTINGS</p><h1>Subwoofers</h1><p>Choose which speakers wake each sub, plus the volume it returns to when all assigned speakers leave.</p></div><button id="add" type="button">+ Add subwoofer</button></section>
 <p id="message" role="status" aria-live="polite"></p>
 <section id="registration" class="card" hidden>
 <h2>Add a subwoofer</h2><p class="muted">Power on the sub and its speakers first so they appear in the lists.</p>
@@ -20,6 +20,6 @@
 </section>
 <div id="cards"></div>
 <section id="empty" class="empty" hidden><h2>No subwoofers registered yet</h2><p>Add your Bose sub, then select the speakers it should follow.</p><p class="muted">Registration tells the server this is a dependent sub. Automatic standby and status feedback also need the new subwoofer firmware.</p></section>
-<footer><strong>30-second standby delay</strong><p>In Auto, the Bose waits 30 seconds before standby. A missing assigned speaker resets Snapcast volume once to the configured fallback level; a Snapserver outage does not. The sub’s existing mute/standby and Home Assistant tuning remain unchanged.</p></footer>
+<footer><strong>30-second standby delay</strong><p>In Auto, the Bose waits 30 seconds before standby. A confirmed parent departure resets Snapcast volume once to the configured fallback level; an unavailable Snapserver does not. Existing mute, standby, and Home Assistant controls are unchanged.</p></footer>
 </main>
 </body></html>
