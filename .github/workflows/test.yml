@@ -2,7 +2,7 @@ name: Test house-audio-server
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/house-music-0.14.2']
   pull_request:
   workflow_dispatch:
 
@@ -16,6 +16,8 @@ jobs:
           python-version: "3.13"
       - name: Compile
         run: python -m py_compile house_audio_server.py
+      - name: Check installer shell syntax
+        run: sh -n install.sh
       - name: Unit tests
         run: python -m unittest discover -s tests -v
       - name: Browser JavaScript syntax and sorting tests
@@ -23,17 +25,37 @@ jobs:
           node --check web/house.js
           node --check web/subwoofers.js
           node tests/test_house_browse.js
-      # Release packaging only on an explicitly requested workflow run.
-      # PRs remain test-only and cannot generate an installer artifact.
+      # This explicitly authorized release branch packages only on its own push.
+      # PRs and unrelated branches run tests without packaging a release.
       - name: Package installable House Music source
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/release/house-music-0.14.2'
         run: |
-          git archive --format=zip --output=house-audio-server-v0.14.1.zip HEAD
-          sha256sum house-audio-server-v0.14.1.zip
+          git archive --format=zip --output=house-audio-server-v0.14.2.zip HEAD
+          sha256sum house-audio-server-v0.14.2.zip > house-audio-server-v0.14.2.sha256
+          cat house-audio-server-v0.14.2.sha256
+          python - <<'PY'
+          from zipfile import ZipFile
+          with ZipFile('house-audio-server-v0.14.2.zip') as z:
+              files = set(z.namelist())
+              required = {'house_audio_server.py', 'subwoofers.py', 'install.sh',
+                          'web/house.html', 'web/house.js', 'web/house.css',
+                          'web/subwoofers.html', 'web/subwoofers.js',
+                          'web/subwoofers.css'}
+              assert required <= files, f"Missing release files: {required - files}"
+              source = z.read('house_audio_server.py').decode()
+              assert 'SERVICE_VERSION = "0.14.2"' in source
+              assert '"/": ("house.html"' in source
+              assert 'SNAPCAST_MONITOR.volume_fallback = SUBWOOFERS' in source
+              install = z.read('install.sh').decode()
+              assert 'Refusing installation' in install
+              print('Package verification: version, browser routes, fallback and installer verified.')
+          PY
       - name: Upload install package
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/release/house-music-0.14.2'
         uses: actions/upload-artifact@v4
         with:
-          name: house-audio-server-v0.14.1
-          path: house-audio-server-v0.14.1.zip
+          name: house-audio-server-v0.14.2
+          path: |
+            house-audio-server-v0.14.2.zip
+            house-audio-server-v0.14.2.sha256
           if-no-files-found: error
