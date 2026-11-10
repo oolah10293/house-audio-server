@@ -57,6 +57,7 @@ function updateStatus(card, sub) {
   card.parents.textContent='Follows: '+sub.parentRendererIds.map(id=>names.get(id)||id).join(' · ');
   card.mode.textContent=modeNames[sub.status.mode] || 'Not reported';
   card.demand.textContent=sub.demand.known?(sub.demand.needed?'Needed':'Not needed'):'Unknown';
+  card.fallback.textContent=sub.fallbackVolumePercent+'%';
   card.feedback.textContent=sub.status.fresh?'Received '+Math.floor(sub.status.ageSeconds)+'s ago':
     'Control feedback unavailable ('+sub.status.detail.toLowerCase()+')';
   card.detail.textContent=sub.status.fresh?sub.status.detail:'';
@@ -65,23 +66,29 @@ function makeCard(sub) {
   const root=element('section',undefined,'card'), header=element('div',undefined,'card-header');
   const title=element('h2',sub.name), state=element('div',undefined,'state');header.append(title,state);
   const summary=element('dl',undefined,'summary');
-  const fields={};for(const [key,label] of [['mode','Mode'],['demand','Pi demand'],['feedback','Status feedback']]) {
+  const fields={};for(const [key,label] of [['mode','Mode'],['demand','Pi demand'],['fallback','Fallback volume'],['feedback','Status feedback']]) {
     const box=element('div'),dd=element('dd');box.append(element('dt',label),dd);summary.append(box);fields[key]=dd;
   }
-  const parents=element('p',undefined,'muted'), detail=element('p',undefined,'muted'), editor=element('details');editor.append(element('summary','Edit assigned speakers'));
+  const parents=element('p',undefined,'muted'), detail=element('p',undefined,'muted'), editor=element('details');editor.append(element('summary','Edit assignments and fallback volume'));
   const form=element('form'), nameLabel=element('label','Name'), name=element('input');name.value=sub.name;name.required=true;name.maxLength=120;nameLabel.append(name);
   const field=element('fieldset');field.append(element('legend','Speakers that activate this sub'));const parentBox=element('div',undefined,'choices');field.append(parentBox);
-  const save=element('button','Save assignments');save.type='submit';
-  form.append(nameLabel,field,save);editor.append(form,element('p','Sub ID: '+sub.id+' · Device: '+sub.rendererId,'device-id'));
+  const fallbackLabel=element('label','Fallback volume when all assigned speakers disconnect');
+  const fallbackInput=element('input'), fallbackValue=element('output',sub.fallbackVolumePercent+'%');
+  fallbackInput.type='range';fallbackInput.min='0';fallbackInput.max='100';
+  fallbackInput.step='1';fallbackInput.value=String(sub.fallbackVolumePercent);
+  fallbackInput.addEventListener('input',()=>{fallbackValue.textContent=fallbackInput.value+'%';});
+  fallbackLabel.append(fallbackInput,fallbackValue);
+  const save=element('button','Save settings');save.type='submit';
+  form.append(nameLabel,field,fallbackLabel,save);editor.append(form,element('p','Sub ID: '+sub.id+' · Device: '+sub.rendererId,'device-id'));
   root.append(header,parents,summary,detail,editor);$('cards').append(root);
   let dirty=false;
   form.addEventListener('input',()=>{dirty=true;});
-  editor.addEventListener('toggle',()=>{if(editor.open && !dirty) {sub=card.config;name.value=sub.name;choices(parentBox,sub.parentRendererIds,sub.rendererId);}});
+  editor.addEventListener('toggle',()=>{if(editor.open && !dirty) {sub=card.config;name.value=sub.name;choices(parentBox,sub.parentRendererIds,sub.rendererId);fallbackInput.value=String(sub.fallbackVolumePercent);fallbackValue.textContent=fallbackInput.value+'%';}});
   form.addEventListener('submit',async e=>{
     e.preventDefault(); if(saving)return;
     const parents=selected(parentBox);if(!parents.length){message('Select at least one speaker.',true);return;}
     saving=true;save.disabled=true;
-    try { const result=await request('/api/subwoofers',{id:sub.id,name:name.value,rendererId:sub.rendererId,parentRendererIds:parents});
+    try { const result=await request('/api/subwoofers',{id:sub.id,name:name.value,rendererId:sub.rendererId,parentRendererIds:parents,fallbackVolumePercent:Number(fallbackInput.value)});
       sub=result.subwoofer;dirty=false;editor.open=false;message('Assignments saved.');
     } catch(e){message(e.message,true);}finally{saving=false;save.disabled=false;await refresh();}
   });
@@ -108,12 +115,13 @@ $('add').addEventListener('click',()=>{
 });
 $('new-renderer').addEventListener('change',()=>choices($('new-parents'),selected($('new-parents')),$('new-renderer').value));
 $('cancel').addEventListener('click',()=>{$('registration').hidden=true;});
+$('new-fallback').addEventListener('input',()=>{$('new-fallback-value').textContent=$('new-fallback').value+'%';});
 $('add-form').addEventListener('submit',async e=>{
   e.preventDefault();if(saving)return;
   const parents=selected($('new-parents'));if(!parents.length){message('Select at least one speaker.',true);return;}
   saving=true;const button=e.target.querySelector('button');button.disabled=true;
-  try{await request('/api/subwoofers',{name:$('new-name').value,rendererId:$('new-renderer').value,parentRendererIds:parents});
-    $('registration').hidden=true;$('add-form').reset();message('Subwoofer registered. Automatic standby needs the updated sub firmware.');
+  try{await request('/api/subwoofers',{name:$('new-name').value,rendererId:$('new-renderer').value,parentRendererIds:parents,fallbackVolumePercent:Number($('new-fallback').value)});
+    $('registration').hidden=true;$('add-form').reset();$('new-fallback-value').textContent='25%';message('Subwoofer registered.');
   }catch(e){message(e.message,true);}finally{saving=false;button.disabled=false;await refresh();}
 });
 refresh();setInterval(refresh,3000);
