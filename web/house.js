@@ -4,6 +4,10 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
+function setTextIfChanged(id, text) {
+  const element = byId(id);
+  if (element.textContent !== text) element.textContent = text;
+}
 const current = {
   view: "browse", folder: "", entries: [], search: "",
   displayMode: "metadata",
@@ -285,13 +289,14 @@ function renderPlayer() {
   const playing = mpd.transport === "play";
   const song = mpd.song || {};
   const radioName = source.station?.name || "Internet radio";
-  byId("source-label").textContent = radio ? "LIVE RADIO · " + radioName : "YOUR COLLECTION";
-  byId("track-title").textContent = radio
+  // Do not recreate unchanged text nodes during polling: it clears browser text selection.
+  setTextIfChanged("source-label", radio ? "LIVE RADIO · " + radioName : "YOUR COLLECTION");
+  setTextIfChanged("track-title", radio
     ? (song.title || radioName)
-    : niceName(song) === "Unknown track" ? "Nothing playing" : niceName(song);
-  byId("track-subtitle").textContent = radio
+    : niceName(song) === "Unknown track" ? "Nothing playing" : niceName(song));
+  setTextIfChanged("track-subtitle", radio
     ? (song.artist || radioName)
-    : (song.artist || song.album || (song.file ? fileName(song.file) : "Choose a folder or a radio station"));
+    : (song.artist || song.album || (song.file ? fileName(song.file) : "Choose a folder or a radio station")));
   const play = byId("play-pause");
   play.textContent = playing ? "Ⅱ" : "▶";
   play.setAttribute("aria-label", playing ? "Pause" : "Play");
