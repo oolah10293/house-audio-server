@@ -39,7 +39,7 @@ from radio_stations import (RadioError, StationStore, probe_station,
                             validate_stream_url, validate_station_name)
 
 SERVICE_NAME = "house-audio-server"
-SERVICE_VERSION = "0.13.1"
+SERVICE_VERSION = "0.13.2"
 
 HTTP_BIND = os.environ.get("HOUSE_AUDIO_BIND", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HOUSE_AUDIO_PORT", "8787"))
@@ -625,6 +625,7 @@ class SnapcastMonitor:
         self._thread: Optional[threading.Thread] = None
         self._request_id = 0
         self._snapshot_received_at = None
+        self.volume_fallback = None  # Set after Subwoofers store is loaded.
         self._snapshot: Dict[str, object] = {
             "reachable": False,
             "host": self.host,
@@ -703,6 +704,38 @@ class SnapcastMonitor:
                 if not isinstance(status, dict):
                     raise SnapcastError("Server.GetStatus omitted server data")
                 return status
+
+    def _set_client_volume(self, renderer_id: str, percent: int, muted: bool) -> None:
+        """Change a single Snapcast client's software volume, preserving mute."""
+        request_id = self._next_id()
+        request = {
+            "id": request_id, "jsonrpc": "2.0", "method": "Client.SetVolume",
+            "params": {"id": renderer_id, "volume": {"percent": percent, "muted": muted}},
+        }
+        with socket.create_connection(
+            (self.host, self.port), timeout=self.connect_timeout
+        ) as sock:
+            sock.settimeout(self.connect_timeout)
+            stream = sock.makefile("rwb", buffering=0)
+            stream.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+            stream.flush()
+            while True:
+                raw = stream.readline()
+                if not raw:
+                    raise SnapcastError("Snapserver closed volume control connection")
+                try:
+                    reply = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(reply, dict) or reply.get("id") != request_id:
+                    continue
+                if "error" in reply:
+                    raise SnapcastError(str(reply["error"]))
+                result = reply.get("result")
+                volume = result.get("volume") if isinstance(result, dict) else None
+                if not isinstance(volume, dict) or volume.get("percent") != percent:
+                    raise SnapcastError("Snapserver did not confirm fallback volume")
+                return
 
     def _set_disconnected(self, error: str) -> None:
         with self._lock:
@@ -879,6 +912,18 @@ class SnapcastMonitor:
         while not self._stop.is_set():
             try:
                 self._apply_status(self._fetch_status())
+                # A healthy snapshot is required before changing volume.
+                # These are one-shot changes, not continuous enforcement.
+                if self.volume_fallback is not None:
+                    for sub_id, renderer_id, percent, muted, token in self.volume_fallback.fallback_targets(self.snapshot()):
+                        try:
+                            self._set_client_volume(renderer_id, percent, muted)
+                        except (OSError, SnapcastError) as exc:
+                            # A failed volume command is retried on the next
+                            # healthy poll. It doesn't invalidate presence.
+                            print(f"Subwoofer {sub_id} fallback volume pending: {exc}", flush=True)
+                        else:
+                            self.volume_fallback.mark_fallback_applied(sub_id, token)
                 wait_seconds = self.poll_seconds
             except (OSError, SnapcastError) as exc:
                 self._set_disconnected(str(exc))
@@ -1804,6 +1849,7 @@ class LibraryUpdates:
 LIBRARY_UPDATES = LibraryUpdates()
 PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
 SUBWOOFERS = Subwoofers(SUBWOOFERS_FILE)
+SNAPCAST_MONITOR.volume_fallback = SUBWOOFERS
 CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE, subwoofers=SUBWOOFERS)
 RADIO_STATIONS = StationStore(RADIO_STATIONS_FILE)
 RADIO = RadioPlayback(RADIO_STATIONS, history=RadioHistory(RADIO_HISTORY_FILE),
