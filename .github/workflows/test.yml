@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -20,12 +21,17 @@ jobs:
       - name: Browser JavaScript syntax and sorting tests
         run: |
           node --check web/house.js
+          node --check web/subwoofers.js
           node tests/test_house_browse.js
+      # Release packaging only on an explicitly requested workflow run.
+      # PRs remain test-only and cannot generate an installer artifact.
       - name: Package installable House Music source
+        if: github.event_name == 'workflow_dispatch'
         run: |
           git archive --format=zip --output=house-audio-server-v0.14.1.zip HEAD
           sha256sum house-audio-server-v0.14.1.zip
       - name: Upload install package
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: house-audio-server-v0.14.1
