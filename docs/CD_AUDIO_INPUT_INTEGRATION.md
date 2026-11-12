@@ -27,3 +27,11 @@ GitHub Actions PR checks are allowed to run **source syntax/unit tests only**. W
 
 Next acceptance on Pi (only after explicit install authorization): verify MPD can play a selected HTTP WAV via gateway through Snapserver; confirm correct track order and clean transitions; verify library resume restores original queue, occurrence, position and playback modes. If MPD fails to decode WAV or stream, preserve user's current production installation and investigate with actual MPD errors rather than assuming success.
 
+
+## Final source-only CI checkpoint — 2026-11-12
+
+**PASS:** Draft PR [#19](https://github.com/oolah10293/house-audio-server/pull/19) run [43259702943](https://github.com/oolah10293/house-audio-server/actions/runs/43259702943) on commit `cd84309c08b2ab1d83dae92b971ecb650bf7ebfe`: **172 Python tests passed**, Python syntax checking and installer shell syntax passed, browser JavaScript syntax and regression tests passed. Source code includes both standalone gateway and core browser/MPD integration, tests for invalid/offline nodes, CD-to-radio-to-CD bookmark continuity, muted-controller resume, and MPD playlist reconstruction. The earlier failing cross-source test was caused by missing mock radio-station-store injection and corrected; final run passed.
+
+**Release steps skipped:** CI's install-package creation and artifact upload conditions were false for this draft PR. Nothing was installed on the user's Pi and no software release/installer was created. Development remains unmerged.
+
+**Unverified physical acceptance:** Actual MPD read/decoder and HTTP queue transition timing through the XIAO's one-client WAV service, synchronized Snapserver playback and CD-to-library audible transitions. The next authorized build/deployment must preserve the currently working `0.14.2` installation, and establish MPD decoder success before considering production merge.
