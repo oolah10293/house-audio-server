@@ -183,6 +183,31 @@ class CdPlaybackHttpTests(unittest.TestCase):
         self.assertEqual(self.request("/inputs/resume-playlist", {"snapshotId": token})[0], 200)
         self.assertEqual(self.mpd.commands, before)
 
+    def test_switching_radio_and_cd_keeps_one_original_library_bookmark(self):
+        radio_station, _ = self.radio.stations.add(
+            "https://radio.example/modern-rock", "Modern Rock", generated_name="Modern Rock")
+        cd = self.play_cd(1)
+        token = cd["source"]["resumePlaylist"]["snapshotId"]
+        status, result = self.request("/radio/play", {"stationId": radio_station["id"]})
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["source"]["type"], "radio")
+        self.assertEqual(result["source"]["resumePlaylist"]["snapshotId"], token)
+        again = self.play_cd(4)
+        self.assertEqual(again["source"]["resumePlaylist"]["snapshotId"], token)
+        self.assertEqual(self.request("/inputs/resume-playlist", {"snapshotId": token})[0], 200)
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertEqual(self.mpd.values["elapsedSeconds"], 47.125)
+
+    def test_cd_playlist_resume_respects_muted_only_controller(self):
+        token = self.play_cd()["source"]["resumePlaylist"]["snapshotId"]
+        self.monitor.nodes.clear()
+        self.registry.attach({"controllerId": "phone", "rendererId": "phone-out"})
+        status, data = self.request("/inputs/resume-playlist", {"snapshotId": token})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["mpd"]["transport"], "pause")
+        self.assertTrue(self.policy.snapshot()["autoPaused"])
+        self.assertEqual(self.mpd.paths, self.original)
+
     def test_invalid_or_offline_sources_never_write_mpd(self):
         before = list(self.mpd.commands)
         for payload in ({"sourceId": "../../evil", "trackNumber": 1},
