@@ -15,6 +15,9 @@ class AutoCdSource:
         self.clock = clock
         self.poll_seconds = poll_seconds
         self.last_poll = None
+        self.latest_sources = None
+        self.source_sample = 0
+        self.handled_sample = 0
         self.seen = {}             # sourceId -> (bootSession, discRevision)
         self.active = None         # (sourceId, bootSession, discRevision)
         self.prior_radio = None    # station selected before automatic takeover
@@ -121,19 +124,29 @@ class AutoCdSource:
         self.last_action = "cd_new_disc_started" if preserve_previous else "cd_connected_autoplay"
         self.last_error = None
 
-    def tick(self, mpd, radio, policy, presence):
+    def refresh(self):
+        """Perform gateway I/O OUTSIDE the MPD write lock, rate limited."""
         now = self.clock()
         if self.last_poll is not None and now - self.last_poll < self.poll_seconds:
             return
         self.last_poll = now
-        if radio.playlist_resume.status == "uncertain":
-            return
         try:
             sources = self.gateway.sources()
         except InputGatewayError as exc:
             # A gateway outage is not evidence that an ESP has disconnected.
             self.last_error = str(exc)
             return
+        self.latest_sources = sources
+        self.source_sample += 1
+
+    def tick(self, mpd, radio, policy, presence):
+        """Handle one stable gateway sample INSIDE the MPD write lock."""
+        if self.source_sample == self.handled_sample or self.latest_sources is None:
+            return
+        self.handled_sample = self.source_sample
+        if radio.playlist_resume.status == "uncertain":
+            return
+        sources = self.latest_sources
 
         by_id = {src.get("sourceId"): src for src in sources if isinstance(src, dict)}
         if self.active is not None:
@@ -164,7 +177,8 @@ class AutoCdSource:
                 return
             elif current_token == self.active:
                 return
-            elif current_token is not None:
+            elif (current_token is not None
+                  and self.seen.get(current_token[0]) != current_token[1:]):
                 # Next disc replaces the CD queue, but retains the ORIGINAL
                 # library bookmark/radio source, never bookmarks another CD.
                 try:
