@@ -199,6 +199,43 @@ class AutoCdSourceTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.radio.station["kind"], "cd")
 
+    def test_eject_reports_no_disc_and_refuses_play(self):
+        self.tick()
+        self.source.update(status="no_disc", tracks=[])
+        self.tick()
+        state = self.radio.snapshot(self.mpd.state())
+        self.assertEqual(state["status"], "no_disc")
+        self.assertIsNone(state["input"]["trackNumber"])
+        self.assertFalse(state["canSkip"])
+        with self.assertRaises(h.ApiError) as error:
+            self.radio.resume(self.mpd)
+        self.assertEqual(error.exception.code, "cd_no_disc")
+
+    def test_previously_stopped_library_stays_stopped_when_unplugged(self):
+        self.mpd.apply("stop")
+        self.tick()
+        self.source["available"] = False
+        self.tick()
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertEqual(self.mpd.values["transport"], "stop")
+
+    def test_previous_library_paused_remains_paused_after_disconnect(self):
+        self.mpd.apply("pause 1")
+        self.tick()
+        self.source["available"] = False
+        self.tick()
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertEqual(self.mpd.values["transport"], "pause")
+
+    def test_unplug_with_no_speakers_restores_library_paused(self):
+        self.tick()
+        self.monitor.nodes.clear()
+        self.tick()
+        self.source["available"] = False
+        self.tick()
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertEqual(self.mpd.values["transport"], "pause")
+
     def test_empty_previous_queue_stops_cleanly_when_unplugged(self):
         self.mpd.apply("stop")
         self.mpd.apply("clear")
