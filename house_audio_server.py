@@ -2494,7 +2494,12 @@ class ApiHandler(BaseHTTPRequestHandler):
                 def explicit_transport():
                     PASSIVE_SESSION_POLICY.explicit_transport(mpd)
 
+                def manual_source_choice():
+                    if PASSIVE_SESSION_POLICY.auto_cd is not None:
+                        PASSIVE_SESSION_POLICY.auto_cd.manual_source_choice()
+
                 def leave_radio():
+                    manual_source_choice()
                     explicit_transport()
                     if RADIO.station is not None or RADIO.pending_station is not None:
                         RADIO.reconcile(mpd, mpd.state())
@@ -2513,12 +2518,14 @@ class ApiHandler(BaseHTTPRequestHandler):
                         with PASSIVE_SESSION_POLICY._lock:
                             PASSIVE_SESSION_POLICY._auto_paused_state = PASSIVE_SESSION_POLICY._session_identity(state)
 
+                    manual_source_choice()
                     RADIO.resume_playlist(mpd, payload["snapshotId"], explicit_transport,
                                           hold, mark_retained_pause)
                     self._mpd_state_response()
                     return
 
                 if path == "/inputs/play":
+                    manual_source_choice()
                     explicit_transport()
                     RADIO.reconcile(mpd, mpd.state())
                     RADIO.select(mpd, selected_input)
@@ -2529,6 +2536,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     if set(payload) != {"stationId"}:
                         raise ApiError(400, "invalid_request", "Provide only stationId")
                     station = RADIO_STATIONS.get(payload["stationId"])
+                    manual_source_choice()
                     explicit_transport()
                     RADIO.reconcile(mpd, mpd.state())
                     RADIO.select(mpd, station)
