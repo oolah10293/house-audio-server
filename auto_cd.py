@@ -23,6 +23,7 @@ class AutoCdSource:
         self.prior_radio = None    # station selected before automatic takeover
         self.prior_transport = None
         self.disc_ejected = False
+        self.missing_since = None
         self.last_error = None
         self.last_action = "waiting_for_cd"
 
@@ -54,6 +55,7 @@ class AutoCdSource:
         self.prior_radio = None
         self.prior_transport = None
         self.disc_ejected = False
+        self.missing_since = None
 
     def _restore(self, mpd, radio, policy, presence):
         # Called only while the selected CD queue is still ours. Never
@@ -121,6 +123,7 @@ class AutoCdSource:
         radio.select(mpd, selected)
         self.active = token
         self.disc_ejected = False
+        self.missing_since = None
         self.last_action = "cd_new_disc_started" if preserve_previous else "cd_connected_autoplay"
         self.last_error = None
 
@@ -161,6 +164,16 @@ class AutoCdSource:
                 self._end_ownership()
                 self.last_action = "cd_manual_source_override"
             elif current is None or current.get("available") is False:
+                if current is None:
+                    # The gateway registry is in memory. A gateway restart
+                    # briefly erases its records even if the ESP never left.
+                    # Require 18 continuous seconds missing before declaring
+                    # physical disconnect. An explicit stale gateway entry has
+                    # already waited that time, so can be acted upon now.
+                    if self.missing_since is None:
+                        self.missing_since = self.clock()
+                    if self.clock() - self.missing_since < 18:
+                        return
                 try:
                     self._restore(mpd, radio, policy, presence)
                 except Exception as exc:
@@ -170,15 +183,18 @@ class AutoCdSource:
                     self.last_action = "cd_disconnect_restore_failed"
                 return
             elif not self.ready(current):
+                self.missing_since = None
                 if not self.disc_ejected:
                     radio.eject_cd(mpd)
                     self.disc_ejected = True
                     self.last_action = "cd_ejected_waiting_for_disc"
                 return
             elif current_token == self.active:
+                self.missing_since = None
                 return
             elif (current_token is not None
                   and self.seen.get(current_token[0]) != current_token[1:]):
+                self.missing_since = None
                 # Next disc replaces the CD queue, but retains the ORIGINAL
                 # library bookmark/radio source, never bookmarks another CD.
                 try:
