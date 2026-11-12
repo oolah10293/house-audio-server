@@ -13,7 +13,7 @@ WHAT YOU GET
 
 REQUIREMENTS
   - The separate gateway service is already running at 192.168.1.12:8768
-  - ESP32-S3 CD player v0.2 is already on Wi-Fi and registering
+  - Matching ESP32-S3 automatic-CD firmware is on Wi-Fi and registering (bootSession and discRevision required)
   - Working House Music installation exists at /opt/house-audio-server
   - python3, systemd, and unzip on the Pi
 
@@ -28,11 +28,11 @@ INSTALL
 IMPORTANT
   - Installation restarts the House Music service and interrupts current music.
     House Music's existing restart policy clears its current MPD queue.
-  - It does NOT reinstall, update, stop or restart the CD gateway on port 8768,
+  - It DOES back up, update and restart the independent CD gateway on port 8768.\n  - Installation refuses to proceed if the existing gateway service/file is missing,
     MPD, Snapserver, or any ESP32 firmware.
   - It does NOT change /etc/default/house-audio-server if already configured.
-  - A backup of the previous installation stays under /var/backups/house-audio-server.
-  - This build passed automated source tests. Real MPD/CD-to-Snapcast audio from
+  - A backup of both server and gateway stays under /var/backups/house-audio-server.
+  - Source tests may pass; inspect the matching CI run. Real MPD/CD-to-Snapcast audio from
     the ESP32 has NOT yet been tested at your house.
   - The WAV stream is finite, and CD seeking is disabled for now; CD track
     transitions are the first physical test.
