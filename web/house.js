@@ -13,7 +13,7 @@ const current = {
   displayMode: "metadata",
   sortModes: { filename: null, metadata: null },
   state: null, stateReceivedAt: 0, queue: [], queueVersion: null,
-  stations: [], speakers: [], busy: false, online: false,
+  stations: [], inputs: [], speakers: [], busy: false, online: false,
   pollInFlight: false, browseRequest: 0, notifyTimer: null,
   lastRadioId: null, lastSongId: null
 };
@@ -204,6 +204,7 @@ async function command(path, body = {}) {
     await refreshState();
     if (current.view === "queue") await loadQueue();
     if (current.view === "radio") await loadStations();
+    if (current.view === "inputs") await loadInputs();
     return true;
   } catch (error) {
     notice(error.message || "Could not complete the request");
@@ -273,6 +274,10 @@ async function refreshState() {
       loadQueue().catch((error) => notice(error.message));
     } else if (current.view === "radio" && stationChanged) {
       renderRadio();
+    } else if (current.view === "inputs" &&
+               (data.source?.input?.trackNumber !== old?.source?.input?.trackNumber ||
+                data.source?.type !== old?.source?.type)) {
+      drawInputs();
     }
   } catch (error) {
     status(false);
@@ -286,17 +291,22 @@ function renderPlayer() {
   const mpd = data?.mpd || {};
   const source = data?.source || {};
   const radio = source.type === "radio";
+  const cd = source.type === "cd";
   const playing = mpd.transport === "play";
   const song = mpd.song || {};
   const radioName = source.station?.name || "Internet radio";
   // Do not recreate unchanged text nodes during polling: it clears browser text selection.
-  setTextIfChanged("source-label", radio ? "LIVE RADIO · " + radioName : "YOUR COLLECTION");
+  setTextIfChanged("source-label", radio ? "LIVE RADIO · " + radioName :
+    cd ? "CD PLAYER · " + (source.input?.name || "CD Player") : "YOUR COLLECTION");
   setTextIfChanged("track-title", radio
-    ? (song.title || radioName)
-    : niceName(song) === "Unknown track" ? "Nothing playing" : niceName(song));
+    ? (song.title || radioName) : cd
+      ? "Track " + (source.input?.trackNumber ?? "—")
+      : niceName(song) === "Unknown track" ? "Nothing playing" : niceName(song));
   setTextIfChanged("track-subtitle", radio
-    ? (song.artist || radioName)
-    : (song.artist || song.album || (song.file ? fileName(song.file) : "Choose a folder or a radio station")));
+    ? (song.artist || radioName) : cd
+      ? (source.input?.name || "CD Player") + " · " +
+        (source.input?.trackNumbers?.length || 0) + " tracks"
+      : (song.artist || song.album || (song.file ? fileName(song.file) : "Choose a folder, CD, or radio station")));
   const play = byId("play-pause");
   play.textContent = playing ? "Ⅱ" : "▶";
   play.setAttribute("aria-label", playing ? "Pause" : "Play");
@@ -315,7 +325,7 @@ function renderPlayer() {
   const progress = byId("seek");
   progress.disabled = !canSeek || current.busy;
   const resume = source.resumePlaylist;
-  byId("resume").hidden = !(radio && resume?.available && resume?.snapshotId);
+  byId("resume").hidden = !((radio || cd) && resume?.available && resume?.snapshotId);
   byId("resume").disabled = current.busy;
   tickClock();
 }
@@ -548,6 +558,50 @@ async function deleteStation(station) {
   const ok = await command("/radio/stations/delete", { stationId: station.id });
   if (ok) await loadStations();
 }
+async function loadInputs() {
+  try {
+    const data = await request("/inputs");
+    current.inputs = data.sources || [];
+    if (current.view === "inputs") drawInputs();
+  } catch (error) {
+    current.inputs = [];
+    if (current.view === "inputs") {
+      drawInputs();
+      notice(error.message);
+    }
+  }
+}
+function drawInputs() {
+  if (current.view !== "inputs") return;
+  clearView("WIRELESS AUDIO SOURCES", "CD players");
+  action("⟳ Refresh", loadInputs);
+  const cds = current.inputs.filter((item) => item.kind === "cd");
+  byId("breadcrumbs").textContent = cds.length + " discovered CD players · playback uses the house speakers";
+  if (!cds.length) {
+    empty("No CD players available", "Check that the ESP32 and Pi input gateway are running.");
+    return;
+  }
+  const active = current.state?.source;
+  for (const source of cds) {
+    const ready = Boolean(source.available && source.status === "ready" &&
+                          Array.isArray(source.tracks) && source.tracks.length);
+    row("◉", source.name || "CD Player",
+      (source.available ? "Connected" : "Offline") + " · " +
+      (ready ? source.tracks.length + " audio tracks" : "No readable CD"),
+      () => {}, { iconClass: "cd", disabled: true });
+    if (!ready) continue;
+    const tracks = [...source.tracks].sort((a, b) => a - b);
+    for (const number of tracks) {
+      const selected = active?.type === "cd" &&
+                       active.input?.sourceId === source.sourceId &&
+                       active.input?.trackNumber === number;
+      row("♪", "Track " + number, source.name || "CD Player",
+        () => command("/inputs/play", { sourceId: source.sourceId, trackNumber: number }),
+        { iconClass: "cd", playing: selected });
+    }
+  }
+}
+
 async function loadSpeakers() {
   try {
     const data = await request("/renderers");
@@ -580,7 +634,7 @@ async function loadSettings() {
   } catch (_) { /* Playback works even if settings are unavailable. */ }
 }
 async function selectView(view) {
-  if (!["browse", "queue", "radio", "speakers"].includes(view)) return;
+  if (!["browse", "queue", "radio", "inputs", "speakers"].includes(view)) return;
   current.view = view;
   document.querySelectorAll("[data-view]").forEach((control) => {
     const active = control.dataset.view === view;
@@ -590,6 +644,7 @@ async function selectView(view) {
   if (view === "browse") drawBrowse();
   if (view === "queue") await loadQueue();
   if (view === "radio") await loadStations();
+  if (view === "inputs") await loadInputs();
   if (view === "speakers") await loadSpeakers();
 }
 
@@ -658,7 +713,8 @@ byId("seek").addEventListener("change", (event) => {
 byId("resume").addEventListener("click", () => {
   const bookmark = current.state?.source?.resumePlaylist;
   if (bookmark?.available && bookmark.snapshotId) {
-    command("/radio/resume-playlist", { snapshotId: bookmark.snapshotId });
+    const route = current.state?.source?.type === "cd" ? "/inputs/resume-playlist" : "/radio/resume-playlist";
+    command(route, { snapshotId: bookmark.snapshotId });
   }
 });
 window.addEventListener("pagehide", detach);
