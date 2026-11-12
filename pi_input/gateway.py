@@ -33,11 +33,14 @@ class Source:
     tracks: list
     last_seen: float
     status: str = 'ready'
+    bootSession: str = ''
+    discRevision: int = 0
 
     def view(self, now: float) -> dict:
         return dict(sourceId=self.sourceId, name=self.name, kind=self.kind,
                     ip=self.ip, tracks=self.tracks, status=self.status,
-                    available=(now-self.last_seen) < ALIVE_SECONDS)
+                    available=(now-self.last_seen) < ALIVE_SECONDS,
+                    bootSession=self.bootSession, discRevision=self.discRevision)
 
 
 class Registry:
@@ -57,6 +60,17 @@ class Registry:
         status = data.get('status', 'ready')
         port = data.get('port', 8080)
         tracks = data.get('tracks', [])
+        boot_session = data.get('bootSession', '')
+        disc_revision = data.get('discRevision', 0)
+        if (not isinstance(boot_session, str) or
+                (boot_session and not re.fullmatch(r'[0-9a-fA-F]{16}', boot_session))):
+            raise ValueError('Invalid bootSession')
+        if type(disc_revision) is not int or not 0 <= disc_revision <= 0xffffffff:
+            raise ValueError('Invalid discRevision')
+        if (boot_session and disc_revision == 0 and tracks):
+            raise ValueError('Ready tracks need a positive discRevision')
+        if (not boot_session and disc_revision):
+            raise ValueError('Disc revision requires a boot session')
         if not isinstance(name, str) or not 1 <= len(name) <= 80:
             raise ValueError('Invalid name')
         if not isinstance(kind, str) or kind not in ('cd', 'line-in', 'other'):
@@ -74,7 +88,8 @@ class Registry:
             if len(self.sources) >= 32 and sid not in self.sources:
                 raise ValueError('Source registry full')
             self.sources[sid] = Source(sid, name, kind, str(address), port,
-                                       tracks, self.clock(), status)
+                                       tracks, self.clock(), status,
+                                       boot_session.lower(), disc_revision)
 
     def list(self):
         with self.lock:
