@@ -81,10 +81,10 @@ presence changes, suspended gateway, stopped/paused baseline restoration,
 legacy firmware compatibility, and no-source fallback.
 
 `tests/test_gateway.py` validates new session/revision registration fields.
-**GitHub Actions verification:** 194 Python tests passed, Python source
+**GitHub Actions verification:** 195 Python tests passed, Python source
 compilation/syntax, installer shell syntax and browser JS regression checks
-passed on commit `af29f091cb21d25d2473d178d043f165e06e5072`, run
-[43276800432](https://github.com/oolah10293/house-audio-server/actions/runs/43276800432).
+passed on commit `768ed6db6af571122fb01c13ff687334d87a9eef`, run
+[43277239409](https://github.com/oolah10293/house-audio-server/actions/runs/43277239409).
 The automatic CD installer creation/upload steps were **skipped**.
 The new ESP32 sketch has **not** been compiled or tested on real hardware.
 No physical MPD/Snapcast test has yet been performed.
