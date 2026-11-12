@@ -19,5 +19,11 @@
 
 GitHub Actions PR checks are allowed to run **source syntax/unit tests only**. Workflow packaging steps are gated to the existing release branch and do not run on draft PRs. Do not merge into `main`, deploy to Pi, or package an installer without explicit user authorization.
 
+**CI verification:** Draft PR #19, source-only GitHub Actions on 2026-11-12, ran Python syntax checks, all Python unit tests (including CD selection and gateway proxy), Node JavaScript syntax, and browser regression checks. Packaging and artifact-upload steps were **skipped**; no release was produced. The exact final commit's latest CI result must be checked separately.
+
+**Gateway preservation:** The previously tested `pi_input/gateway.py` and `tests/test_gateway.py` from the existing `feature/audio-input-gateway` branch have been copied unchanged into this branch, so source discovery, audio proxy, and House Music integration are versioned together. The user has already installed the standalone Python gateway in their home directory and registered it as a separate systemd service; these source changes do **not** alter that deployed process.
+
+**Integration caveats:** The XIAO currently serves one finite WAV HTTP connection at a time and lacks HTTP byte-range seeking. The UI therefore disables CD seeking. Consecutive MPD track transitions and Snapcast timing on the physical Pi must be tested: a successful browser WAV download is not equivalent to verified MPD decoding. The browser includes CD source controls; Android House Music app UI is not yet updated.
+
 Next acceptance on Pi (only after explicit install authorization): verify MPD can play a selected HTTP WAV via gateway through Snapserver; confirm correct track order and clean transitions; verify library resume restores original queue, occurrence, position and playback modes. If MPD fails to decode WAV or stream, preserve user's current production installation and investigate with actual MPD errors rather than assuming success.
 
