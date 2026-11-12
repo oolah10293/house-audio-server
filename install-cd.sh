@@ -16,7 +16,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Validate the complete package before touching the installed version.
-for file in install.sh house_audio_server.py input_sources.py \
+for file in install.sh house_audio_server.py input_sources.py auto_cd.py \
   radio_history.py radio_listening.py radio_metadata.py radio_stations.py \
   state_file.py subwoofers.py \
   web/house.html web/house.css web/house.js \
@@ -36,7 +36,7 @@ if ! grep -Fq 'SERVICE_VERSION = "0.14.2-cd1"' house_audio_server.py ||
   exit 1
 fi
 
-python3 -m py_compile house_audio_server.py input_sources.py \
+python3 -m py_compile house_audio_server.py input_sources.py auto_cd.py \
   radio_history.py radio_listening.py radio_metadata.py radio_stations.py \
   state_file.py subwoofers.py
 
