@@ -59,6 +59,27 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             r.register({'sourceId':'x', 'name':'ok', 'kind':'cd', 'tracks':[True]}, '192.168.1.20')
 
+    def test_disc_revision_and_boot_session_are_validated_and_visible(self):
+        r = Registry(clock=lambda: 100)
+        data = {"sourceId": "cd1", "name": "LiteOn", "kind": "cd",
+                "status": "ready", "tracks": [1, 2], "bootSession": "aabbccdd00112233",
+                "discRevision": 1}
+        r.register(data, "192.168.1.20")
+        self.assertEqual(r.list()[0]["bootSession"], "aabbccdd00112233")
+        self.assertEqual(r.list()[0]["discRevision"], 1)
+        data["discRevision"] = 2
+        r.register(data, "192.168.1.20")
+        self.assertEqual(r.list()[0]["discRevision"], 2)
+        for patch in ({"bootSession": "no"}, {"discRevision": -1},
+                      {"discRevision": True}, {"bootSession": ""},
+                      {"discRevision": 0}):
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                r.register({**data, **patch}, "192.168.1.20")
+        # Old source versions remain discoverable but cannot request autoplay.
+        r.register({"sourceId": "legacy", "name": "CD", "kind": "cd",
+                    "tracks": [1]}, "192.168.1.20")
+        self.assertEqual(next(src for src in r.list() if src["sourceId"] == "legacy")["discRevision"], 0)
+
     def test_registry_heartbeat_expiry(self):
         clock = [100.0]
         r = Registry(clock=lambda: clock[0])
