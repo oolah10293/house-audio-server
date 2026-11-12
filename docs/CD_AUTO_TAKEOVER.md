@@ -48,13 +48,18 @@ during an ongoing WAV transfer.
 - Existing radio retries, source control, playlist bookmark and
   passive-renderer session logic remain intact for non-CD sources.
 - The gateway's 18-second liveness window protects against small heartbeat
-  losses; real power-off detection is therefore not instantaneous.
+  losses; real power-off detection is therefore not instantaneous. If the
+  gateway registry briefly empties during a service restart, a separate
+  18-second missing-record grace avoids treating that as a CD unplug.
 - No automatic repeated MPD writes on a failed play; a selected physical
   event is marked handled before attempting the write.
 - Uncertain playlist restoration is not automatically retried; errors are
   held for diagnosis, preventing a second unverified overwrite.
-- Source detection/MPD writes are serialized with deliberate controller
-  commands under the existing MPD write lock.
+- Gateway HTTP discovery runs outside the MPD write lock so an offline
+  gateway cannot freeze user playback controls. The actual observed CD
+  event and its MPD writes are serialized with deliberate controller
+  commands under the existing lock. Manual source selections suppress
+  any already-observed, still-pending CD takeover.
 - To deploy later, the ESP firmware, **deployed** gateway script at
   `/home/ads-suck/gateway.py` (managed by
   `house-audio-input-gateway.service`), and House Music server must all
@@ -76,5 +81,10 @@ presence changes, suspended gateway, stopped/paused baseline restoration,
 legacy firmware compatibility, and no-source fallback.
 
 `tests/test_gateway.py` validates new session/revision registration fields.
-Test results and final commit SHA must be read from the actual GitHub
-Actions run; this document is not a claim of physical validation.
+**GitHub Actions verification:** 194 Python tests passed, Python source
+compilation/syntax, installer shell syntax and browser JS regression checks
+passed on commit `af29f091cb21d25d2473d178d043f165e06e5072`, run
+[43276800432](https://github.com/oolah10293/house-audio-server/actions/runs/43276800432).
+The automatic CD installer creation/upload steps were **skipped**.
+The new ESP32 sketch has **not** been compiled or tested on real hardware.
+No physical MPD/Snapcast test has yet been performed.
