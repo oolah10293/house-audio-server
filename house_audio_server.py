@@ -1432,7 +1432,8 @@ class RadioPlayback:
             return {"type": "cd", "live": False, "station": None,
                     "input": {"sourceId": entry["sourceId"], "name": entry["name"],
                               "trackNumber": track, "trackNumbers": tracks},
-                    "resumePlaylist": resume, "status": self.status,
+                    "resumePlaylist": resume, "status": state.get("transport"),
+                    "lastError": state.get("error") or self.error,
                     "canSeek": False, "canSkip": True,
                     "canShuffle": False, "canRepeat": False}
         if self.station is None or resume["status"] == "uncertain":
@@ -1774,7 +1775,8 @@ class PassiveSessionPolicy:
             mpd = self.mpd_factory()
             state = mpd.state()
             if self.radio.reconcile(mpd, state):
-                self.radio.history.observe(self.radio.station, state, self.radio.intent)
+                if self.radio.station.get("kind") != "cd":
+                    self.radio.history.observe(self.radio.station, state, self.radio.intent)
                 volumes = {c.get("id"): c.get("volumePercent") for c in snap.get("clients", [])}
                 audible = bool(snap.get("reachable")) and any(
                     r["audible"] and not r.get("dependent") and volumes.get(r["rendererId"]) != 0
