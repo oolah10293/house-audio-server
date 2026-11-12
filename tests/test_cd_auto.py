@@ -173,6 +173,22 @@ class AutoCdSourceTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.mpd.values["transport"], "play")
 
+    def test_unplug_restores_muted_controller_library_without_audio(self):
+        self.monitor.nodes.clear()
+        self.monitor.set("phone-out")
+        self.controllers.attach({"controllerId": "phone",
+                                 "rendererId": "phone-out",
+                                 "outputMuted": True,
+                                 "outputReady": True})
+        self.tick()
+        self.assertEqual(self.radio.station["kind"], "cd")
+        self.assertEqual(self.mpd.values["transport"], "pause")
+        self.source["available"] = False
+        self.tick()
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertEqual(self.mpd.values["transport"], "pause")
+        self.assertTrue(self.policy.snapshot()["autoPaused"])
+
     def test_manual_pause_does_not_resume_on_new_speaker(self):
         self.tick()
         self.radio.pause(self.mpd)
