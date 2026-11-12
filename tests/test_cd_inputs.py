@@ -97,7 +97,8 @@ class CdPlaybackHttpTests(unittest.TestCase):
                                              controllers=self.registry, radio=self.radio)
         self.startup = h.MpdStartupBoundary()
         self.startup._ready = True
-        for name, value in (("RADIO", self.radio), ("INPUT_GATEWAY", self.gateway),
+        for name, value in (("RADIO", self.radio), ("RADIO_STATIONS", stations),
+                            ("INPUT_GATEWAY", self.gateway),
                             ("CONTROLLERS", self.registry), ("SNAPCAST_MONITOR", self.monitor),
                             ("PASSIVE_SESSION_POLICY", self.policy), ("MPD_STARTUP", self.startup),
                             ("MpdClient", lambda: self.mpd)):
