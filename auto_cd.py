@@ -50,6 +50,18 @@ class AutoCdSource:
                 "discEjected": self.disc_ejected,
                 "lastAction": self.last_action, "lastError": self.last_error}
 
+    def manual_source_choice(self):
+        """A deliberate source choice wins over any pending observed CD event.
+
+        This also handles a source being discovered just before the user picks
+        radio/library, but before the policy gets the MPD write lock.
+        A later new disc revision or boot session is still eligible.
+        """
+        for source in self.latest_sources or ():
+            token = self.token(source)
+            if token is not None:
+                self.seen[token[0]] = token[1:]
+
     def _end_ownership(self):
         self.active = None
         self.prior_radio = None
