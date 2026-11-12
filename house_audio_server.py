@@ -31,6 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
+from input_sources import InputGateway, InputGatewayError
 from radio_history import RadioHistory
 from radio_listening import RadioListening
 from subwoofers import Subwoofers, SubwooferError
@@ -1076,7 +1077,14 @@ class RadioPlayback:
         if (self.station is not None and (self.empty_selection or self.ending)
                 and state.get("queueLength") == 0):
             return True
-        if self.station is None or state.get("queueLength") != 1:
+        if self.station is None:
+            return False
+        if self.station.get("kind") == "cd":
+            urls = self.station["urls"]
+            if state.get("queueLength") != len(urls):
+                return False
+            return [row.get("file") for row in mpd.queue()] == urls
+        if state.get("queueLength") != 1:
             return False
         song = state.get("song") or {}
         if not song.get("file"):
@@ -1095,7 +1103,8 @@ class RadioPlayback:
             # queue. Resolve that actual result before surrendering ownership.
             if not self._matching_queue(mpd, state):
                 queue = mpd.queue()
-                if not queue or (len(queue) == 1 and queue[0].get("file") == self.pending_station["url"]):
+                expected = self.pending_station.get("urls", [self.pending_station["url"]])
+                if not queue or [row.get("file") for row in queue] == expected:
                     self.station = self.pending_station
                     self.song_id = queue[0].get("id") if queue else None
                     self.empty_selection = not queue
@@ -1128,7 +1137,7 @@ class RadioPlayback:
             self.playlist_resume.clear()
 
     def _capture_history(self, mpd):
-        if self.station is not None:
+        if self.station is not None and self.station.get("kind") != "cd":
             try:
                 state = mpd.state()
                 if self._matching_queue(mpd, state):
@@ -1137,6 +1146,20 @@ class RadioPlayback:
                 self.history.suspend()
 
     def select(self, mpd, station):
+        # Re-selecting a CD track on the same disc does not replace its queue
+        # or recapture the previous library bookmark.
+        if (station.get("kind") == "cd" and self.station is not None
+                and self.station.get("kind") == "cd"
+                and self.station["sourceId"] == station["sourceId"]
+                and self.station["urls"] == station["urls"]
+                and self._matching_queue(mpd, mpd.state())):
+            mpd.command(f'play {station["trackIndex"]}')
+            self.station = dict(station)
+            self.song_id = mpd.state().get("songId")
+            self.intent, self.status = "play", "playing"
+            self.auto_paused = False
+            self.error = None
+            return
         self._capture_history(mpd)
         self.history.end()
         recovering = self.playlist_resume.status == "uncertain"
@@ -1160,16 +1183,18 @@ class RadioPlayback:
         self._name_attempted = None
         self._reset_retry()
         try:
+            urls = station.get("urls", [station["url"]])
             mpd.run("stop", "clear", "clearerror", "random 0", "repeat 0",
-                    "single 0", "consume 0", f'add {mpd_quote(station["url"])}')
+                    "single 0", "consume 0",
+                    *(f'add {mpd_quote(url)}' for url in urls))
             queue = mpd.queue()
-            if len(queue) != 1 or queue[0].get("file") != station["url"]:
-                raise MpdError("MPD did not retain the selected station")
+            if [row.get("file") for row in queue] != urls:
+                raise MpdError("MPD did not retain the selected audio source")
             self.station = dict(station)
-            self.song_id = queue[0].get("id")
+            self.song_id = queue[station.get("trackIndex", 0)].get("id")
             self.pending_station = None
             self.empty_selection = False
-            mpd.command("play 0")
+            mpd.command(f'play {station.get("trackIndex", 0)}')
         except (OSError, MpdError) as exc:
             self.status, self.error = "error", str(exc)
             raise
@@ -1264,6 +1289,11 @@ class RadioPlayback:
         bookmark.error = None
 
     def resume(self, mpd, automatic=False):
+        if self.station is not None and self.station.get("kind") == "cd":
+            mpd.command("play")
+            self.intent, self.status, self.error = "play", "playing", None
+            self.auto_paused = False
+            return
         self.history.suspend()
         self.intent = "stop"
         self.auto_paused = False
@@ -1282,6 +1312,11 @@ class RadioPlayback:
         self.intent, self.status, self.error = "play", "connecting", None
 
     def pause(self, mpd, automatic=False):
+        if self.station is not None and self.station.get("kind") == "cd":
+            self.intent, self.status = "pause", "paused"
+            self.auto_paused = automatic
+            mpd.command("pause 1")
+            return
         self._capture_history(mpd)
         self.history.suspend()
         # Cancel retry before I/O, including when the stop acknowledgement fails.
@@ -1322,7 +1357,15 @@ class RadioPlayback:
         self.forget()
 
     def observe(self, mpd, state):
-        """Called only with known presence and the still-owned station queue."""
+        """Called only with known presence and the still-owned source queue."""
+        if self.station is not None and self.station.get("kind") == "cd":
+            # WAV files have finite duration; a completed CD is not a broken
+            # internet broadcast and must never loop from track 1 as a retry.
+            self.status = state.get("transport") or "stopped"
+            self.error = state.get("error")
+            if self.status == "stop":
+                self.intent = "stop"
+            return
         now = self.clock()
         name = (state.get("song") or {}).get("stationName")
         if name and name != self._name_attempted:
@@ -1381,6 +1424,17 @@ class RadioPlayback:
 
     def snapshot(self, state):
         resume = self.playlist_resume.view()
+        if self.station is not None and self.station.get("kind") == "cd" and resume["status"] != "uncertain":
+            entry = self.station
+            index = state.get("songPosition")
+            tracks = entry["trackNumbers"]
+            track = tracks[index] if type(index) is int and 0 <= index < len(tracks) else entry["trackNumber"]
+            return {"type": "cd", "live": False, "station": None,
+                    "input": {"sourceId": entry["sourceId"], "name": entry["name"],
+                              "trackNumber": track, "trackNumbers": tracks},
+                    "resumePlaylist": resume, "status": self.status,
+                    "canSeek": False, "canSkip": True,
+                    "canShuffle": False, "canRepeat": False}
         if self.station is None or resume["status"] == "uncertain":
             source_type = ("unknown" if resume["status"] == "uncertain" else
                            "library" if state.get("queueLength", 0) else "none")
@@ -1850,6 +1904,7 @@ PASSIVE_DEFAULT_SETTINGS = PassiveDefaultSettings(SETTINGS_FILE)
 SUBWOOFERS = Subwoofers(SUBWOOFERS_FILE)
 SNAPCAST_MONITOR.volume_fallback = SUBWOOFERS
 CONTROLLERS = ControllerRegistry(CONTROLLER_BINDINGS_FILE, subwoofers=SUBWOOFERS)
+INPUT_GATEWAY = InputGateway()
 RADIO_STATIONS = StationStore(RADIO_STATIONS_FILE)
 RADIO = RadioPlayback(RADIO_STATIONS, history=RadioHistory(RADIO_HISTORY_FILE),
                       listening=RadioListening(RADIO_LISTENING_FILE))
@@ -2115,6 +2170,14 @@ class ApiHandler(BaseHTTPRequestHandler):
                     result = SUBWOOFERS.demand(demand_match[1], presence)
                 self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION, **result})
                 return
+            if path == "/inputs":
+                try:
+                    sources = INPUT_GATEWAY.sources()
+                except InputGatewayError as exc:
+                    raise ApiError(503, "input_gateway_unavailable", str(exc)) from exc
+                self._json(200, {"service": SERVICE_NAME, "version": SERVICE_VERSION,
+                                 "sources": sources})
+                return
             if path == "/radio/stations":
                 with MPD_WRITE_LOCK:
                     stations = RADIO.listening.rank(RADIO_STATIONS.list())
@@ -2316,6 +2379,17 @@ class ApiHandler(BaseHTTPRequestHandler):
                                  "station": station})
                 return
 
+            selected_input = None
+            if path == "/inputs/play":
+                if set(payload) != {"sourceId", "trackNumber"}:
+                    raise ApiError(400, "invalid_request", "Provide sourceId and trackNumber")
+                try:
+                    selected_input = INPUT_GATEWAY.cd_selection(payload["sourceId"], payload["trackNumber"])
+                except ValueError as exc:
+                    raise ApiError(400, "invalid_request", str(exc)) from exc
+                except InputGatewayError as exc:
+                    raise ApiError(409, "input_unavailable", str(exc)) from exc
+
             with MPD_WRITE_LOCK:
                 if path == "/library/update":
                     if set(payload) - {"force"} or type(payload.get("force", False)) is not bool:
@@ -2354,7 +2428,8 @@ class ApiHandler(BaseHTTPRequestHandler):
 
                 if path in {"/play", "/pause", "/stop", "/next", "/previous", "/seek",
                             "/shuffle", "/repeat", "/queue/clear", "/queue/replace", "/queue/reorder",
-                            "/queue/play", "/radio/play", "/radio/resume-playlist"}:
+                            "/queue/play", "/radio/play", "/radio/resume-playlist",
+                            "/inputs/play", "/inputs/resume-playlist"}:
                     # Readiness is monotonic for this process. A pending reset may
                     # not acknowledge a new queue/command and later erase it.
                     MPD_STARTUP.require_ready()
@@ -2369,7 +2444,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                         RADIO.reconcile(mpd, mpd.state())
                     RADIO.release(mpd)
 
-                if path == "/radio/resume-playlist":
+                if path in {"/radio/resume-playlist", "/inputs/resume-playlist"}:
                     if set(payload) != {"snapshotId"}:
                         raise ApiError(400, "invalid_request", "Provide only snapshotId")
                     snap = SNAPCAST_MONITOR.snapshot()
@@ -2384,6 +2459,13 @@ class ApiHandler(BaseHTTPRequestHandler):
 
                     RADIO.resume_playlist(mpd, payload["snapshotId"], explicit_transport,
                                           hold, mark_retained_pause)
+                    self._mpd_state_response()
+                    return
+
+                if path == "/inputs/play":
+                    explicit_transport()
+                    RADIO.reconcile(mpd, mpd.state())
+                    RADIO.select(mpd, selected_input)
                     self._mpd_state_response()
                     return
 
@@ -2412,6 +2494,21 @@ class ApiHandler(BaseHTTPRequestHandler):
                     if RADIO.station is not None or RADIO.pending_station is not None:
                         RADIO.reconcile(mpd, mpd.state())
                     if RADIO.station is not None:
+                        if RADIO.station.get("kind") == "cd":
+                            if path not in {"/play", "/pause", "/stop", "/next", "/previous"}:
+                                raise ApiError(409, "cd_operation_unsupported",
+                                               "CD playback supports track selection, Play, Pause, Stop and Next/Previous")
+                            explicit_transport()
+                            if path in {"/next", "/previous"}:
+                                mpd.command(path.lstrip("/"))
+                            elif path == "/play":
+                                RADIO.resume(mpd)
+                            elif path == "/pause":
+                                RADIO.pause(mpd)
+                            else:
+                                RADIO.stop(mpd)
+                            self._mpd_state_response()
+                            return
                         if path not in {"/play", "/pause", "/stop"}:
                             raise ApiError(409, "live_stream_operation",
                                            "Live radio supports Play, Pause/Stop, and station selection")
