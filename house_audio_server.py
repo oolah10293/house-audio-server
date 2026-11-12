@@ -1292,6 +1292,8 @@ class RadioPlayback:
 
     def resume(self, mpd, automatic=False):
         if self.station is not None and self.station.get("kind") == "cd":
+            if self.empty_selection:
+                raise ApiError(409, "cd_no_disc", "Insert a CD before pressing Play")
             mpd.command("play")
             self.intent, self.status, self.error = "play", "playing", None
             self.auto_paused = False
@@ -1444,13 +1446,17 @@ class RadioPlayback:
             entry = self.station
             index = state.get("songPosition")
             tracks = entry["trackNumbers"]
-            track = tracks[index] if type(index) is int and 0 <= index < len(tracks) else entry["trackNumber"]
+            track = (None if self.empty_selection else
+                     tracks[index] if type(index) is int and 0 <= index < len(tracks)
+                     else entry["trackNumber"])
             return {"type": "cd", "live": False, "station": None,
                     "input": {"sourceId": entry["sourceId"], "name": entry["name"],
-                              "trackNumber": track, "trackNumbers": tracks},
-                    "resumePlaylist": resume, "status": state.get("transport"),
+                              "trackNumber": track, "trackNumbers": tracks,
+                              "discEjected": self.empty_selection},
+                    "resumePlaylist": resume,
+                    "status": "no_disc" if self.empty_selection else state.get("transport"),
                     "lastError": state.get("error") or self.error,
-                    "canSeek": False, "canSkip": True,
+                    "canSeek": False, "canSkip": not self.empty_selection,
                     "canShuffle": False, "canRepeat": False}
         if self.station is None or resume["status"] == "uncertain":
             source_type = ("unknown" if resume["status"] == "uncertain" else
@@ -2545,6 +2551,8 @@ class ApiHandler(BaseHTTPRequestHandler):
                                                "CD playback supports track selection, Play, Pause, Stop and Next/Previous")
                             explicit_transport()
                             if path in {"/next", "/previous"}:
+                                if RADIO.empty_selection:
+                                    raise ApiError(409, "cd_no_disc", "Insert a CD before skipping tracks")
                                 mpd.command(path.lstrip("/"))
                             elif path == "/play":
                                 RADIO.resume(mpd)
