@@ -1151,6 +1151,7 @@ class RadioPlayback:
         # or recapture the previous library bookmark.
         if (station.get("kind") == "cd" and self.station is not None
                 and self.station.get("kind") == "cd"
+                and not self.empty_selection
                 and self.station["sourceId"] == station["sourceId"]
                 and self.station["urls"] == station["urls"]
                 and self._matching_queue(mpd, mpd.state())):
