@@ -24,6 +24,11 @@ rm -rf /opt/house-audio-server
 cp -a "$BACKUP_DIR/house-audio-server" /opt/house-audio-server
 cp -a "$BACKUP_DIR/house-audio-server.service" /etc/systemd/system/house-audio-server.service
 systemctl daemon-reload
+# Restore the matching independent CD gateway if this backup contains one.
+if [ -f "$BACKUP_DIR/gateway.py" ]; then
+  cp -a "$BACKUP_DIR/gateway.py" /home/ads-suck/gateway.py
+  systemctl restart house-audio-input-gateway.service
+fi
 systemctl restart house-audio-server.service
 systemctl status house-audio-server.service --no-pager
-echo "Previous House Music restored. The separate CD gateway is left untouched."
+echo "Previous House Music restored; CD gateway restored when its backup was present."
