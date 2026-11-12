@@ -1710,6 +1710,11 @@ class PassiveSessionPolicy:
         self._record(action)
 
     def _tick(self) -> None:
+        # The gateway may be slow or unplugged. Probe it outside MPD_WRITE_LOCK
+        # so ordinary Play/Pause and other HOUSE controllers remain responsive.
+        # Apply the observed event under the lock below, not in the fetch.
+        if self.auto_cd is not None and self.enabled and self.radio is not None:
+            self.auto_cd.refresh()
         # Keep the state decision and its writes together relative to API writes.
         # A failed MPD command must not kill the policy thread or lose a drain.
         try:
