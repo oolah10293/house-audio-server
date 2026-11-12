@@ -1,52 +1,76 @@
-name: CD test-file delivery
+name: Authorized CD auto-takeover Pi delivery
+
+# Packaging is invoked only for this explicitly authorized integration update.
 on:
   pull_request:
     paths:
       - '.github/workflows/deliver-cd-files.yml'
-  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
-  assemble-test-files:
-    if: github.head_ref == 'feature/cd-auto-takeover' || github.ref_name == 'feature/cd-auto-takeover'
+  verify-and-package-cd-pi:
+    if: github.head_ref == 'feature/cd-auto-takeover'
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch tested House Music CD source
+      - name: Checkout Pi integration source
         uses: actions/checkout@v4
-        with:
-          path: server
-      - name: Fetch matching XIAO Arduino source
-        uses: actions/checkout@v4
-        with:
-          repository: oolah10293/house-audio-esp32
-          ref: feature/cd-auto-media-events
-          path: esp
-      - name: Package exact source files for user test
-        shell: bash
+      - name: Python syntax and installer validation
         run: |
+          set -euo pipefail
+          python3 -m py_compile house_audio_server.py auto_cd.py input_sources.py pi_input/gateway.py
+          sh -n install.sh install-cd.sh rollback-cd.sh
+      - name: Full Python regression suite
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v
+      - name: Package verified Pi source with gateway and rollback
+        run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
-          out=Path('deliverables');out.mkdir()
-          s=Path('server')
-          include=['INSTALL_CD.txt','install-cd.sh','rollback-cd.sh','install.sh','house_audio_server.py','auto_cd.py','input_sources.py','radio_history.py','radio_listening.py','radio_metadata.py','radio_stations.py','state_file.py','subwoofers.py']
-          for root in ('config','web','systemd','pi_input'):
-              include.extend(str(p.relative_to(s)) for p in (s/root).rglob('*') if p.is_file())
-          with ZipFile(out/'HouseMusic_CD_Auto_Takeover_Pi_Test.zip','w',ZIP_DEFLATED) as z:
-              for rel in sorted(set(include)):
-                  assert (s/rel).is_file(),rel
-                  z.write(s/rel,'HouseMusic_CD_Auto_Takeover/'+rel)
-              z.writestr('HouseMusic_CD_Auto_Takeover/READ_FIRST.txt', 'TEST SOURCE ONLY. Not installed or tested on the Pi. The Pi gateway is independent: pi_input/gateway.py must be separately installed as /home/ads-suck/gateway.py with the matching House Music server; the provided install-cd.sh does NOT update gateway. Before any deployment, back up the current working setup. This ZIP has no actual deployment or hardware acceptance test.\n')
-          base=Path('esp/cd-arduino/HouseAudioCDInput')
-          with ZipFile(out/'HouseMusic_XIAO_CD_Auto_Arduino_Test.zip','w',ZIP_DEFLATED) as z:
-              for p in base.rglob('*'):
-                  if p.is_file() and p.name != '.gitignore':
-                      z.write(p,str(Path('HouseAudioCDInput')/p.relative_to(base)))
-              z.writestr('READ_FIRST.txt','ARDUINO SOURCE, NOT COMPILED OR FLASHED. Preserve your existing private LocalNetworkConfig.h credentials from your earlier working sketch; never share it. Arduino IDE core 2.0.14 and existing --no-stub upload workaround per project checkpoint.\n')
-          for f in out.iterdir(): print(f, f.stat().st_size)
+          import hashlib, json, subprocess
+          root=Path('.')
+          include=['INSTALL_CD.txt','install-cd.sh','rollback-cd.sh','install.sh',
+                   'house_audio_server.py','auto_cd.py','input_sources.py',
+                   'radio_history.py','radio_listening.py','radio_metadata.py',
+                   'radio_stations.py','state_file.py','subwoofers.py']
+          for folder in ('config','web','systemd','pi_input'):
+              include.extend(str(p) for p in Path(folder).rglob('*') if p.is_file())
+          include=sorted(set(include))
+          for p in include:
+              assert Path(p).is_file(),p
+          installer=Path('install-cd.sh').read_text()
+          rollback=Path('rollback-cd.sh').read_text()
+          assert 'pi_input/gateway.py' in installer and 'GATEWAY_TARGET=' in installer
+          assert 'gateway.py' in rollback and 'house-audio-input-gateway.service' in rollback
+          sha=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          out=Path('HouseMusic_CD_Auto_Takeover_Pi.zip')
+          manifest={}
+          with ZipFile(out,'w',ZIP_DEFLATED) as z:
+              for p in include:
+                  data=Path(p).read_bytes()
+                  z.writestr('HouseMusic_CD_Auto_Takeover/'+p,data)
+                  manifest[p]=hashlib.sha256(data).hexdigest()
+              z.writestr('HouseMusic_CD_Auto_Takeover/SOURCE_SHA.txt',sha+'\n')
+          with ZipFile(out) as z:
+              assert z.testzip() is None
+              for p,digest in manifest.items():
+                  assert hashlib.sha256(z.read('HouseMusic_CD_Auto_Takeover/'+p)).hexdigest()==digest
+          Path('CD_Pi_Manifest.json').write_text(json.dumps({
+              'source_sha':sha,'hardware_verified':False,'files_sha256':manifest,
+              'zip_sha256':hashlib.sha256(out.read_bytes()).hexdigest(),
+              'gateway_updated_by_installer':True
+          },indent=2)+'\n')
+          print('Verified Pi package from',sha)
           PY
-      - name: Upload separate ZIPs
+      - name: Upload Pi package and manifest
         uses: actions/upload-artifact@v4
         with:
-          name: CD-test-files-source-only
-          path: deliverables/*.zip
+          name: HouseMusic_CD_Auto_Takeover_Pi
+          path: |
+            HouseMusic_CD_Auto_Takeover_Pi.zip
+            CD_Pi_Manifest.json
           if-no-files-found: error
-          retention-days: 7
