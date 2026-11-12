@@ -97,6 +97,18 @@ class AutoCdSourceTests(unittest.TestCase):
         self.assertEqual(self.mpd.paths, self.original)
         self.assertIsNone(self.auto.active)
 
+    def test_manual_selection_wins_pending_cd_discovery(self):
+        self.auto.refresh()  # event sampled but not applied
+        station, _ = self.stations.add("https://radio.example/a", "Station A")
+        self.auto.manual_source_choice()  # same action as the API source switch
+        self.radio.select(self.mpd, station)
+        self.tick()
+        self.assertIsNone(self.auto.active)
+        self.assertEqual(self.radio.station["id"], station["id"])
+        self.source["discRevision"] = 2
+        self.tick()
+        self.assertEqual(self.radio.station["kind"], "cd")
+
     def test_manual_radio_selection_blocks_autoplay_until_new_disc(self):
         self.tick()
         station, _ = self.stations.add("https://radio.example/a", "Station A")
