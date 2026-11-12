@@ -35,12 +35,12 @@ class InputGateway:
             raise InputGatewayError("Audio input gateway returned an invalid source list")
         return sources
 
-    def cd_selection(self, source_id, track_number):
+    def cd_selection(self, source_id, track_number, source_snapshot=None):
         if not isinstance(source_id, str) or SOURCE_ID.fullmatch(source_id) is None:
             raise ValueError("Invalid audio source ID")
         if type(track_number) is not int or not 1 <= track_number <= 99:
             raise ValueError("Invalid CD track number")
-        source = next((item for item in self.sources()
+        source = next((item for item in (self.sources() if source_snapshot is None else source_snapshot)
                        if isinstance(item, dict) and item.get("sourceId") == source_id), None)
         if source is None or not source.get("available"):
             raise InputGatewayError("CD player is offline")
