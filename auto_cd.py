@@ -70,7 +70,7 @@ class AutoCdSource:
         bookmark = radio.playlist_resume.view()
         if bookmark["available"] and bookmark["snapshotId"]:
             snap = policy.monitor.snapshot()
-            hold = (previous_transport == "pause" or
+            hold = (previous_transport in ("pause", "stop") or presence["presentCount"] == 0 or
                     (policy.enabled and bool(snap.get("reachable"))
                      and presence["controllerCount"] > 0 and presence["audibleCount"] == 0))
 
@@ -80,6 +80,8 @@ class AutoCdSource:
             radio.resume_playlist(mpd, bookmark["snapshotId"],
                                   lambda: policy.explicit_transport(mpd), hold,
                                   retained if hold and previous_transport != "pause" else None)
+            if previous_transport == "stop":
+                mpd.command("stop")
             self.last_action = "cd_disconnected_restored_library"
         else:
             policy.explicit_transport(mpd)
@@ -143,7 +145,13 @@ class AutoCdSource:
                 self._end_ownership()
                 self.last_action = "cd_manual_source_override"
             elif current is None or current.get("available") is False:
-                self._restore(mpd, radio, policy, presence)
+                try:
+                    self._restore(mpd, radio, policy, presence)
+                except Exception as exc:
+                    # A failed MPD restore must never kill the permanent
+                    # policy worker or repeatedly overwrite an uncertain queue.
+                    self.last_error = str(exc)
+                    self.last_action = "cd_disconnect_restore_failed"
                 return
             elif not self.ready(current):
                 if not self.disc_ejected:
@@ -158,7 +166,7 @@ class AutoCdSource:
                 # library bookmark/radio source, never bookmarks another CD.
                 try:
                     self._play_new(mpd, radio, policy, current, current_token, True)
-                except (OSError, ValueError, InputGatewayError) as exc:
+                except Exception as exc:
                     self.last_error = str(exc)
                     self.last_action = "cd_disc_change_failed"
                 return
@@ -172,7 +180,7 @@ class AutoCdSource:
                 continue
             try:
                 self._play_new(mpd, radio, policy, source, token, False)
-            except (OSError, ValueError, InputGatewayError) as exc:
+            except Exception as exc:
                 self.last_error = str(exc)
                 self.last_action = "cd_autoplay_failed"
             return
