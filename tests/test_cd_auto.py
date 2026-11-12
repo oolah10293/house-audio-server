@@ -181,6 +181,22 @@ class AutoCdSourceTests(unittest.TestCase):
         self.tick()
         self.assertIsNotNone(self.auto.active)
 
+    def test_temporary_empty_gateway_registry_does_not_steal_cd(self):
+        self.tick()
+        self.gateway.records = []
+        self.tick()
+        self.assertIsNotNone(self.auto.active)
+        self.assertEqual(self.radio.station["kind"], "cd")
+        self.gateway.records = [self.source]
+        self.tick()
+        self.assertIsNotNone(self.auto.active)
+        self.gateway.records = []
+        self.tick()
+        self.now[0] += 19
+        self.tick()
+        self.assertIsNone(self.auto.active)
+        self.assertEqual(self.mpd.paths, self.original)
+
     def test_legacy_firmware_cannot_trigger_unidentified_autoplay(self):
         self.source.pop("bootSession")
         self.source.pop("discRevision")
