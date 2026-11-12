@@ -1,0 +1,52 @@
+name: CD test-file delivery
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/deliver-cd-files.yml'
+  workflow_dispatch:
+jobs:
+  assemble-test-files:
+    if: github.head_ref == 'feature/cd-auto-takeover' || github.ref_name == 'feature/cd-auto-takeover'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch tested House Music CD source
+        uses: actions/checkout@v4
+        with:
+          path: server
+      - name: Fetch matching XIAO Arduino source
+        uses: actions/checkout@v4
+        with:
+          repository: oolah10293/house-audio-esp32
+          ref: feature/cd-auto-media-events
+          path: esp
+      - name: Package exact source files for user test
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          out=Path('deliverables');out.mkdir()
+          s=Path('server')
+          include=['INSTALL_CD.txt','install-cd.sh','rollback-cd.sh','install.sh','house_audio_server.py','auto_cd.py','input_sources.py','radio_history.py','radio_listening.py','radio_metadata.py','radio_stations.py','state_file.py','subwoofers.py']
+          for root in ('config','web','systemd','pi_input'):
+              include.extend(str(p.relative_to(s)) for p in (s/root).rglob('*') if p.is_file())
+          with ZipFile(out/'HouseMusic_CD_Auto_Takeover_Pi_Test.zip','w',ZIP_DEFLATED) as z:
+              for rel in sorted(set(include)):
+                  assert (s/rel).is_file(),rel
+                  z.write(s/rel,'HouseMusic_CD_Auto_Takeover/'+rel)
+              z.writestr('HouseMusic_CD_Auto_Takeover/READ_FIRST.txt', 'TEST SOURCE ONLY. Not installed or tested on the Pi. The Pi gateway is independent: pi_input/gateway.py must be separately installed as /home/ads-suck/gateway.py with the matching House Music server; the provided install-cd.sh does NOT update gateway. Before any deployment, back up the current working setup. This ZIP has no actual deployment or hardware acceptance test.\n')
+          base=Path('esp/cd-arduino/HouseAudioCDInput')
+          with ZipFile(out/'HouseMusic_XIAO_CD_Auto_Arduino_Test.zip','w',ZIP_DEFLATED) as z:
+              for p in base.rglob('*'):
+                  if p.is_file() and p.name != '.gitignore':
+                      z.write(p,str(Path('HouseAudioCDInput')/p.relative_to(base)))
+              z.writestr('READ_FIRST.txt','ARDUINO SOURCE, NOT COMPILED OR FLASHED. Preserve your existing private LocalNetworkConfig.h credentials from your earlier working sketch; never share it. Arduino IDE core 2.0.14 and existing --no-stub upload workaround per project checkpoint.\n')
+          for f in out.iterdir(): print(f, f.stat().st_size)
+          PY
+      - name: Upload separate ZIPs
+        uses: actions/upload-artifact@v4
+        with:
+          name: CD-test-files-source-only
+          path: deliverables/*.zip
+          if-no-files-found: error
+          retention-days: 7
