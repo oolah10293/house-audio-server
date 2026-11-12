@@ -1,0 +1,47 @@
+HOUSE MUSIC — CD PLAYER INTEGRATION
+====================================
+Version: 0.14.2-cd1, based on the working House Music server v0.14.2
+For: Raspberry Pi running House Music and separate CD input gateway
+
+WHAT YOU GET
+  - CD players tab at http://192.168.1.12:8787/
+  - Select any track from a discovered USB CD drive
+  - CD tracks play in MPD's house queue to existing synchronized Snapcast speakers
+  - Resume Playlist returns to your previous local playlist
+  - Existing radio, library sorting, subwoofer settings and renderer controls retained
+  - Backup/automatic rollback if the new server fails its installation startup checks
+
+REQUIREMENTS
+  - The separate gateway service is already running at 192.168.1.12:8768
+  - ESP32-S3 CD player v0.2 is already on Wi-Fi and registering
+  - Working House Music installation exists at /opt/house-audio-server
+  - python3, systemd, and unzip on the Pi
+
+INSTALL
+  1. Copy the ZIP to the Pi (e.g., /home/ads-suck).
+  2. On the Pi:
+       unzip HouseMusic_CD_Input_Installer.zip
+       cd HouseMusic_CD_Input
+       sudo sh ./install-cd.sh
+  3. Open http://192.168.1.12:8787/ and select CD players.
+
+IMPORTANT
+  - Installation restarts the House Music service and interrupts current music.
+    House Music's existing restart policy clears its current MPD queue.
+  - It does NOT reinstall, update, stop or restart the CD gateway on port 8768,
+    MPD, Snapserver, or any ESP32 firmware.
+  - It does NOT change /etc/default/house-audio-server if already configured.
+  - A backup of the previous installation stays under /var/backups/house-audio-server.
+  - This build passed automated source tests. Real MPD/CD-to-Snapcast audio from
+    the ESP32 has NOT yet been tested at your house.
+  - The WAV stream is finite, and CD seeking is disabled for now; CD track
+    transitions are the first physical test.
+
+IF YOU WANT TO GO BACK
+  From this same extracted folder, run:
+       sudo sh ./rollback-cd.sh
+
+IF THE CD IS MISSING
+  First check the CD gateway at http://192.168.1.12:8768/.
+  Then check the ESP32 CD page (previously http://192.168.1.175/).
+  The XIAO address may change with DHCP.

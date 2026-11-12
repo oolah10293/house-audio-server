@@ -17,7 +17,7 @@ jobs:
       - name: Compile
         run: python -m py_compile house_audio_server.py
       - name: Check installer shell syntax
-        run: sh -n install.sh
+        run: sh -n install.sh install-cd.sh rollback-cd.sh
       - name: Unit tests
         run: python -m unittest discover -s tests -v
       - name: Browser JavaScript syntax and sorting tests
@@ -58,4 +58,54 @@ jobs:
           path: |
             house-audio-server-v0.14.2.zip
             house-audio-server-v0.14.2.sha256
+          if-no-files-found: error
+
+      # This explicitly user-authorized CD package is built only for the
+      # dedicated draft integration PR after all tests pass. Never package main
+      # or the historical 0.14.2 release with these unaccepted additions.
+      - name: Assemble user-authorized CD source installer
+        if: github.event_name == 'pull_request' && github.head_ref == 'feature/cd-house-playback'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
+          files = [
+              'INSTALL_CD.txt', 'install-cd.sh', 'rollback-cd.sh', 'install.sh',
+              'house_audio_server.py', 'input_sources.py',
+              'radio_history.py', 'radio_listening.py', 'radio_metadata.py',
+              'radio_stations.py', 'state_file.py', 'subwoofers.py',
+              'config/house-audio-server.default',
+              'systemd/house-audio-server.service',
+              'web/house.html', 'web/house.js', 'web/house.css',
+              'web/subwoofers.html', 'web/subwoofers.js', 'web/subwoofers.css',
+              'pi_input/gateway.py', 'docs/CD_AUDIO_INPUT_INTEGRATION.md',
+          ]
+          assert 'SERVICE_VERSION = "0.14.2-cd1"' in Path('house_audio_server.py').read_text()
+          assert 'data-view="inputs"' in Path('web/house.html').read_text()
+          assert 'input_sources.py' in Path('install.sh').read_text()
+          name = 'HouseMusic_CD_Input_Installer.zip'
+          with ZipFile(name, 'w', compression=ZIP_DEFLATED, compresslevel=9) as z:
+              for rel in files:
+                  file = Path(rel)
+                  assert file.is_file(), f'Missing installer file: {rel}'
+                  item = ZipInfo('HouseMusic_CD_Input/' + rel, date_time=(2026,11,12,0,0,0))
+                  item.compress_type = ZIP_DEFLATED
+                  item.external_attr = ((0o100755 if rel.endswith('.sh') else 0o100644) << 16)
+                  z.writestr(item, file.read_bytes())
+          with ZipFile(name) as z:
+              assert z.testzip() is None
+              assert len(z.namelist()) == len(files)
+              assert b'CD players' in z.read('HouseMusic_CD_Input/web/house.html')
+          print(f'Verified installer ZIP: {name}, {len(files)} files, bytecode and tests already passed.')
+          PY
+          sha256sum HouseMusic_CD_Input_Installer.zip > HouseMusic_CD_Input_Installer.sha256
+          cat HouseMusic_CD_Input_Installer.sha256
+      - name: Attach CD installer for direct user download
+        if: github.event_name == 'pull_request' && github.head_ref == 'feature/cd-house-playback'
+        uses: actions/upload-artifact@v4
+        with:
+          name: HouseMusic-CD-Installer
+          path: |
+            HouseMusic_CD_Input_Installer.zip
+            HouseMusic_CD_Input_Installer.sha256
           if-no-files-found: error
