@@ -32,6 +32,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 from input_sources import InputGateway, InputGatewayError
+from auto_cd import AutoCdSource
 from radio_history import RadioHistory
 from radio_listening import RadioListening
 from subwoofers import Subwoofers, SubwooferError
@@ -1325,6 +1326,20 @@ class RadioPlayback:
         self._reset_retry()
         mpd.command("stop")
 
+    def eject_cd(self, mpd):
+        """Stop and empty the stale disc queue without losing its bookmark.
+
+        A new disc can then become the only valid source, while unplugging
+        still has the original pre-CD library/radio state to restore.
+        """
+        if self.station is None or self.station.get("kind") != "cd":
+            return
+        self.intent, self.status = "stop", "no_disc"
+        self.auto_paused = False
+        self._reset_retry()
+        mpd.run("stop", "clear")
+        self.empty_selection = True
+
     def stop(self, mpd):
         self._capture_history(mpd)
         self.history.end()
@@ -1491,6 +1506,7 @@ class PassiveSessionPolicy:
         controllers: Optional[ControllerRegistry] = None,
         startup: Optional[MpdStartupBoundary] = None,
         radio: Optional[RadioPlayback] = None,
+        auto_cd: Optional[AutoCdSource] = None,
     ) -> None:
         self.monitor = monitor
         self.mpd_factory = mpd_factory
@@ -1499,6 +1515,7 @@ class PassiveSessionPolicy:
         self.settings = settings
         self.startup = startup
         self.radio = radio
+        self.auto_cd = auto_cd
         self.controllers = controllers if controllers is not None else ControllerRegistry()
         self.default_folder = (
             str(settings.snapshot()["passiveDefaultFolder"])
@@ -1547,6 +1564,7 @@ class PassiveSessionPolicy:
                 "enabled": self.enabled,
                 "mode": "controllers_and_renderers",
                 "defaultFolder": self._default_folder(),
+                "cdAuto": self.auto_cd.snapshot() if self.auto_cd is not None else {"enabled": False},
                 "presentCount": self._previous_present_count,
                 "controllerCount": (self._previous_presence or {}).get("controllerCount"),
                 "passiveCount": (self._previous_presence or {}).get("passiveCount"),
@@ -1762,6 +1780,10 @@ class PassiveSessionPolicy:
             self.startup.ensure_ready(self.mpd_factory())
         snap = self.monitor.snapshot()
         presence = self.controllers.snapshot(snap)
+        # Inspect CD input identity under the same MPD write lock as all
+        # explicit user controls. No heartbeat can override a manual choice.
+        if self.auto_cd is not None and self.enabled and self.radio is not None:
+            self.auto_cd.tick(self.mpd_factory(), self.radio, self, presence)
         if self.radio is not None and self.radio.playlist_resume.status == "uncertain":
             self.radio.listening.suspend()
             if self.enabled and snap.get("reachable") and presence["presentCount"] == 0:
@@ -1853,6 +1875,26 @@ class PassiveSessionPolicy:
             if presence["passiveCount"] > 0:
                 self._start_default_session(mpd)
             return
+        if radio.station is not None and radio.station.get("kind") == "cd":
+            # A plugged-in CD is a physical source, not an endless radio.
+            # Keep its saved playlist while no speakers are present; don't
+            # stream an entire disc into an inaudible house.
+            if presence["presentCount"] == 0:
+                if radio.intent == "play":
+                    radio.pause(mpd, automatic=True)
+                self._auto_paused_state = None
+                radio.observe(mpd, mpd.state())
+                return
+            if radio.auto_paused and (passive_arrival or presence["audibleCount"] > 0):
+                radio.resume(mpd, automatic=True)
+                self._record("cd_resumed_audible")
+            elif (radio.intent == "play" and presence["controllerCount"] > 0
+                  and presence["audibleCount"] == 0):
+                radio.pause(mpd, automatic=True)
+                self._record("cd_paused_muted_controllers_only")
+            self._auto_paused_state = None
+            radio.observe(mpd, mpd.state())
+            return
         if presence["presentCount"] == 0:
             # A live broadcast has no track boundary. Also handles a stream
             # selected before our first presence sample or during monitor loss.
@@ -1912,7 +1954,7 @@ RADIO = RadioPlayback(RADIO_STATIONS, history=RadioHistory(RADIO_HISTORY_FILE),
                       listening=RadioListening(RADIO_LISTENING_FILE))
 PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
     SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS,
-    startup=MPD_STARTUP, radio=RADIO,
+    startup=MPD_STARTUP, radio=RADIO, auto_cd=AutoCdSource(INPUT_GATEWAY),
 )
 
 
