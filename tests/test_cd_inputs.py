@@ -149,15 +149,46 @@ class CdPlaybackHttpTests(unittest.TestCase):
     def test_next_previous_and_same_disc_selection_keep_original_bookmark(self):
         first = self.play_cd(3)
         token = first["source"]["resumePlaylist"]["snapshotId"]
+        before_next = len(self.mpd.commands)
         self.assertEqual(self.request("/next", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before_next:], ["stop", "play 3"])
         self.assertEqual(self.request("/state")[1]["source"]["input"]["trackNumber"], 4)
+        before_previous = len(self.mpd.commands)
         self.assertEqual(self.request("/previous", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before_previous:], ["stop", "play 2"])
         self.assertEqual(self.request("/state")[1]["source"]["input"]["trackNumber"], 3)
         before = self.mpd.commands.count("clear")
         selected = self.play_cd(6)
         self.assertEqual(selected["source"]["input"]["trackNumber"], 6)
         self.assertEqual(selected["source"]["resumePlaylist"]["snapshotId"], token)
         self.assertEqual(self.mpd.commands.count("clear"), before)
+
+    def test_cd_skip_boundaries_fall_back_to_native_mpd(self):
+        first = self.play_cd(1)
+        token = first["source"]["resumePlaylist"]["snapshotId"]
+        before = len(self.mpd.commands)
+        self.assertEqual(self.request("/previous", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before:], ["previous"])
+        self.assertEqual(self.request("/state")[1]["source"]["input"]["trackNumber"], 1)
+
+        self.play_cd(11)
+        before = len(self.mpd.commands)
+        self.assertEqual(self.request("/next", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before:], ["next"])
+        self.assertEqual(self.mpd.values["transport"], "stop")
+        self.assertEqual(self.radio.playlist_resume.view()["snapshotId"], token)
+
+    def test_cd_skip_preserves_native_mpd_behavior_outside_normal_playback(self):
+        self.play_cd(3)
+        self.assertEqual(self.request("/pause", {})[0], 200)
+        before = len(self.mpd.commands)
+        self.assertEqual(self.request("/next", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before:], ["next"])
+
+        self.mpd.values["random"] = True  # unexpected external MPD mode
+        before = len(self.mpd.commands)
+        self.assertEqual(self.request("/previous", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before:], ["previous"])
 
     def test_switching_an_active_cd_track_stops_old_wav_before_play(self):
         first = self.play_cd(3)
