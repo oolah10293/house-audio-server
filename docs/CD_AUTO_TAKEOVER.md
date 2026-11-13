@@ -505,7 +505,7 @@ failure where the source merely suggests a risk.
 - Do not reflash working ESP32 3.3, increase MPD's timeout, or
   rebuild/package without the user's separate explicit authorization.
 
-## Cleanup item 1 — CD Next/Previous (live test pending)
+## Cleanup item 1 — CD Next/Previous (slow control responses measured; MPD isolation pending)
 
 **Scope:** This is item 1 of the user's nine-item cleanup audit. Work
 through the list sequentially, writing each outcome to this repository
@@ -536,8 +536,44 @@ time, and confirm the audible track/result. Check Pi journal for
 `POST /next` and `POST /previous` 200 vs 503. No code edit, build,
 package, firmware, or service restart is needed.
 
-**Status:** OPEN — awaiting user-supplied physical results. If fast and
-correct, close item 1 as accepted without a change. If slow/503 or
-wrong-track, isolate the precise behavior and propose minimal source
-fix with regression tests; do not touch item 2 before recording the
-conclusion.
+**2026-11-13 physical Pi HTTP test (user-provided command/output):**
+While instructed to have a middle CD track playing, user executed:
+
+```sh
+for path in next previous; do
+  curl -sS -o /dev/null \
+    -w "$path: HTTP %{http_code}, %{time_total}s\\n" \
+    -H "Content-Type: application/json" \
+    -d '{}' "http://127.0.0.1:8787/$path"
+done
+```
+
+Output:
+
+```
+next: HTTP 200, 1.735032s
+previous: HTTP 200, 1.790452s
+```
+
+**Verified observation:** Both HTTP requests returned 200, but each
+took roughly 1.7–1.8 seconds end to end. This is slower than the
+earlier ~4ms + ~4ms direct MPD `stop` and `play` command timing.
+**Not established:** Which part of HTTP handling caused the delay;
+whether direct MPD `next` and `previous` individually consumed that
+time; whether the intended tracks were audible/correct (not yet
+reported). Distinguish HTTP response timing from MPD command
+acknowledgement and audio arrival time. Two successful requests do
+not prove timeout-free Next/Previous transitions.
+
+**Next isolated experiment:** with CD still playing, measure direct
+Pi MPD `next` and `prev` command durations using `mpc`, and confirm
+that each selects the intended track. No software edit required.
+If MPD command latency reproduces the delay, design a *CD-only*
+stop-before-targeted-play solution that preserves queue, bookmark,
+last-track behavior and standard MPD Previous semantics; add
+regression tests before a separately authorized Pi deployment.
+Do NOT blindly prepend `stop` to an MPD `next`/`previous` command.
+
+**Status:** OPEN — slow HTTP Next/Previous response reproducible in
+one pair of requests; direct-MPD timing and audible correctness still
+need confirmation. Items 2–9 remain OPEN/UNTOUCHED.
