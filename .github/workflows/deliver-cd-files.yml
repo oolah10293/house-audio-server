@@ -1,17 +1,21 @@
 name: Authorized CD auto-takeover Pi delivery
 
-# Packaging is invoked only for this explicitly authorized integration update.
+# Packaging must be explicitly requested, never triggered by a PR update.
+# The separate test.yml workflow runs ordinary PR regression checks.
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/deliver-cd-files.yml'
+  workflow_dispatch:
+    inputs:
+      package_authorization:
+        description: 'Type AUTHORIZE_CD_PACKAGE to allow package creation'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   verify-and-package-cd-pi:
-    if: github.head_ref == 'feature/cd-auto-takeover'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/cd-auto-takeover' && inputs.package_authorization == 'AUTHORIZE_CD_PACKAGE'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Pi integration source
