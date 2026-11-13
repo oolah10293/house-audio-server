@@ -209,6 +209,36 @@ class CdPlaybackHttpTests(unittest.TestCase):
         self.assertTrue(self.policy.snapshot()["autoPaused"])
         self.assertEqual(self.mpd.paths, self.original)
 
+    def test_cd_track_click_recovers_from_orphaned_cd_url_queue(self):
+        # MPD keeps its queue across a House Music process restart, while
+        # RadioPlayback loses in-memory CD ownership. Clicking a track must
+        # replace the old stream, not attempt to bookmark its URL as a file.
+        stale = self.gateway.cd_selection(SOURCE["sourceId"], 1)["url"]
+        self.mpd.paths = [stale]
+        self.mpd.ids = [104]
+        self.mpd.values.update(songPosition=0, elapsedSeconds=12.0,
+                               queueVersion=2, transport="play")
+        status, result = self.request("/inputs/play", {
+            "sourceId": SOURCE["sourceId"], "trackNumber": 4})
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["source"]["type"], "cd")
+        self.assertEqual(self.mpd.values["songPosition"], 3)
+        self.assertEqual(self.mpd.paths, self.gateway.cd_selection(SOURCE["sourceId"], 4)["urls"])
+        self.assertFalse(result["source"]["resumePlaylist"]["available"])
+
+    def test_cd_track_click_skips_mixed_url_queue_bookmark(self):
+        # A mixed library/stream queue cannot be restored safely as local
+        # files. Keep CD selection usable without inventing a bookmark.
+        self.mpd.paths = ["Rap/B.mp3", "https://radio.example/old"]
+        self.mpd.ids = [104, 105]
+        self.mpd.values.update(songPosition=1, elapsedSeconds=2.0,
+                               queueVersion=3, transport="play")
+        status, result = self.request("/inputs/play", {
+            "sourceId": SOURCE["sourceId"], "trackNumber": 2})
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.mpd.values["songPosition"], 1)
+        self.assertFalse(result["source"]["resumePlaylist"]["available"])
+
     def test_invalid_or_offline_sources_never_write_mpd(self):
         before = list(self.mpd.commands)
         for payload in ({"sourceId": "../../evil", "trackNumber": 1},
