@@ -339,3 +339,29 @@ Test playback and state persistence. Do not alter the unrelated
 radio or playlist transitions. User requests no timeout increase and
 no firmware changes. No software code, builds, packages,
 releases or deployments authorized or done as of this checkpoint.
+
+
+## Active-stream stop-then-play confirmed — 2026-11-13, ~18:11
+
+The user explicitly confirmed the CD was **already playing** before
+executing the corrected **one-line** shell command on the Pi:
+
+```sh
+a=$(date +%s%3N); mpc -h 127.0.0.1 -p 6600 stop >/dev/null; b=$(date +%s%3N); mpc -h 127.0.0.1 -p 6600 play 5 >/dev/null; c=$(date +%s%3N); printf 'STOP: %d ms\nPLAY: %d ms\n' "$((b-a))" "$((c-b))"
+```
+
+Reported command timings: **STOP 4 ms**, **PLAY 4 ms**, **8 ms combined**.
+These include shell/client overhead and integer-ms timestamp rounding;
+they are not time-to-audible-audio measurements. The earlier pasted
+multi-line second trial included accidentally copied shell prompt text
+and produced `STOP: 48563 ms`; it is INVALID because the timestamp
+variable was stale. Disregard it.
+
+**Strong evidence:** MPD's old-active-CD transition by `stop` then
+`play` completes commands quickly in this live test versus old
+direct `play N` command taking 1884 ms or timing out at ~2000 ms.
+This supports a narrowly scoped same-CD-track switch adjustment in
+`house_audio_server.py`: send `stop` before `play {trackIndex}`.
+It is **not yet implemented** and GUI end-to-end behavior is untested;
+the user has not authorized a build/release/installer/deployment.
+Do not alter timeout or the 3.3 ESP32 firmware.
