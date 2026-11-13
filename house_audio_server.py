@@ -1163,6 +1163,9 @@ class RadioPlayback:
                 and self.station["sourceId"] == station["sourceId"]
                 and self.station["urls"] == station["urls"]
                 and self._matching_queue(mpd, mpd.state())):
+            # End the active HTTP WAV stream before starting another CD track.
+            # Direct play-on-play can block MPD while the old stream unwinds.
+            mpd.command("stop")
             mpd.command(f'play {station["trackIndex"]}')
             self.station = dict(station)
             self.song_id = mpd.state().get("songId")
