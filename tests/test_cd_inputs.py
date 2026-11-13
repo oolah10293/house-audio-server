@@ -159,6 +159,17 @@ class CdPlaybackHttpTests(unittest.TestCase):
         self.assertEqual(selected["source"]["resumePlaylist"]["snapshotId"], token)
         self.assertEqual(self.mpd.commands.count("clear"), before)
 
+    def test_switching_an_active_cd_track_stops_old_wav_before_play(self):
+        first = self.play_cd(3)
+        token = first["source"]["resumePlaylist"]["snapshotId"]
+        previous = len(self.mpd.commands)
+        selected = self.play_cd(6)
+        self.assertEqual(self.mpd.commands[previous:], ["stop", "play 5"])
+        self.assertEqual(self.mpd.values["transport"], "play")
+        self.assertEqual(self.mpd.values["songPosition"], 5)
+        self.assertEqual(selected["source"]["input"]["trackNumber"], 6)
+        self.assertEqual(selected["source"]["resumePlaylist"]["snapshotId"], token)
+
     def test_pause_resume_and_stop_do_not_restart_cd_from_beginning(self):
         self.play_cd(3)
         self.mpd.values["elapsedSeconds"] = 50
