@@ -233,3 +233,35 @@ deprecated and playback prebuffer made a fixed one second; verify the
 behavior of the *actual MPD 0.24 binary* before using that as a causal
 explanation. Do not suggest editing obsolete `buffer_before_play`
 without proof. No runtime or firmware changes.
+
+## Second ESP32 first-PCM timing and MPD buffering lead — 2026-11-13, 18:00
+
+User's second physical Pi capture shows a new S3-to-Pi TCP stream:
+- 18:00:29.029435: S3 sent HTTP 200 headers, 110 bytes.
+- 18:00:29.032319: 44-byte WAV header.
+- 18:00:29.737039: first PCM payload, 1436 bytes.
+- Therefore this stream took **704.72 ms from WAV header to first PCM**,
+  versus **373.30 ms** for the prior 17:56:23 sample, varying ~331 ms.
+  These were different captures and are not synchronized with the earlier
+  17:40 MPD play-command traces.
+- The suggested capture awk key was wrong again: for
+  `tcpdump -i eth0 -nn -tttt` output, `$6` is the Pi destination
+  IP:ephemeral-port, whereas `$8` contains the TCP flags. The output
+  therefore had up to four packets *per flag type*, not per connection.
+
+**Relevant upstream research:** MPD 0.21 removed the configurable
+`buffered_before_play` and replaced percentage-of-buffer startup with
+a duration-based prebuffer target. Discussion of MPD 0.23 reports a fixed
+~1 second minimum prebuffer. This makes MPD startup buffering a plausible
+additional cost atop delayed initial CD PCM delivery, but the *installed
+MPD 0.24.x binary's exact behavior and decoder interactions are not
+directly traced*, so no precise 1-second contribution is verified.
+
+**Design lead, not a fix:** CD PCM for 44.1 kHz/16-bit/stereo needs
+176,400 bytes/s. Prior user-reported 250 KB/s WAV extraction gives
+modest throughput headroom and does not prove reliable subsecond startup.
+To reduce actual time to sound, investigate first READ CD batch latency,
+failed/retried SCSI reads, sustained USB throughput, and MPD startup
+prebuffering before proposing changes. Extending the API timeout would
+only suppress 503, not accelerate playback.
+No firmware, service, or installer changes occurred.
