@@ -210,3 +210,26 @@ MPD timeout. Next targeted measurement: time the new TCP/WAV response
 headers and first substantial PCM payload from the ESP32 through port 8080
 to gateway 8768, aligned with MPD `play` and its `OK` on 6600.
 No runtime configuration or firmware changes have been performed.
+
+## ESP32 first WAV payload timing — 2026-11-13, 17:56
+The user captured TCP payloads on the Pi from `192.168.1.175:8080` to
+the Pi's ephemeral port `43240`:
+- `17:56:23.270673`: S3 sent HTTP `200 OK` response headers (110 bytes).
+- `17:56:23.273603`: S3 sent 44-byte WAV header (~2.93 ms later).
+- `17:56:23.646901`: first 2872-byte audio payload (~373.3 ms after WAV header), followed by additional audio at .647433, .650251, .651509.
+
+**Critical collection bug:** the suggested awk keyed `n[$6]`, but `$6`
+is the *fixed S3 source address/port*, not the unique connection. It
+therefore emitted only six packets from one TCP stream, not six from each
+track change. To sample each stream use destination `$8` (Pi ephemeral
+port) as the grouping key, e.g. `if (++n[$8] <= 6) print`.
+
+**Interpretation:** First CD PCM appeared within ~0.37 seconds after
+WAV headers for this one stream; it has not been verified how long MPD
+takes to accumulate and decode enough audio to acknowledge `play N`,
+and gateway `HTTP 200` alone does not prove the PCM is timely.
+Historical MPD 0.21 notes say the old `buffer_before_play` option was
+deprecated and playback prebuffer made a fixed one second; verify the
+behavior of the *actual MPD 0.24 binary* before using that as a causal
+explanation. Do not suggest editing obsolete `buffer_before_play`
+without proof. No runtime or firmware changes.
