@@ -1003,6 +1003,14 @@ class PlaylistResume:
         rows = mpd.queue()
         if not rows:
             return
+        # MPD can retain a previous CD/radio URL queue across a House Music
+        # service restart, when our in-memory source ownership is gone.
+        # URLs are not library files and cannot be restored by Resume Playlist.
+        # Treat such a queue as having no library bookmark instead of denying
+        # a new CD selection with the misleading /radio/play path error.
+        if any(isinstance(row.get("file"), str) and "://" in row["file"]
+               for row in rows):
+            return
         tracks = [validate_relative_path(row["file"]) for row in rows]
         if any(not path for path in tracks):
             raise ApiError(409, "playlist_not_resumable", "Queue contains an invalid library path")
