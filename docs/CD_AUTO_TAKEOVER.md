@@ -265,3 +265,43 @@ failed/retried SCSI reads, sustained USB throughput, and MPD startup
 prebuffering before proposing changes. Extending the API timeout would
 only suppress 503, not accelerate playback.
 No firmware, service, or installer changes occurred.
+
+## Stopped-state versus active-stream play timing — 2026-11-13, 18:06
+
+User ran a 30-second read-only MPD loopback tcpdump capture while issuing
+`mpc stop` and selecting CD track 5 in the House Music UI.
+
+**New field result:** The capture shows `stop` receiving MPD `OK` at
+18:06:44.771953, with subsequent repeated `status` responses reporting
+`state: stop`. At **18:06:48.736130**, the server sent MPD
+`play 4`; MPD sent `OK` at **18:06:48.736176**, an elapsed
+**0.046 milliseconds** (46 microseconds). Thus MPD acknowledged
+`play` immediately with playback previously stopped. Note that the
+test has an approximately **4-second gap** after stop before play:
+it does NOT prove that `stop; play 4` back-to-back while a stream is
+active would be equally fast. The supplied excerpt has only one
+`play` command; a second playing-to-playing change was not captured.
+
+**Comparison:** Prior active CD stream transitions `play 10` and
+`play 2` received no MPD response and closed after 2001/2002 ms;
+`play 5` returned in 1884 ms. This stark difference shifts the
+leading hypothesis from MPD always waiting on prebuffer/new-CD startup
+to **MPD waiting on or coordinating active old-stream teardown during
+a direct `play N` transition**. An immediate `play` ACK from stop
+does not measure time-to-audible audio, so it cannot rule out a
+separate ~0.37–0.70-second CD first-PCM delay or decoder buffering
+*after* the ACK.
+
+**Smallest next discriminating trial:** While the CD is actively
+playing, time `mpc stop` and a new `mpc play <zero-based-index>`
+issued immediately afterward from the Pi. Compare individual command
+durations and whether the user-selected track actually plays. If
+fast and correct, a source-only candidate is to send a `stop`
+command **before** `play N` in the same-disc CD selection path,
+preserving queue, session/bookmark and other source behavior; this
+requires tests and separately authorized Pi deployment before any
+hardware-validated fix claim. Avoid timeout increases and changing
+working ESP32 3.3 firmware.
+
+**Status:** No runtime changes, source implementation changes,
+firmware builds, packages, installers, releases or deployments.
