@@ -158,3 +158,27 @@ not proof of root cause. **No server or S3 changes without specific evidence.**
 **Change/deployment status:** This checkpoint is documentation only. No Pi
 configuration was changed; no firmware, code, compiler, GitHub workflow,
 packaging, installer, or deployment was invoked.
+
+## Exact MPD command timing — 2026-11-13, 17:40 (user's read-only tcpdump)
+
+The Pi loopback MPD command capture identified the actual hanging requests:
+- `17:40:00.102890 play 10`: MPD gave no command response before client closed after **2001 ms**.
+- `17:40:05.378733 play 2`: MPD gave no command response before client closed after **2002 ms**.
+- `17:40:10.662524 play 5`: first MPD response payload after **1884 ms**.
+- `17:40:19.240334 play 7`: capture ended before a response; cannot classify as stalled.
+
+The ordinary `status`, `currentsong` and `playlistinfo` requests shown in the
+capture completed in milliseconds. This **proves the observed 503 timeouts
+were associated with slow `play N` command acknowledgments**, not merely
+with a later HTTP state-refresh read. A TCP ACK of a `play` packet does
+not mean MPD finished executing the command.
+
+The exact wait inside MPD has **not** been identified; possibilities
+include old WAV stream shutdown, new stream startup through the Pi
+gateway and ESP32, or decoder synchronization. Do not arbitrarily increase
+the timeout as the user rejects five-second track switching. Next
+discriminating evidence should align those command timestamps with the
+already-recorded `house-audio-input-gateway.service` journal at
+17:39:58–17:40:15; only request a new multi-leg packet capture if the
+journal lacks sufficient timing evidence. This is a documentation-only
+checkpoint, **not a demonstrated code or runtime fix**.
