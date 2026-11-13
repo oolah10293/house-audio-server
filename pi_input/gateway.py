@@ -11,6 +11,7 @@ import http.client
 import html
 import ipaddress
 import json
+import logging
 import re
 import threading
 import time
@@ -21,6 +22,7 @@ from urllib.parse import urlsplit
 ID_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$')
 TRACK_RE = re.compile(r'^/audio/([A-Za-z0-9_-]{1,64})/([0-9]{1,3})\.wav$')
 ALIVE_SECONDS = 18
+LOG = logging.getLogger('house_audio.cd_gateway')
 
 
 @dataclass
@@ -162,8 +164,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def proxy_track(self, source: Source, number: int):
         connection = http.client.HTTPConnection(source.ip, source.port, timeout=8)
         headers_sent = False
+        remaining = None
+        # An upstream READ CD failure can truncate a fixed-length WAV. Never
+        # keep the MPD connection alive after advertising that Content-Length:
+        # it could otherwise wait indefinitely for bytes that will never come.
+        self.close_connection = True
         try:
-            connection.request('GET', f'/track/{number}.wav')
+            connection.request('GET', f'/track/{number}.wav', headers={'Connection': 'close'})
             upstream = connection.getresponse()
             if upstream.status != 200:
                 return self.send_bytes(f'Input node rejected track: HTTP {upstream.status}'.encode(), 'text/plain', 502)
@@ -173,6 +180,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'audio/wav')
             self.send_header('Content-Length', total)
+            self.send_header('Connection', 'close')
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             headers_sent = True
@@ -181,19 +189,26 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 while remaining > 0:
                     chunk = upstream.read(min(16384, remaining))
                     if not chunk:
+                        LOG.warning('CD stream ended early: source=%s track=%d missing=%d bytes',
+                                    source.sourceId, number, remaining)
                         break
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
         except (OSError, http.client.HTTPException, ValueError) as exc:
-            # If headers were already sent, the client sees a truncated stream.
-            if headers_sent:
-                return
-            try:
-                self.send_bytes(f'Source unavailable: {exc}'.encode(), 'text/plain', 502)
-            except (OSError, BrokenPipeError):
-                pass
+            # Once 200 + Content-Length are sent, we cannot send a new 502.
+            # Closing the socket is the only valid way to signal truncation.
+            LOG.warning('CD stream failed: source=%s track=%d missing=%s error=%s',
+                        source.sourceId, number, remaining, exc)
+            if not headers_sent:
+                try:
+                    self.send_bytes(f'Source unavailable: {exc}'.encode(), 'text/plain', 502)
+                except OSError:
+                    pass
         finally:
             connection.close()
+            # BaseHTTPRequestHandler will close the response socket after this
+            # handler returns. No next HTTP request may reuse a truncated WAV.
+            self.close_connection = True
 
 
 def make_server(host='127.0.0.1', port=8768, registry=None):
