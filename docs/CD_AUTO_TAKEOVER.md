@@ -305,3 +305,37 @@ working ESP32 3.3 firmware.
 
 **Status:** No runtime changes, source implementation changes,
 firmware builds, packages, installers, releases or deployments.
+
+## Immediate stop-then-play timing — 2026-11-13, 18:11
+
+User ran the prescribed back-to-back shell timing test on the Pi:
+
+```sh
+a=$(date +%s%3N)
+mpc -h 127.0.0.1 -p 6600 stop >/dev/null
+b=$(date +%s%3N)
+mpc -h 127.0.0.1 -p 6600 play 5 >/dev/null
+c=$(date +%s%3N)
+printf 'STOP: %d ms\nPLAY: %d ms\n' "$((b-a))" "$((c-b))"
+```
+
+Reported `STOP: 4 ms`, `PLAY: 3 ms`; total shell timing **7 ms**. The
+test sequence was requested while CD playback was active, but the
+user provided only the command output, not confirmation of audible
+playback or proof that MPD was actively playing at invocation.
+The command exit codes were masked by the subsequent assignments and
+printf, so the presented timings alone do not establish that the new
+track actually played. Command timing includes client startup overhead
+and only has integer-ms resolution.
+
+**Evidence-supported hypothesis:** The command path `stop` then
+`play` is dramatically faster to acknowledge than direct
+`play N` during documented active CD transitions (~1.9–2.0 s).
+The next narrowly scoped source-only candidate in
+`house_audio_server.py` `RadioController.select()` / same-CD
+selection branch is to send `stop` before `play {trackIndex}`,
+without flushing/replacing the queue or recapturing bookmarks.
+Test playback and state persistence. Do not alter the unrelated
+radio or playlist transitions. User requests no timeout increase and
+no firmware changes. No software code, builds, packages,
+releases or deployments authorized or done as of this checkpoint.
