@@ -505,7 +505,7 @@ failure where the source merely suggests a risk.
 - Do not reflash working ESP32 3.3, increase MPD's timeout, or
   rebuild/package without the user's separate explicit authorization.
 
-## Cleanup item 1 — CD Next/Previous (slow control responses measured; MPD isolation pending)
+## Cleanup item 1 — CD Next/Previous (MPD delay isolated; source fix pending Pi acceptance)
 
 **Scope:** This is item 1 of the user's nine-item cleanup audit. Work
 through the list sequentially, writing each outcome to this repository
@@ -565,15 +565,56 @@ reported). Distinguish HTTP response timing from MPD command
 acknowledgement and audio arrival time. Two successful requests do
 not prove timeout-free Next/Previous transitions.
 
-**Next isolated experiment:** with CD still playing, measure direct
-Pi MPD `next` and `prev` command durations using `mpc`, and confirm
-that each selects the intended track. No software edit required.
-If MPD command latency reproduces the delay, design a *CD-only*
-stop-before-targeted-play solution that preserves queue, bookmark,
-last-track behavior and standard MPD Previous semantics; add
-regression tests before a separately authorized Pi deployment.
-Do NOT blindly prepend `stop` to an MPD `next`/`previous` command.
+**2026-11-13 physical Pi direct-MPD isolation (user-provided):**
+With CD playing, the user measured normal MPD commands independently
+of House Music's API:
 
-**Status:** OPEN — slow HTTP Next/Previous response reproducible in
-one pair of requests; direct-MPD timing and audible correctness still
-need confirmation. Items 2–9 remain OPEN/UNTOUCHED.
+```sh
+for cmd in next prev; do
+  a=$(date +%s%3N)
+  mpc -h 127.0.0.1 -p 6600 "$cmd" >/dev/null
+  result=$?
+  b=$(date +%s%3N)
+  printf '%s: %d ms, exit %d\\n' "$cmd" "$((b-a))" "$result"
+done
+```
+
+```
+next: 1652 ms, exit 0
+prev: 1731 ms, exit 0
+```
+
+**Verified:** Direct MPD Next and Previous *both succeeded* but
+acknowledged in ~1.65–1.73 seconds, closely matching the API's
+~1.74–1.79 seconds. This isolates the long control delay to MPD's
+direct skip path rather than exclusively to House Music HTTP handling.
+The earlier directly measured **stop ~4 ms, play ~4 ms** test offers
+a faster CD-only alternative. The exact internal reason MPD spends
+~1.7 seconds in each command is not independently instrumented; WAV
+stream unwinding is the leading hypothesis. No audible track correctness
+report for this latest pair was provided.
+
+**Source-only candidate committed to branch (not installed on Pi):**
+- `05685152` updates the CD-only `/next` / `/previous` path to
+  obtain the MPD current queue index and, **only while a middle CD
+  track is actively playing** in ordinary ordered mode, issue
+  `stop` then `play {adjacentIndex}`. It neither clears/replaces
+  the queue nor recaptures the pre-CD bookmark. A pause, a missing
+  current index, a first/last-track boundary, or unexpected MPD
+  playback modes use the original `next` / `previous` command.
+  Unrelated library/radio controls remain unchanged.
+- `79fe0e42` asserts the exact command sequence for middle tracks,
+  bookmark preservation, and native behavior at boundaries/paused or
+  unexpected mode. Source tests/model checks alone are **not**
+  validation of Pi/MPD/audio latency or full MPD skip semantics.
+
+**Next acceptance:** Check CI result for `79fe0e42`; test the
+changed Pi source **only with user authorization**, measure House
+Music `/next` and `/previous` response durations again during
+CD playback, and confirm the expected track actually plays.
+Record outcomes before declaring the issue solved.
+
+**Status:** OPEN — MPD-control delay isolated and source-only
+candidate written. No Pi deployment, firmware build/flash, installer,
+release, or new package was authorized or performed. Items 2–9 remain
+OPEN/UNTOUCHED.
