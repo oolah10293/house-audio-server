@@ -106,3 +106,53 @@ This checkpoint supersedes earlier source-only/no-hardware-testing status statem
 - Code at this checkpoint: `house_audio_server.py` reads `MPD_TIMEOUT` from the environment, default `2.0` seconds; `MpdClient.run` sets socket connect/read timeouts accordingly. The `/inputs/play` handler operates on the MPD command path, and the server maps `OSError` or `MpdError` to HTTP 503 with JSON `error=mpd_unavailable` and `detail=str(exc)`.
 - **Confirmed:** the visible timeout correlates with the *control API's 503*, not merely a gateway-side `Errno 32 Broken pipe` or `Errno 104 Connection reset by peer` log. **Not yet confirmed:** whether the actual deployed `MPD_TIMEOUT` is its 2.0 s default (could be overridden by service environment), which MPD operation timed out, whether MPD itself was busy on stream teardown, and whether increasing the timeout resolves symptoms.
 - Investigate by verifying effective runtime `MPD_TIMEOUT`, capturing the 503 response detail or instrumenting command-stage timing, then run a deliberately controlled timeout adjustment **only with user approval**. Preserve deployed firmware 3.3 and avoid equating error-log cleanup with solving user-visible timeouts.
+
+## MPD stalls during CD track selection — 2026-11-13 (investigation checkpoint)
+
+**User-measured, physical Pi evidence:** The `/inputs/play` 503 response was captured as
+`{"error":"mpd_unavailable","detail":"timed out"}`. Direct `mpc -h 127.0.0.1
+-p 6600 status` probes normally returned in 3–5 ms, but showed 1026 ms, 1725 ms,
+1916 ms, and one 3003 ms probe terminated by an external three-second `timeout`
+(exit 124). This proves intermittent slow/unresponsive MPD control independently of
+House Music's HTTP endpoint. Concurrent MPD journal messages included
+`ffmpeg/wav: Packet corrupt (stream = 0, dts = NOPTS).` at 17:17:46,
+17:17:52 and 17:17:57. These facts do **not** establish whether MPD is
+waiting on HTTP input shutdown, decoding, output, or another lock.
+
+**Verified source relationship:** The `/inputs/play` same-disc path performs
+multiple MPD interactions: initial `mpd.state()`, CD queue validation,
+`play <trackIndex>`, another `mpd.state()`, then the HTTP
+`_mpd_state_response()` performs another `mpd.state()` and reconciliation.
+The client socket has a per-operation timeout of `MPD_TIMEOUT`; source and
+default configuration both specify 2.0 seconds. The *effective deployed*
+environment value has not been read. A 503 can therefore occur after a
+successful track-switch command, during a later status read; the user-visible
+503 alone does not prove playback failed.
+
+**Companion firmware verification:** The installed LiteOn 3.3 binary is
+identified in `house-audio-esp32` as compiled source
+`8fe9715801497399eafacd8331a9ccf1ee1e15b4`, reported running after Pi
+OTA with MD5 `0e0e4da19597308057924aaf8a65d770`. Its
+`HouseAudioCDInput.ino` holds `cdIoMutex` for the duration of an active
+WAV transfer; the background disc task skips readiness/TOC commands while the
+lease is held. Do **not** resurrect the obsolete hypothesis that TEST UNIT
+READY runs concurrently with reads. Its `HouseAudioInputTransport.h`
+deliberately cuts off the old length-advertised WAV stream when a complete
+new GET arrives. That cancellation could account for FFmpeg's truncated/corrupt
+WAV warnings during deliberate track changes, but no packet-level
+cause/timing for these particular warnings has been independently proven.
+
+**Smallest next controlled experiment, not yet executed:** Verify effective
+live `MPD_TIMEOUT` from the Pi service process environment; if it is 2.0,
+trial 5.0 *in the Pi server's runtime configuration only* with an approved
+service restart. Compare consecutive track-switch 200/503 responses and
+whether audio switches despite an error; separately note any remaining slow
+`mpc status` probes. A longer timeout is a mitigation for user-visible
+false failures, **not a demonstrated fix for the underlying MPD stall**.
+If failures persist after that experiment, add command-stage timing
+instrumentation to MPD control calls to distinguish `play` from
+`status`/queue requests rather than changing firmware blindly.
+
+**Change/deployment status:** This checkpoint is documentation only. No Pi
+configuration was changed; no firmware, code, compiler, GitHub workflow,
+packaging, installer, or deployment was invoked.
