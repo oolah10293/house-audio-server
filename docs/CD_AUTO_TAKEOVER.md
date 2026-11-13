@@ -412,3 +412,95 @@ future 503s or measure audible switch latency or complete-disc playback.
 The ESP32 firmware 3.3, gateway and MPD timeout were not altered in
 this iteration. This was a direct Pi source edit and service restart for
 field validation, not a firmware rebuild, package, installer or release.
+
+
+## Cross-conversation cleanup audit — 2026-11-13
+
+Audit scope: current Lite-On CD integration conversation AND the prior
+filled-up conversation, compared to `oolah10293/house-audio-server`
+and the pinned compiled ESP32 3.3 source. This is a **finding list**,
+NOT a set of fixes, not build authorization, and not a claim of hardware
+failure where the source merely suggests a risk.
+
+### High-priority unverified behavior
+
+1. **CD Next/Previous control bypasses the proven stop-before-play
+   workaround.** In `house_audio_server.py`, `/inputs/play` same-disc
+   selection now executes `stop; play N`, but the CD-specific
+   `/next` and `/previous` handler (approximately lines 2577–2580)
+   still calls MPD `next` or `previous` directly. Those operations
+   may have the same active-stream teardown delay. **This is verified
+   source asymmetry, NOT a measured Next/Previous timeout.**
+   First test Next/Previous with timed control requests while CD is
+   playing; if reproduced, test a bounded same-CD-only stop/targeted
+   play design that preserves boundary behavior and bookmarks.
+2. **Passive end-of-track auto advance and complete-disc playback**:
+   no independent hardware acceptance of consecutive unclicked track
+   progression, entire disc streaming, Snapcast timing, or end-of-disc.
+   The four 18:20 HTTP 200 results exercise explicit track selections
+   only.
+3. **Actual audible change latency**: HTTP 200 and fast MPD command
+   acknowledgement do not measure audio reaching house renderers.
+   Earlier ESP32 first-PCM network timing varied ~373–705 ms.
+   Physical audio start-to-sound/end-to-sound was not measured.
+4. **Gateway 502 / ESP32 TCP RST regression**: Firmware 3.2 had a
+   packet-confirmed new-track RST and 502; 3.3 substantially improved
+   user-reported switching, but gateway/ESP32-level RST/502 absence
+   after 3.3 plus Pi hotfix is NOT independently verified. Keep useful
+   gateway diagnostics until such a check; do not conflate expected
+   old-track `Broken pipe` with a failed new-track GET.
+5. **Disc change / restoration acceptance**: Physical eject while
+   powered, replace with a different disc, identical-track-count
+   disc swap, real manual radio/library override while CD remains
+   inserted, and exact prior playlist **position/modes** restoration
+   remain independently unaccepted. A prior power-off/reboot restored
+   the previous playlist, but not an instrumented precise position.
+6. **CD UI usability**: User reported "there is no stop" when asked
+   to stop the CD from the House Music UI. Current browser HTML has a
+   generic Now Playing Stop button; user experience and CD tab
+   discoverability must be checked rather than claiming the button
+   is missing. Server supports CD Play/Pause/Stop/Next/Previous;
+   Android CD-specific UI remains documented as not implemented in
+   `docs/CD_AUDIO_INPUT_INTEGRATION.md`. CD seeking is explicitly
+   unsupported because gateway WAV transport lacks HTTP Range.
+   The earlier conversation discussed **physical** eject detection,
+   not a confirmed requirement for a software Eject button.
+
+### Operational and release hygiene
+
+7. The Pi is live with the narrowly scoped source hotpatch to
+   `/opt/house-audio-server/house_audio_server.py`, while PR #20
+   remains draft; verify the installed file and the backup
+   `house_audio_server.py.before-cd-stop` before any future install,
+   and ensure a future authorized installer preserves the change.
+   GitHub source is the canonical implementation. No claim that a
+   fresh install from default `main` would contain this PR.
+8. User explicitly requested retaining diagnostics after 3.3
+   improvements to resolve the timeout messages. The server's
+   `PYTHONUNBUFFERED=1` drop-in is live configuration reported in
+   the log investigation but has not been independently compared
+   against systemd source defaults. Preserve useful journald
+   diagnostics until remaining cases are resolved. Temporary packet
+   captures and their deletion are a separate cleanup decision.
+9. Historical CD integration documents and installer/package names
+   mix source-only 2026-11-12 claims with later 2026-11-13
+   hardware acceptance. Main acceptance document has a current-status
+   preamble; older date-specific notes remain historical. Do not
+   silently rewrite historical evidence or package on a cleanup PR.
+10. Firmware-side verification still pending in companion ESP32 repo:
+    provisional 1,500-ms USB CBW/CSW timeout, intermittent SCSI 0x2
+    readiness recovery, CD READ retries/terminal truncation behavior,
+    actual 4x speed hint compliance, and streaming throughput under
+    sustained load. See its `USB_TIMEOUT_FOLLOWUP.md`.
+
+### Already addressed (do not redo)
+
+- Direct same-disc GUI track-selection MPD timeout: stop-before-play
+  source patch and four consecutive HTTP 200 hardware requests.
+- ESP32 3.3 OTA installed and verified by exact compiled commit.
+- Ordinary CD boot auto-takeover and power-off return to the previous
+  library playlist observed on hardware at least once.
+- PR-triggered CD Pi installer creation was disabled: packaging requires
+  separately authorized manual dispatch.
+- Do not reflash working ESP32 3.3, increase MPD's timeout, or
+  rebuild/package without the user's separate explicit authorization.
