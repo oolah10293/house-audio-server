@@ -142,16 +142,18 @@ new GET arrives. That cancellation could account for FFmpeg's truncated/corrupt
 WAV warnings during deliberate track changes, but no packet-level
 cause/timing for these particular warnings has been independently proven.
 
-**Smallest next controlled experiment, not yet executed:** Verify effective
-live `MPD_TIMEOUT` from the Pi service process environment; if it is 2.0,
-trial 5.0 *in the Pi server's runtime configuration only* with an approved
-service restart. Compare consecutive track-switch 200/503 responses and
-whether audio switches despite an error; separately note any remaining slow
-`mpc status` probes. A longer timeout is a mitigation for user-visible
-false failures, **not a demonstrated fix for the underlying MPD stall**.
-If failures persist after that experiment, add command-stage timing
-instrumentation to MPD control calls to distinguish `play` from
-`status`/queue requests rather than changing firmware blindly.
+**Updated next step after user feedback (2026-11-13):** The user explicitly
+rejected increasing MPD timeout to 5 seconds as an acceptable solution;
+track switching should be fast, not simply permitted to block longer.
+The source indicates that even a same-disc selection calls multiple MPD
+operations (queue verification, `play <index>`, state reads) and the HTTP
+response takes additional state readings. Measure precisely which command's
+ACK or response is slow during a failed selection before changing policy or
+timeouts. A read-only loopback MPD command/response trace during deliberate
+track clicks is the smallest discriminating next experiment. Check whether
+a switch succeeds despite an error in the final read. The WAV packet-corrupt
+messages may result from the intentionally interrupted old stream, but are
+not proof of root cause. **No server or S3 changes without specific evidence.**
 
 **Change/deployment status:** This checkpoint is documentation only. No Pi
 configuration was changed; no firmware, code, compiler, GitHub workflow,
