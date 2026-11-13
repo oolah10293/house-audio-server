@@ -187,7 +187,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if self.command == 'GET':
                 remaining = int(total)
                 while remaining > 0:
-                    chunk = upstream.read(min(16384, remaining))
+                    # read1 returns available data without waiting to fill a
+                    # 16 KiB buffer; preserves partial audio before abrupt EOF.
+                    chunk = upstream.read1(min(16384, remaining))
                     if not chunk:
                         LOG.warning('CD stream ended early: source=%s track=%d missing=%d bytes',
                                     source.sourceId, number, remaining)
