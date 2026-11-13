@@ -365,3 +365,32 @@ This supports a narrowly scoped same-CD-track switch adjustment in
 It is **not yet implemented** and GUI end-to-end behavior is untested;
 the user has not authorized a build/release/installer/deployment.
 Do not alter timeout or the 3.3 ESP32 firmware.
+
+## Pi live test of stop-before-play CD switching — 2026-11-13, 18:20
+
+The user applied the narrowly scoped same-disc `stop` before `play N`
+server change to the Raspberry Pi for an expressly requested live test.
+The source implementation is commit `861a40d2`; the model regression
+test is commit `5f77e467`. The standard GitHub regression workflow
+completed successfully at
+https://github.com/oolah10293/house-audio-server/actions/runs/43525955013.
+
+After the user restarted the Pi service and switched through CD tracks
+in the House Music interface, the user supplied the server journal:
+
+```
+Nov 13 18:20:01 pihole python3[788480]: 192.168.1.125 - "POST /inputs/play HTTP/1.1" 200 -
+Nov 13 18:20:07 pihole python3[788480]: 192.168.1.125 - "POST /inputs/play HTTP/1.1" 200 -
+Nov 13 18:20:12 pihole python3[788480]: 192.168.1.125 - "POST /inputs/play HTTP/1.1" 200 -
+Nov 13 18:20:22 pihole python3[788480]: 192.168.1.125 - "POST /inputs/play HTTP/1.1" 200 -
+```
+
+**Verified:** Four consecutive GUI CD track selections returned HTTP 200
+with **zero HTTP 503 among those four** after the patch. The user
+reported "seems solved." This is strong physical evidence that the
+reported track-selection control timeout was resolved by stop-before-play.
+**Limit:** These four requests do not establish absolute absence of
+future 503s or measure audible switch latency or complete-disc playback.
+The ESP32 firmware 3.3, gateway and MPD timeout were not altered in
+this iteration. This was a direct Pi source edit and service restart for
+field validation, not a firmware rebuild, package, installer or release.
