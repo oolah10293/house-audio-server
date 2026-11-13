@@ -1,12 +1,24 @@
-# Plug-and-play CD takeover — source-only refinement (2026-11-12)
+# Plug-and-play CD takeover — field status and source integration
 
-This refinement lives on branch `feature/cd-auto-takeover`, draft PR #20,
-based on `feature/cd-house-playback` (installer v0.14.2-cd1). Companion
-ESP32 source is `oolah10293/house-audio-esp32` branch
-`feature/cd-auto-media-events`. **No updated firmware, Pi gateway,
-installer, release package, or live deployment has been built/installed
-for this refinement.** This is source development requested by the user;
-packaging/flashing requires separate explicit authorization.
+**Status as of 2026-11-13:** The CD-to-House-Music integration is running
+on the user's Pi with the Lite-On ESP32-S3 CD node. The Pi server has
+a field-tested **stop-before-play** change for same-disc track selection:
+four consecutive normal-controller requests returned HTTP 200 after the
+change, following earlier intermittent two-second MPD timeouts. This
+supports resolution of the reported control timeout; long-run reliability,
+actual switch-to-audio latency, and full-disc playback remain unverified.
+The ESP32's working firmware 3.3 and the MPD timeout were not altered
+for this fix. **No new release or installer was authorized.**
+
+Authoritative source: `oolah10293/house-audio-server`, branch
+`feature/cd-auto-takeover`, draft PR #20, based on
+`feature/cd-house-playback` (previous installer v0.14.2-cd1).
+Companion CD node source: `oolah10293/house-audio-esp32`.
+Server fix commit: `861a40d2`; regression test commit: `5f77e467`.
+The current Pi installation was directly patched for a controlled field
+test, not delivered as a new package. Source and field-test detail follow
+chronologically in the older investigation notes. Future builds, packaging
+and releases require explicit authorization.
 
 ## Agreed behavior
 
@@ -60,17 +72,19 @@ during an ongoing WAV transfer.
   event and its MPD writes are serialized with deliberate controller
   commands under the existing lock. Manual source selections suppress
   any already-observed, still-pending CD takeover.
-- To deploy later, the ESP firmware, **deployed** gateway script at
-  `/home/ads-suck/gateway.py` (managed by
-  `house-audio-input-gateway.service`), and House Music server must all
-  be updated together. The existing installer does **not** update that
-  independent gateway process.
-- Existing CD installer, currently running Pi service and XIAO firmware
-  have not been touched by source-only refinements.
-- No real CD-to-MPD decoding/Snapcast transition or physical unplug tests
-  have been demonstrated yet. GitHub unit tests validate state behavior
-  only; the firmware changes need a separately authorized build and real
-  Lite-On/XIAO validation.
+- The Pi gateway is a separate running service with its script at
+  `/home/ads-suck/gateway.py`, managed by
+  `house-audio-input-gateway.service`. The source `install-cd.sh`
+  includes an explicit gateway update and backup/rollback handling.
+  Keep independent gateway changes coordinated with the Pi server; do
+  not reflash the working ESP32 firmware for source-only cleanup.
+- Initial Pi integration, automatic CD takeover and unplug restoration
+  were subsequently observed on physical hardware (see the 2026-11-12
+  checkpoint below). Four CD track selections through the normal UI
+  returned HTTP 200 after the server stop-before-play fix (see 18:20
+  checkpoint). Eject while powered, full-disc playback and sustained
+  reliability remain unaccepted. GitHub unit tests do not substitute
+  for physical audio checks.
 
 ## Regression scenarios
 
@@ -81,13 +95,17 @@ presence changes, suspended gateway, stopped/paused baseline restoration,
 legacy firmware compatibility, and no-source fallback.
 
 `tests/test_gateway.py` validates new session/revision registration fields.
-**GitHub Actions verification:** 195 Python tests passed, Python source
-compilation/syntax, installer shell syntax and browser JS regression checks
-passed on commit `768ed6db6af571122fb01c13ff687334d87a9eef`, run
-[43277239409](https://github.com/oolah10293/house-audio-server/actions/runs/43277239409).
-The automatic CD installer creation/upload steps were **skipped**.
-The new ESP32 sketch has **not** been compiled or tested on real hardware.
-No physical MPD/Snapcast test has yet been performed.
+**Historical source verification (2026-11-12):** 195 Python tests,
+Python source syntax, installer shell syntax, and browser JavaScript
+checks passed on commit `768ed6db6af571122fb01c13ff687334d87a9eef`,
+run [43277239409](https://github.com/oolah10293/house-audio-server/actions/runs/43277239409).
+The subsequently added stop-before-play regression also passed in
+[run 43525955013](https://github.com/oolah10293/house-audio-server/actions/runs/43525955013).
+The earlier lack of physical testing has been superseded by the dated
+field-test checkpoints below. The separate CD package workflow was
+changed to require an explicit manual trigger and authorization phrase,
+rather than packaging on pull-request updates; no package was requested
+as part of cleanup.
 
 ## Hardware acceptance checkpoint — 2026-11-12 (user-reported, not independently instrumented)
 
