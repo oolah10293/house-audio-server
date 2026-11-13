@@ -2577,7 +2577,30 @@ class ApiHandler(BaseHTTPRequestHandler):
                             if path in {"/next", "/previous"}:
                                 if RADIO.empty_selection:
                                     raise ApiError(409, "cd_no_disc", "Insert a CD before skipping tracks")
-                                mpd.command(path.lstrip("/"))
+                                # A live CD WAV can make MPD's direct next/previous
+                                # acknowledgement take nearly two seconds. For
+                                # ordinary interior-track skips, end the old stream
+                                # before starting the known adjacent queue entry.
+                                # Preserve native MPD boundary/paused/mode behavior.
+                                state = mpd.state()
+                                current = state.get("songPosition")
+                                step = 1 if path == "/next" else -1
+                                target = current + step if type(current) is int else None
+                                ordered = (state.get("random") is False
+                                           and state.get("repeat") is False
+                                           and state.get("consume") is False
+                                           and state.get("singleMode") == "0")
+                                if (state.get("transport") == "play" and ordered
+                                        and target is not None
+                                        and 0 <= target < state["queueLength"]):
+                                    mpd.command("stop")
+                                    mpd.command(f"play {target}")
+                                    RADIO.song_id = mpd.state().get("songId")
+                                    RADIO.intent, RADIO.status = "play", "playing"
+                                    RADIO.auto_paused = False
+                                    RADIO.error = None
+                                else:
+                                    mpd.command(path.lstrip("/"))
                             elif path == "/play":
                                 RADIO.resume(mpd)
                             elif path == "/pause":
