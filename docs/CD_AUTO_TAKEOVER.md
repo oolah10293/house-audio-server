@@ -182,3 +182,31 @@ already-recorded `house-audio-input-gateway.service` journal at
 17:39:58–17:40:15; only request a new multi-leg packet capture if the
 journal lacks sufficient timing evidence. This is a documentation-only
 checkpoint, **not a demonstrated code or runtime fix**.
+
+## Multi-service timing correlation — 2026-11-13, 17:40 (physical Pi)
+User provided the precise, time-aligned `journalctl` output for
+`house-audio-server`, `house-audio-input-gateway`, and `mpd`.
+Correlated with the existing MPD TCP trace:
+
+| MPD command started | Previous WAV disconnect or decoder warning | New WAV GET reported 200 | MPD command / browser result |
+| --- | --- | --- | --- |
+| 17:40:00.102890 `play 10` | old track 2 reset at .103316 | new track 11 at .228864 (126 ms after play) | MPD command socket closed after 2001 ms; `/inputs/play` 503 at 17:40:02.103927 |
+| 17:40:05.378733 `play 2` | old track 11 broken pipe at .391150; FFmpeg WAV warning at .378869 | new track 3 at .401502 (23 ms after play) | MPD command socket closed after 2002 ms; `/inputs/play` 503 at 17:40:07.380108 |
+| 17:40:10.662524 `play 5` | old track 3 broken pipe at .664012; FFmpeg WAV warning at .662679 | new track 6 at .676291 (14 ms after play) | MPD first response at 1884 ms; `/inputs/play` 200 at 17:40:12.556600 |
+
+**Verified:** The gateway *began responding with HTTP 200 for the requested
+new track* within 14–126 milliseconds in these instances; MPD's `play N`
+acknowledgment continued to take ~1.9–2.0 seconds. Track indices are
+zero-based: `play 10` requests track 11, etc. The logs are consistent
+with deliberate old stream interruption; an FFmpeg corrupt-WAV report
+at the moment of switching does not independently prove defective PCM.
+**Important limitation:** A gateway `GET ... 200` journal line records
+HTTP response initiation, **not actual audio payload transfer time or
+MPD decoder readiness**. It does not establish that the gateway or ESP32
+delivered the *first PCM bytes promptly*. The remaining unresolved wait
+is between MPD's command processing, upstream audio delivery, and decoder
+startup. The user's goal is fast track selection, **not** increasing the
+MPD timeout. Next targeted measurement: time the new TCP/WAV response
+headers and first substantial PCM payload from the ESP32 through port 8080
+to gateway 8768, aligned with MPD `play` and its `OK` on 6600.
+No runtime configuration or firmware changes have been performed.
