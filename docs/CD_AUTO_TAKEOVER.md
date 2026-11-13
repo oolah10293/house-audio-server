@@ -504,3 +504,40 @@ failure where the source merely suggests a risk.
   separately authorized manual dispatch.
 - Do not reflash working ESP32 3.3, increase MPD's timeout, or
   rebuild/package without the user's separate explicit authorization.
+
+## Cleanup item 1 — CD Next/Previous (live test pending)
+
+**Scope:** This is item 1 of the user's nine-item cleanup audit. Work
+through the list sequentially, writing each outcome to this repository
+before advancing. Items 2–9 remain OPEN/UNTOUCHED.
+
+**Verified from the current source** (`house_audio_server.py`):
+- Clicking a CD track in the browser uses `POST /inputs/play`,
+  `RadioPlayback.select()`, and the tested same-disc `stop` then
+  `play {trackIndex}` sequence. The normal Pi hardware test yielded
+  four HTTP 200 responses, and the GitHub model regression passed.
+- The CD-specific `POST /next` and `POST /previous` handler executes
+  `mpd.command("next")` or `mpd.command("previous")` directly while
+  CD is selected. It does **not** execute `stop` first.
+- `tests/test_cd_inputs.py` checks Next/Previous selection and bookmark
+  preservation with a model; it does **not** exercise the live MPD
+  WAV stream teardown timing.
+
+**Inference, not yet a defect:** The direct Next/Previous commands
+_may_ exhibit the 2-second active-stream MPD stalls formerly seen with
+direct `play N`. Do not change them solely due to code asymmetry:
+the MPD commands have different semantics, including end-of-disc
+and Previous behavior depending on elapsed playback position.
+
+**Next experiment:** During playback of a middle CD track on the Pi,
+send one `/next` and one `/previous` HTTP POST (empty JSON body) to
+local House Audio port 8787, record HTTP status and total round-trip
+time, and confirm the audible track/result. Check Pi journal for
+`POST /next` and `POST /previous` 200 vs 503. No code edit, build,
+package, firmware, or service restart is needed.
+
+**Status:** OPEN — awaiting user-supplied physical results. If fast and
+correct, close item 1 as accepted without a change. If slow/503 or
+wrong-track, isolate the precise behavior and propose minimal source
+fix with regression tests; do not touch item 2 before recording the
+conclusion.
