@@ -1297,3 +1297,46 @@ localize the break.
 No runtime changes, code edits, firmware builds,
 packaging or deployments have been authorized or
 performed in this documentation checkpoint.
+
+## Cleanup item 5 — MP3 no-sound live state: MPD progress and Snapserver active (2026-11-13)
+
+**User-supplied three consecutive read-only Pi state samples
+(23:45:24, :27, :30 local):**
+
+- House Music `/state` reported source `library`, MPD
+  `transport=play`, `error=None`, and **actual** MPD
+  `elapsedSeconds` 166.073 -> 169.070 -> 172.088.
+  Thus unlike the browser-side extrapolation, the
+  MPD status itself advanced about six seconds.
+- `/renderers` reported `snapserver.reachable=True`,
+  default stream `status=playing`, URI
+  `pipe:///tmp/snapfifo?chunk_ms=20&codec=flac&name=default&sampleformat=48000:16:2`.
+- Basement stereo: connected/audible True, `lastSeen`
+  ages 0.745 -> 0.808 -> 0.854 s; IP `192.168.1.117`.
+  Bose Sub: connected/audible True, lastSeen
+  0.053 -> 0.111 -> 0.196 s; IP `192.168.1.110`.
+  A phone `192.168.1.136` and Rio sub
+  `192.168.1.129` likewise reported current
+  connected/audible. Music-room stereo `192.168.1.100`
+  reported disconnected and not audible.
+- `mpc outputs`: `Output 1 (Snapcast) is enabled`.
+
+**Interpretation:** MPD clock is advancing and the output is
+enabled; Snapserver knows a playing stream and has recent
+client presence, but **none of these data establish active,
+non-silent PCM through the pipe or actual audible output
+at the nodes**. House Music sets client `audible` based on
+fresh connected/present/unmuted status in
+`house_audio_server.py`, not detected acoustic audio.
+The user reported silent MP3 playback at this time, but
+whether every listed active node was silent throughout
+these exact samples has not been independently confirmed.
+CD transport is not required for this MP3 symptom, so
+do not claim a scratch or CD-specific hardware fault
+caused the MP3 failure.
+
+**Next discriminator:** verify which specific active
+nodes are silent at the same instant, and if reproduced
+compare Snapserver audio payload/data delivery to the
+renderer node while MPD remains in play. No settings,
+firmware, builds, package, deployment, or changes made.
