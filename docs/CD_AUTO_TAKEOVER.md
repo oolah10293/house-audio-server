@@ -709,3 +709,45 @@ independently retrieved. Items #2–9 remain open; next focus is #2
 (the old intermittent CD-readiness failure) once the user elects to
 proceed. No build, package, release, installer, or firmware operation
 authorized or performed.
+
+## Cleanup item 1 — first/last-track hardware boundary result (2026-11-13)
+
+**User-provided live Pi result:** With a 13-audio-track CD shown in
+the House Music browser, pressing **Previous on track 1** raised an
+MPD error toast:
+`ACK [5@0] {previous} Decoder failed to seek`.
+The user also confirmed **Next on the final track stops playback**.
+
+**Verified source explanation:** In the previously installed
+`house_audio_server.py`, a CD `/previous` when `songPosition == 0`
+calculated target -1, then fell back to the native MPD `previous`
+command. Unlike a seekable library file, the live CD WAV HTTP stream
+does not support ordinary seeking. The screen shows a concrete
+boundary failure, not a hypothetical risk. Whether MPD uses its
+seek-to-start logic internally was not separately traced; the error
+message directly identifies a failed decoder seek.
+
+**Desired behavior:** On track 1, Previous restarts track 1 from
+the beginning without a seek. On the last track, Next stops playback
+without wrapping, as the user observed.
+
+**Source-only fix (not yet installed on Pi):**
+- `4f094365`: for active, normal ordered CD playback, clamp the
+  `previous` target at zero and use `stop; play 0` to restart
+  track 1; retain existing `stop; play {adjacentIndex}` for middle
+  tracks. Last-track Next continues to use native MPD Next and stop.
+  Non-CD controls, unusual modes and paused skip behavior are unchanged.
+- `b4743a11`: source/model regression tests assert first-track
+  `stop; play 0`, unchanged resume-playlist snapshot, track stays
+  1, elapsed resets to 0, and last-track Next still stops.
+  GitHub CI status must be checked independently; these tests are
+  not physical CD acceptance.
+
+**Status of #1:** The original middle-track latency issue remains
+resolved on the Pi (12–16ms with audible user acceptance).
+**Boundary sub-issue reopened** for first-track Previous. The proposed
+source fix awaits user-authorized Pi installation and physical
+acceptance; do not claim that the on-device error is repaired yet.
+Last-track Next hardware result: PASS / stops. Items #2–9 remain
+open and untouched. No firmware, build, installer, package, or
+deployment done by this source/documentation update.
