@@ -807,3 +807,51 @@ READ CD failures, should first ask whether the user has seen these
 since current improvements, instead of assuming ongoing failures
 or changing timing settings without evidence. No source changes,
 tests, builds, releases, OTA, or Pi deployments under #4.
+
+## Cleanup item 4 — two automatic CD track transitions field PASS (2026-11-13)
+
+**User-supplied Pi terminal evidence** from a read-only Python
+observer polling `http://127.0.0.1:8787/state` every five seconds:
+
+```text
+Monitoring automatic CD playback...
+Waiting for two track transitions.
+
+Track 6 playing
+Track 7 playing
+Automatic transition #1: 6 -> 7
+Track 8 playing
+Automatic transition #2: 7 -> 8
+
+PASS: Two automatic track transitions observed.
+Transitions observed: 2
+```
+
+The script watched `source.input.trackNumber`,
+`mpd.transport`, `mpd.elapsedSeconds` and `mpd.error`
+without sending any transport controls. It exited successfully
+after two advancing track-number transitions. Its exit conditions
+would report an MPD error, paused/stopped CD, source departure or
+an observed lack of elapsed-time progress lasting over 30 seconds.
+None were reported in the user's output.
+
+**Verified scope from user output:** Automatic transition from
+track 6 to 7 and 7 to 8; no error or stalled-playback condition
+reported by this poller in its observed window. This validates
+two contiguous track boundaries, not an entire disc, sample-perfect
+uninterrupted audio, or absence of gateway 502s that might recover
+within the polling interval. No logs or packet captures were
+collected in this step.
+
+**Disposition:** #4's ordinary automatic track-transition behavior
+**FIELD PASS / accepted for two boundaries** and no current
+user-observed issue; retain whole-disc endurance as an optional,
+unperformed extended test rather than a presumed failure.
+Update earlier 'monitoring only' disposition accordingly.
+Proceed sequentially to item #5, with first question whether
+the historical gateway 502/USB timeout errors have recurred on
+current 3.4 firmware. Do not change hardware/firmware or server
+based solely on historical errors.
+
+No code edit, build, package, release, hardware installation or
+transport command performed in this documentation-only checkpoint.
