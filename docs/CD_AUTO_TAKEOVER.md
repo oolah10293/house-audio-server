@@ -1088,3 +1088,46 @@ untouched until evidence guides a targeted change.
 PCM/audio across boundaries FAIL for this captured period.
 #5 dropout investigation OPEN. Source documentation checkpoint
 only; no build, packaging, deployment or firmware changes.
+
+## Cleanup item 5 — correction: dropouts are within songs, not at boundaries (2026-11-13)
+
+**User's explicit correction and stronger direct observation:**
+The audible glitches on both speakers happened **during** tracks
+12 and 13, with **one occurring within the final 30 seconds of
+track 13**. The prior assistant incorrectly attributed the
+symptom to the approximately two-second PCM idle/playing changes
+at boundaries (11->12, 12->13); user explicitly says those
+are NOT the dropouts they heard. Do not revive this mistaken
+attribution without new evidence.
+
+**New user-supplied whole-session log:** MPD `player: played`
+and Snapserver `PcmStream playing => idle => playing` events
+appear at many earlier track boundaries, including library MP3s
+and CD tracks 5 through 13. Thus these boundary state events
+are **not specific to the problematic late CD tracks**. The
+report of audible mid-song interruptions is separate from the
+observed track-boundary gaps. They may be additional usability
+problems, but they do not explain the user's described symptom.
+
+At the end of track 13, MPD `player: played ".../13.wav"`
+and Snapserver `playing => idle` both occur at **22:16:17**.
+If the reported event was in the last thirty seconds as stated,
+the relevant historical interval is approximately
+**22:15:47–22:16:17**. The previously supplied complete journal
+for 22:15:30–22:16:40 has control-session polling and
+periodic successful S3 `POST /register`, but no PCM state
+change or CD/MPD error **during** that last half-minute.
+This absence does not disprove a brief network/data
+starvation: neither the five-second API poller nor
+state-change journal is a byte-timing monitor.
+
+**Evidence-based next step:** Instrument read-only network
+packet timing of S3 HTTP WAV transfer `192.168.1.175:8080`
+on the Pi while replaying track 13. Packet timestamps can
+detect unusual transfer gaps/retransmits and be aligned to
+the heard glitch, distinguishing upstream transport issues
+from downstream MPD/Snapcast/client faults. A gap alone would
+not establish audible dropout, and a complete packet stream
+does not prove audio samples were correct. No firmware,
+server code, settings, installs, releases or build changes
+are authorized or made by this checkpoint. #5 remains open.
