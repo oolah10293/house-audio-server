@@ -163,14 +163,23 @@ class CdPlaybackHttpTests(unittest.TestCase):
         self.assertEqual(selected["source"]["resumePlaylist"]["snapshotId"], token)
         self.assertEqual(self.mpd.commands.count("clear"), before)
 
-    def test_cd_skip_boundaries_fall_back_to_native_mpd(self):
+    def test_cd_previous_on_first_track_restarts_without_native_seek(self):
         first = self.play_cd(1)
         token = first["source"]["resumePlaylist"]["snapshotId"]
+        self.mpd.values["elapsedSeconds"] = 22.0
         before = len(self.mpd.commands)
         self.assertEqual(self.request("/previous", {})[0], 200)
-        self.assertEqual(self.mpd.commands[before:], ["previous"])
-        self.assertEqual(self.request("/state")[1]["source"]["input"]["trackNumber"], 1)
+        self.assertEqual(self.mpd.commands[before:], ["stop", "play 0"])
+        state = self.request("/state")[1]
+        self.assertEqual(state["source"]["input"]["trackNumber"], 1)
+        self.assertEqual(self.mpd.values["songPosition"], 0)
+        self.assertEqual(self.mpd.values["elapsedSeconds"], 0)
+        self.assertEqual(self.mpd.values["transport"], "play")
+        self.assertEqual(state["source"]["resumePlaylist"]["snapshotId"], token)
 
+    def test_cd_next_on_last_track_still_stops_without_wrapping(self):
+        first = self.play_cd(1)
+        token = first["source"]["resumePlaylist"]["snapshotId"]
         self.play_cd(11)
         before = len(self.mpd.commands)
         self.assertEqual(self.request("/next", {})[0], 200)
