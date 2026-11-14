@@ -1377,3 +1377,51 @@ and shared stream/audio path. This is a hypothesis
 discriminator; neither outcome alone proves exact cause.
 No new setup, code, build, install or firmware actions were
 requested or performed.
+
+## Cleanup item 5 — simultaneous phone audio validates common source during renderer silence (2026-11-13)
+
+**Decisive user-perceived comparison:** The **phone's Snapcast app
+remains audibly playing through the same observed dropouts** that
+silence the physical hardware nodes (basement stereo and Bose
+sub). This is stronger than the previous "phone can play when
+unmuted" statement: the sound is actually concurrent.
+
+**Interpretation with limits:** A functioning phone renderer
+means Snapserver is distributing usable audio to at least one
+client *during* hardware-node silence, greatly weakening
+hypotheses of a general CD read failure, MPD source pause,
+or total Snapserver source outage as the sole cause.
+It does NOT fully distinguish the hardware clients' Wi-Fi
+delivery, Snapcast receiver time-sync/buffer/decoder, I2S DAC,
+or analog output causes. Differing buffering can mask
+some brief upstream glitches, but the observed combination
+makes client-specific paths the priority.
+
+**Existing authoritative history now connected:** On
+`house-audio-esp32` main,
+[Issue #3](https://github.com/oolah10293/house-audio-esp32/issues/3)
+was opened 2026-09-28 and remains open, describing
+few-second, sometimes single-renderer silence with
+spontaneous recovery on XIAO S3 + PCM5102A nodes. The
+`house-audio-server` README and ESP32 README explicitly
+track this unresolved issue. The earlier physical observations
+are similar but DO NOT prove this event has identical cause.
+Issue #3 records a proposed multi-second shared buffering
+experiment; `docs/HOUSE_BUFFER_TRIAL.md` states the 3000-ms
+trial was **prepared but not applied** in that recorded test.
+Do not claim this trial or any current live firmware revision
+has been verified in this session.
+
+**Present diagnostic priority:** Catch the hardware-renderer
+event in its ESPHome/Snapclient client-side logging, focusing
+on Wi-Fi TCP delays/reconnect, Snapclient buffer underrun/
+time-sync, FLAC decode/I2S path. Unlike the old v0.6.0
+README, the current server README states its historical
+`/diagnostics` endpoint is absent in current source; do
+not prescribe that retired endpoint as if live. The Pi
+`/renderers` connected/present/unmuted snapshot was already
+seen healthy during silence and is insufficient by itself.
+
+No firmware/software/builds/packages/runtime settings changed
+or authorized; note-only checkpoint. No root cause has been
+established.
