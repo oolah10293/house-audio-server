@@ -1471,3 +1471,30 @@ documentation-only; no source, firmware or live settings changed.
 **User-reported result:** After moving the affected hardware renderer nodes to a different access point and locking them to it, the user played **CD tracks 11 through 13 without noticing any audio dropouts**. Before this AP change, they heard repeated physical-node dropouts during CD and local MP3 playback, while the phone Snapcast app stayed audible during the node interruptions. This test supports investigating Wi-Fi AP conditions/steering as a possibility. It does NOT prove the original AP or roaming caused the issue because only one post-change listening run is reported and no RF/packet measurements are available.
 
 **Current decision:** Preserve the new AP assignment and all other playback/firmware settings; continue listening for recurrence before attempting fixes. No software or firmware changes, build, release, packaging or deployment authorized or performed.
+
+## Renderer dropout — Omada Guest room AP retry graph (2026-11-14)
+
+**User-provided Omada screenshot:** Guest room AP (EAP653 (US) v1.0)
+Statistics -> Retries, 1D chart, filter currently `All`.
+Shows bursty **Tx Retries** (green) and **Rx Retries** (blue)
+with graph axis topping at about **2.44e4** and multiple large
+peaks, especially in a morning/late-morning period.
+The axis/aggregation interval and exact timestamps/absolute
+counts during the reported audio dropouts have **not** been
+independently established. `All` is not a confirmed 2.4 GHz
+only view, and the chart does not identify affected client(s).
+The screenshot does not include a retry percentage or packet
+denominator for a matching time interval, so large raw retry
+counts alone do not establish a bad retry rate or root cause.
+A link-layer packet retransmitted successfully is compatible
+with previously observed `Dropped Packets=0` and
+`Errors=17`; these are different counters.
+
+**Smallest next read-only check:** On that AP, change the
+Statistics left filter from `All` to **2.4 GHz**, if available,
+and inspect/hover time periods matching the actual observed
+audio interruptions, or compare against the new locked AP.
+Do not claim observed daily retry spikes coincide with
+the dropout timestamps without correlation. Preserve new AP
+assignment while observing. No builds, firmware, deployment or
+config changes made by this documentation checkpoint.
