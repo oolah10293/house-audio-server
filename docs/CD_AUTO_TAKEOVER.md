@@ -1040,3 +1040,51 @@ grep, so the lack of an earlier reported match cannot
 rule out source starvation. Do not change buffering or
 firmware without evidence. All changes in this
 checkpoint are documentation only.
+
+## Cleanup item 5 — real PCM feed idle gaps at transitions into tracks 12 and 13 (2026-11-13)
+
+**Newly provided user Pi journal, exact chronology (source-derived):**
+
+- 22:09:05 `GET /audio/.../12.wav HTTP/1.1` 200
+- 22:09:40 Snapserver `(PcmStream) State changed: default, state: playing => idle` and Server `default: idle`
+- 22:09:42 MPD `player: played ".../11.wav"`, Snapserver `(PcmStream) idle => playing`
+- 22:11:14 `GET /audio/.../13.wav HTTP/1.1` 200
+- 22:11:51 Snapserver `(PcmStream) playing => idle` and Server `default: idle`
+- 22:11:53 MPD `player: played ".../12.wav"`, Snapserver `(PcmStream) idle => playing`
+
+**Verified by the user-supplied journal (not direct hardware
+inspection):** The shared Snapserver *PCM stream* entered idle for
+approximately two seconds at *both* boundaries 11 -> 12 and
+12 -> 13. This is much stronger evidence relevant to the two
+speakers' reported dropout than the separate Snapserver
+control-session socket resets. Both actual stream-idle
+intervals begin two seconds before MPD's `played` log for
+the outgoing track; the logs do not show a CD gateway
+`502` or truncation error, although the gateway HTTP 200
+is only header acceptance, not WAV body timing/proof.
+
+**Hypothesis, explicitly unverified:** The audible glitch on
+both speakers could be these approximately 2s shared PCM
+input gaps at automatic track boundaries rather than an
+individual renderer Wi-Fi issue. We have NOT established
+that these boundaries account for every within-track
+glitch the user heard on tracks 12/13, or identified the
+cause of MPD's missing output (CD read, prefetch, decode,
+gapless/PCM handoff, etc.). Do not claim the root cause
+fixed or that two-second PCM idle is normal/acceptable.
+
+**Minimum-effort next read-only test:** Compare PCM playing/idle
+transitions across earlier track boundaries on the same
+disc using `journalctl` from ~21:35 to 22:16 and only
+`PcmStream State changed`, `AsioStream No data`,
+and `mpd player: played`. If gaps recur
+systematically, focus on MPD -> Snapserver handoff
+at every HTTP WAV boundary, not just final tracks;
+if only late tracks, investigate CD/wireless/gateway
+timing near disc end. Keep all current runtime
+untouched until evidence guides a targeted change.
+
+**Scope:** #4 state-poller transition count PASS but continuous
+PCM/audio across boundaries FAIL for this captured period.
+#5 dropout investigation OPEN. Source documentation checkpoint
+only; no build, packaging, deployment or firmware changes.
