@@ -650,3 +650,23 @@ instrumented on live Pi. If the user confirms expected audio,
 record it before treating #1 closed. Items #2–9 remain OPEN and
 untouched. No new firmware, build, package, release, or deployment
 was initiated by the assistant in this checkpoint.
+
+## Cleanup item 1 — acceptance-test sequencing correction (2026-11-13)
+
+The user clarified that the previous field timing command executed
+`/next` followed immediately by `/previous`; the second command
+reversed the first before its new CD track could be heard.
+
+**Conclusion:** 25ms HTTP command acknowledgements remain a valid
+control-response latency measurement (both 200). However the
+back-to-back test was **not** a valid audible Next/Previous test and
+must not be treated as such. The reported rapid return to the original
+track is expected from test sequencing, **not evidence that the fix
+caused a playback regression**.
+
+**Next single acceptance step:** With a middle CD track playing, use
+House Music's **Next** button; listen to the next track for several
+seconds; then press **Previous** and listen for the original track.
+Only mark #1 fully accepted after the user reports correct audible
+tracks. No shell script or firmware/server change needed for this step.
+Items 2–9 remain open, untouched.
