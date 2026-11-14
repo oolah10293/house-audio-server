@@ -781,3 +781,29 @@ paused/mode behavior and unattended full-disc transitions remain
 separate acceptance work. PR #20 is still draft and no default-main
 merge, release or package was authorized. Items #2–9 remain
 OPEN/UNTOUCHED. Proceed to #2 only as the next separate discussion.
+
+## Cleanup item 4 — user experience checkpoint (2026-11-13)
+
+**User response:** When offered item #4 (unattended full-disc playback
+and automatic track-to-track transitions), the user stated
+**"4 seems fine. never noticed a problem there"**.
+
+**Disposition:** Item #4 is **not currently a user-observed defect**.
+Defer to monitoring and move along the cleanup list rather than
+disrupting a working system for an artificial full-disc endurance
+test. User's experience is favorable, but it is **not** evidence that
+a controlled, uninterrupted full-disc hardware acceptance test was
+performed; do not mark that separate test as passed.
+
+**Historical context retained:** Earlier pre-3.3 work recorded WAV
+stream stalls, intermittent silence, MPD elapsed-time stalling/looping,
+gateway 502s and timeouts. Their precise resolution under the current
+3.4 firmware plus Pi modifications has not been instrumented over an
+entire disc. The most recent user report does not establish that those
+old failures still occur. Keep a watchpoint only if symptoms recur.
+
+**Next scope:** #5, the historical gateway 502/ESP32 reset and long
+READ CD failures, should first ask whether the user has seen these
+since current improvements, instead of assuming ongoing failures
+or changing timing settings without evidence. No source changes,
+tests, builds, releases, OTA, or Pi deployments under #4.
