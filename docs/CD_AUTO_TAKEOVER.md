@@ -1595,3 +1595,16 @@ sudo sh -c 'p=$(systemctl show -p MainPID --value house-audio-server); [ "$p" -g
 The controller web UI and presence/source automation will not respond during the hold, but audio should continue because MPD/Snapserver are separate processes. Resuming the existing process should not trigger the startup MPD reset; confirm actual behavior. If dropout clusters continue unchanged while controller is suspended, the CD auto-controller polling and regular in-process Snapserver control monitoring are not required for the symptom; pursue gateway side effects/network traffic/Snapserver/ESP32. If clusters stop and return upon resumption, prioritize profiling newly added controller/gateway interactions and server load, but do not conclude CD-specific polling alone causes it. This is a diagnostic suggestion, not applied to the Pi. No firmware, code, build, package or release authorized/performed.
 
 **Captured live facts remain:** continuous intermittent dropouts throughout user's last ~30 minutes of listening including 10:50–10:51 capture, ESP32 firmware unchanged for months per user, and frequency became dramatically worse since previous evening. Do not ask user again whether dropouts occurred during captured minute. Earlier rare pre-CD issue #3 does not negate new regression's chronology.
+
+## Playback outage during controller-freeze test (2026-11-14)
+
+**User-reported live field result:** Following suggested `sudo sh -c 'p=$(systemctl show -p MainPID --value house-audio-server); ... kill -STOP "$p"; sleep 120'` experiment while local MP3 music was already playing, the user's audio **stopped playing**. After trying to restore operation, the user reported the playback UI/transport appears **playing**, but **no audio is audible from hardware nodes**. This is an unplanned regression from the experiment, not evidence that the CD automation is or is not causing the original clustered dropouts. Do NOT propose another SIGSTOP trial. Do not restart `house-audio-server` indiscriminately because `MpdStartupBoundary.ensure_ready` resets MPD's queue and transport.
+
+**Recovery check given (not yet reported):**
+```sh
+sudo kill -CONT "$(systemctl show -p MainPID --value house-audio-server)"
+mpc status
+mpc outputs
+systemctl is-active snapserver
+```
+This is read-only except SIGCONT resuming the previously suspended process. Await actual output and diagnose. Do not assume MPD truly feeds an active Snapcast stream from a UI play indicator or that all physical nodes independently failed. No repository software modifications, builds, packages, releases or firmware changes authorized or performed. This doc note records the unexpected adverse result, and supersedes the earlier planned "safe controller freeze" status.
