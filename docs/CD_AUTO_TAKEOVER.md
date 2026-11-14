@@ -936,3 +936,61 @@ client, MPD output, or gateway WAV message coincides with reported
 dropout, and whether 22:16:23 followed normal last-track end.
 No settings change, code modification, compilation, release or
 deployment authorized from these findings.
+
+## Cleanup item 5 — end-of-disc full journal and Snapcast monitor correlation (2026-11-13)
+
+**User-supplied complete (except recurring control-session EOF) Pi logs**
+for local 22:15:30–22:16:40, covering the last seconds of CD track 13:
+
+- At `22:16:17`, MPD reported
+  `player: played ".../13.wav"` and Snapserver reported
+  `(AsioStream) No data since 120 ms, switching to idle`,
+  `(PcmStream) State changed: default, state: playing => idle`,
+  and `(Server) onStateChanged (default): idle`.
+  These simultaneous events **are consistent with normal disc-end
+  source cessation**. They do not establish a dropout before the
+  end of track 13. At `22:16:23` a Snapserver
+  `ControlSessionTCP` socket reported a peer reset and socket
+  shutdown error, *after* the source entered idle.
+- Throughout 22:15:30–22:16:40 there are approximately
+  one-second-spaced Snapserver control connections from
+  `::ffff:127.0.0.1`, with old sessions being removed.
+  Independent GitHub **source inspection** of
+  `house_audio_server.py` `SnapcastMonitor` establishes that
+  the House Music service defaults
+  `SNAPSERVER_POLL_SECONDS=1.0` and each
+  `_fetch_status()` calls `socket.create_connection`
+  to `SNAPSERVER_CONTROL_PORT=1705`, sends
+  `Server.GetStatus`, then closes at the end of the scope.
+  This matches the observed pattern and explains why frequent
+  localhost control-session connects and EOFs are expected.
+  It is not evidence of a renderer's audio-stream failure.
+- An additional control connection from `192.168.1.136`
+  at 22:16:12 appears, but its identity and relationship to
+  audio are not established.
+- ESP32 `192.168.1.175` sends successful
+  `POST /register` gateway heartbeats every five seconds
+  while the Pi polls `GET /sources` regularly. No relevant
+  CD data-stream failure appears in this provided excerpt.
+
+**Current diagnostic interpretation:** The 22:16:17 switch to idle
+appears normal for completion of track 13; 22:16:23
+control-socket reset should **not** be labeled as the user's
+heard audio dropout. The actual transient dropout, if during
+an earlier track, has no established timestamp or matching
+decoder/gateway/Snapcast renderer-stream failure from this log.
+Do not claim issue resolved or blame Snapcast control polling
+for audio dropouts on the current evidence.
+
+**Next smallest diagnostic distinction:** Determine whether the
+audible glitch affected *all simultaneous renderer zones* or
+just one speaker/node. All zones suggests a common path
+(CD/USB/Wi-Fi/gateway/MPD/Snapserver source); one zone suggests
+a node/network/render buffer issue. If the user cannot tell,
+record a specific timestamp and zone on reproduction, then
+narrow the corresponding logs without altering the runtime.
+
+**Status:** Item #5 open; #4's two transitions still passed, but
+uninterrupted whole-disc playback not verified. No settings,
+source code, build, package, firmware release or deployment
+changed in this checkpoint.
