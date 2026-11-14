@@ -994,3 +994,49 @@ narrow the corresponding logs without altering the runtime.
 uninterrupted whole-disc playback not verified. No settings,
 source code, build, package, firmware release or deployment
 changed in this checkpoint.
+
+## Cleanup item 5 — user correction: audible glitches on tracks 12–13, multiple zones (2026-11-13)
+
+**Correction from user (authoritative eyewitness report):** The
+dropouts were perceived on **both speakers**, while the CD was
+**still playing, on at least tracks 12 and 13**. The previous
+investigation wrongly concentrated on the end-of-track-13
+`22:16:17 playing => idle` and subsequent
+`22:16:23` Snapserver control-socket reset. Those events
+cannot explain glitches the user heard earlier during audio.
+Do **not** frame the user report as end-of-disc silence or
+as an isolated renderer fault.
+
+**Existing timestamp evidence reinterpreted:** For the 13-track
+disc, gateway reported `/12.wav` HTTP 200 at 22:09:05,
+`/13.wav` HTTP 200 at 22:11:14; MPD logged finished
+`/11.wav` at 22:09:42, finished `/12.wav` at
+22:11:53, finished `/13.wav` at 22:16:17.
+A Snapserver `ControlSessionTCP: Connection reset by peer`
+was logged at **22:11:51**, two seconds before the MPD
+track-12 completion, and another at 22:16:23 after the disc
+ended. These are *control-socket* messages and are not
+proof of common audio failure. User did not give an exact
+glitch timestamp.
+
+**Diagnostic priority:** Audible dropouts on two concurrent
+speakers make the shared CD/USB/Wi-Fi -> gateway -> MPD
+-> Snapserver PCM-input path more plausible than a failure
+isolated to one speaker, without ruling out common
+distribution issues. The previous 5s state monitor detected
+track-number progression only; it cannot detect short
+PCM starvation, MPD pauses shorter than the poll interval,
+or renderer buffering.
+
+**Next read-only evidence:** inspect *unfiltered non-control*
+journals from `22:09:00` through `22:16:16`
+for MPD, CD gateway and Snapserver, explicitly retaining
+`(AsioStream) No data since...`, `(PcmStream) State changed...`
+and other PCM stream warnings, while excluding spammy
+`ControlServer`, `ControlSessionTCP`,
+`GET /sources`, `POST /register` events. Those PCM
+state events were not captured by the previous error-only
+grep, so the lack of an earlier reported match cannot
+rule out source starvation. Do not change buffering or
+firmware without evidence. All changes in this
+checkpoint are documentation only.
