@@ -2577,15 +2577,19 @@ class ApiHandler(BaseHTTPRequestHandler):
                             if path in {"/next", "/previous"}:
                                 if RADIO.empty_selection:
                                     raise ApiError(409, "cd_no_disc", "Insert a CD before skipping tracks")
-                                # A live CD WAV can make MPD's direct next/previous
-                                # acknowledgement take nearly two seconds. For
-                                # ordinary interior-track skips, end the old stream
-                                # before starting the known adjacent queue entry.
-                                # Preserve native MPD boundary/paused/mode behavior.
+                                # A live CD WAV can make native skip commands
+                                # block on stream teardown. Native Previous on
+                                # track 1 also tries to seek the nonseekable WAV.
+                                # Restart track 1 with stop/play 0; use the same
+                                # fast stream teardown for adjacent CD tracks.
+                                # Preserve native last-track Next and paused/mode
+                                # behavior.
                                 state = mpd.state()
                                 current = state.get("songPosition")
                                 step = 1 if path == "/next" else -1
-                                target = current + step if type(current) is int else None
+                                target = (max(0, current + step) if
+                                          type(current) is int and current >= 0
+                                          else None)
                                 ordered = (state.get("random") is False
                                            and state.get("repeat") is False
                                            and state.get("consume") is False
