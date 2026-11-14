@@ -1250,3 +1250,50 @@ individual Snapcast clients. Audio log messages during
 transition boundaries are separate from the reported in-song
 events. No changes to firmware, Pi code, installations,
 builds, packages or settings are authorized by this checkpoint.
+
+## Cleanup item 5 — MP3 playback also fails; browser timer can coast (2026-11-13)
+
+**New user-observed regression:** During the MP3 A/B comparison,
+playback dropped out during the **second locally stored MP3**,
+after approximately half of the first MP3 had played normally.
+At the time of report the user heard **no audio** while the
+House Music browser timer appeared to keep advancing.
+User reports this is a **very recent development**.
+The number of affected renderer zones at the exact moment of
+complete silence has not been explicitly identified.
+
+**Consequence:** The newly reproduced defect is **not unique
+to the Lite-On CD/ESP32 transport**. That transport cannot be
+the sole explanation for the MP3 dropout; a shared MPD output,
+Snapserver input/distribution, renderer/presence control or
+other common failure is now a leading diagnostic direction,
+without claiming which component is at fault. It is possible
+that the earlier CD observation and the MP3 observation have
+different causes; don't prematurely merge them.
+
+**Verified by direct GitHub source inspection:** The
+`web/house.js` `tickClock()` function extrapolates the
+displayed `elapsed` from the most recent polled MPD
+`elapsedSeconds` using `Date.now() - stateReceivedAt`
+(capped at 10 seconds), when the last known
+`mpd.transport` equals `play`. Therefore **an advancing
+browser timer alone does not demonstrate a live MPD PCM
+output** or even an exact real-time MPD elapsed increase.
+The current `house_audio_server.py` `/state` directly
+queries MPD `status`/`currentsong` and `/renderers`
+returns per-client state from the SnapcastMonitor snapshot.
+
+**Next read-only live-failure test suggested:** While audio is
+missing, query `/state` and `/renderers` three times
+three seconds apart, printing MPD transport/elapsed/error,
+current source, Snapserver reachable/streams and each
+renderer connected/audible/lastSeen/IP. Also print
+`mpc -h 127.0.0.1 -p 6600 outputs` to check active
+MPD output. Do **not** restart services or change
+buffering/presence while failure is observable.
+Capture user output and compare with an audible state to
+localize the break.
+
+No runtime changes, code edits, firmware builds,
+packaging or deployments have been authorized or
+performed in this documentation checkpoint.
