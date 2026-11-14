@@ -1425,3 +1425,39 @@ seen healthy during silence and is insufficient by itself.
 No firmware/software/builds/packages/runtime settings changed
 or authorized; note-only checkpoint. No root cause has been
 established.
+
+## Cleanup item 5 — exact read-only ESPHome renderer log capture instructions (2026-11-13)
+
+**Confirmed next method (not yet performed on user's hardware):**
+For the existing Windows-hosted ESPHome dashboard/Device Builder,
+select affected Bose Sub node -> **Logs**, choose **Wireless**
+if supported. ESPHome's current official CLI docs confirm
+`esphome logs <actual-node-yaml> --device 192.168.1.110`
+for network logs *when the deployed device provides an ESPHome
+native API, MQTT logging, or supported web_server logging*.
+The GitHub `house-audio-esp32/main`
+`firmware/bose-subwoofer-prototype.yaml` is only a prototype
+and not proof of deployed configuration; it specifies
+`logger: level: DEBUG; hardware_uart: USB_SERIAL_JTAG`
+but **does not include `api:`, `mqtt:`, or
+`web_server:`**. Under that exact prototype config,
+wireless ESPHome log access is unavailable; USB serial via
+a Windows COM port and `esphome logs <actual-node-yaml>
+--device COM<number>` is the documented fallback.
+Check Windows Device Manager for the actual assigned port;
+do not assume COM3. Connecting serial can sometimes reset
+a board; avoid disturbing separate power wiring.
+
+The first log capture should cover an actual audible dropout,
+with time, node ID, any Wi-Fi/TCP reconnect, Snapclient FLAC
+decoder/buffer underrun, or I2S warnings. Capture a
+comparison against phone stream if useful. `esphome logs`
+only reads current firmware logs; it does not compile/upload.
+Don't run `esphome run`, `compile`, `upload` or
+`install` from the log workflow.
+
+**Status:** The phone's audible uninterrupted stream while
+Bose and basement stereo mute is user-verified in this session;
+renderer-side failure mechanism remains unverified. Existing
+`house-audio-esp32` Issue #3 remains open. This entry is
+documentation-only; no source, firmware or live settings changed.
