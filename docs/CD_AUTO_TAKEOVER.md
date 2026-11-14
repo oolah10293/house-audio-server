@@ -1504,3 +1504,35 @@ config changes made by this documentation checkpoint.
 **Screenshot observed:** Guest room EAP653 Omada Statistics -> Retries with the left radio selector explicitly set to `2.4 GHz` (previously `All`), 1D view. Tx retries green and Rx retries blue still show significant bursts, especially around ~09:30–noon and ~18:30–19:30 in the graph's displayed local scale, and smaller evening activity. Therefore bursts occur on the 2.4-GHz radio, not exclusively due to the 5-GHz radio. The chart displays raw retry count by interval, not a percentage, does not identify individual clients, and has not been matched to timestamps of user-observed audio interruptions. Do not infer saturated bandwidth, specific AP fault, or causal link from this alone.
 
 **Field outcome to retain:** moving and locking the affected hardware Snapcast nodes to another AP was followed by clean CD playback through tracks 11–13; repeatability remains open. Leave the working assignment unchanged; do not modify software, firmware or AP radio settings based on this screenshot.
+
+## Renderer dropout — new music-room Bluetooth-board timing hypothesis (2026-11-14)
+
+**User clarified onset chronology:** Music-room stereo's new House Audio
+Wi-Fi renderer initially sounded fine. That stereo also has a separate
+Bluetooth receiver board located physically close to its ESP32 node.
+User took out a phone to **check Bluetooth availability only**;
+the board was discoverable, **but the user did not connect/pair**.
+At around that check the user noticed one brief Wi-Fi audio hiccup.
+Playback seemed normal for several minutes, then dropouts got
+progressively worse. This timing is user-observed correlation, not
+proof of Bluetooth interference.
+
+**Hypothesis, unverified:** RF interactions between close 2.4 GHz
+Bluetooth and ESP32 Wi-Fi radios could affect local receiver
+performance even without an active phone audio connection.
+A local BT interference explanation does not, on its own,
+account for basement renderer dropouts that occurred on the
+same old AP, or establish a common AP issue. Other RF/AP/client
+causes remain live possibilities. The new AP assignment later
+gave a clean CD 11–13 run, still only one clean run.
+
+**Best isolation proposed, not yet performed:** keep the music room
+Wi-Fi renderer operational while disabling or removing power
+only from the separate Bluetooth board, then compare under the
+same access-point conditions (ideally with no other variables
+changed). Do not power down the whole music-room stereo if
+that also kills its Wi-Fi node; that would confound the test.
+Need to confirm whether Bluetooth board has independently
+switchable power before giving wiring instructions.
+No hardware alterations, firmware, builds, packages,
+releases or deployment performed in this checkpoint.
