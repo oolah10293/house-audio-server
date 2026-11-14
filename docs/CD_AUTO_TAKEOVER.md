@@ -618,3 +618,35 @@ Record outcomes before declaring the issue solved.
 candidate written. No Pi deployment, firmware build/flash, installer,
 release, or new package was authorized or performed. Items 2–9 remain
 OPEN/UNTOUCHED.
+
+## Cleanup item 1 — Pi field timing after Next/Previous patch (2026-11-13)
+
+**User-provided live measurements**, following the user-authorized
+surgical Pi source edit and service restart instructions (the assistant
+does not have direct shell access to verify the Pi's local file SHA):
+
+```text
+                              Before patch         After patch
+POST /next         HTTP 200, 1.735032s    HTTP 200, 0.025442s
+POST /previous     HTTP 200, 1.790452s    HTTP 200, 0.024527s
+```
+
+Both requests were accepted as **HTTP 200**. Compared with the original
+API baseline, end-to-end request times decreased from approximately
+1.7–1.8 seconds to approximately 25 milliseconds. This is a
+**field-confirmed control-response latency improvement**; unlike source
+tests alone, the numbers come from the user's Pi after applying the
+patch. The previous direct-MPD skip-command baseline was ~1.65–1.73s.
+The exact new Pi file hash and specific active CD track index were not
+supplied, and the user has **not yet explicitly confirmed audible
+Next/Previous correctness** for this run. HTTP success by itself
+does not prove correct track audio or full-disc boundary behavior.
+
+**Status:** #1 response-time defect = **PASS on user Pi**.
+Remaining acceptance before closing #1: user confirms Next and
+Previous actually played the expected tracks; first/last-track
+native-command fallback is checked by model tests but not
+instrumented on live Pi. If the user confirms expected audio,
+record it before treating #1 closed. Items #2–9 remain OPEN and
+untouched. No new firmware, build, package, release, or deployment
+was initiated by the assistant in this checkpoint.
