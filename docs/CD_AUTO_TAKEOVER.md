@@ -855,3 +855,43 @@ based solely on historical errors.
 
 No code edit, build, package, release, hardware installation or
 transport command performed in this documentation-only checkpoint.
+
+## Cleanup item 5 — suspected late-disc audio dropout, filtered journal snapshot (2026-11-13)
+
+**User-reported symptom:** After automatic CD tracks 6 -> 7 -> 8
+passed the five-second state poller, the user thought they heard
+a short audio dropout resembling buffering/connection trouble near
+the end of the CD. Exact time/track/duration not separately
+established. Do not continue asserting uninterrupted audio or
+whole-disc acceptance on the basis of the earlier state poller.
+
+**User-supplied journal capture:** Pi command queried the
+`house-audio-input-gateway`, `house-audio-server`, `mpd`
+and `snapserver` services over a two-hour period, then grepped
+for errors and applied `tail -n 150`. The *entire returned set*
+of 150 journal lines, 2026-11-13 22:17:12 through 22:19:48 -05:00,
+consisted of repeated Snapserver
+`(ControlSessionTCP) Error while reading from control socket: End of file`.
+The original broad filter matched `Error`, and the
+`tail -n 150` likely displaced earlier MPD / CD gateway entries.
+The repeated control-session EOF alone is **not evidence**
+of an MPD stream underrun, CD read error, gateway 502, or actual
+audio-client disconnect. Conversely, none of those can be ruled
+out because the original command truncated the filtered output.
+
+**Next minimum-effort, read-only check:** Re-run
+`journalctl` over fixed local window
+`2026-11-13 22:00:00` to `22:20:00` for gateway, MPD,
+Snapserver; remove this specific control-socket EOF line first,
+and then inspect remaining error/decoder/audio-WAV lines with
+no post-filter tail truncation. Correlate any observed warnings
+with track/time before changing Pi/ESP code, timeout or audio
+buffers. If zero relevant records exist, obtain direct short
+reproduction and timestamped monitoring rather than invent
+a cause.
+
+**Status:** #4 automatic track number progression field PASS,
+but uninterrupted audio quality is **not established**; #5
+audio-dropout/502/stream continuity investigation OPEN.
+No code edits, builds, releases, deployments, or service
+setting changes authorized or made under this diagnostic.
