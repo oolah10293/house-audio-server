@@ -1608,3 +1608,11 @@ mpc outputs
 systemctl is-active snapserver
 ```
 This is read-only except SIGCONT resuming the previously suspended process. Await actual output and diagnose. Do not assume MPD truly feeds an active Snapcast stream from a UI play indicator or that all physical nodes independently failed. No repository software modifications, builds, packages, releases or firmware changes authorized or performed. This doc note records the unexpected adverse result, and supersedes the earlier planned "safe controller freeze" status.
+
+## Recovery still fails after Snapserver-only restart (2026-11-14)
+
+**New user field observation:** Following the separate `sudo systemctl restart snapserver` recovery attempt, audio returned on the hardware nodes for **only a few seconds**, then went silent again, matching the post-SIGSTOP symptom of brief audio at each new local MP3 track while the browser/MPD continue reporting `playing`. Prior direct checks confirmed `mpc outputs` reports `Output 1 (Snapcast) is enabled` and `snapserver` reports `active`. `ss -tn '( sport = :1704 )'` during silence showed all four connections `.161`, `.117`, `.110`, `.129` ESTAB and Send-Q about 57–72 KB. Previous Snapserver journal `ControlSessionTCP ... End of file` every second was previously verified expected RPC polling, not an audio error.
+
+**Hypothesis only:** brief audio upon every stream restart/reconnect/new track is compatible with input PCM starvation, shared stream/timestamp problems, or client-side delivery/decoding stall. No causal distinction established. Do not claim restarting Snapserver fixed the issue, nor recommend further random process restarts.
+
+**Read-only next diagnostic requested from user:** `sudo journalctl -u snapserver --since '10 minutes ago' --no-pager | grep -E 'PcmStream|AsioStream|StreamServer' | tail -40` during silence. This isolates actual Snapserver stream-state transitions and missing PCM warnings from routine 1705 control-socket EOF messages. If no evidence, compare direct Snapserver stream status and per-client send progress before changes. No new software release, build, installer or firmware change authorized.
