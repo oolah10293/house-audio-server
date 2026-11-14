@@ -1131,3 +1131,59 @@ not establish audible dropout, and a complete packet stream
 does not prove audio samples were correct. No firmware,
 server code, settings, installs, releases or build changes
 are authorized or made by this checkpoint. #5 remains open.
+
+## Cleanup item 5 — corrected listening chronology and renderer attribution (2026-11-13)
+
+**Clarification from user about the actual listening session (strongest
+current eyewitness account):**
+
+- User has listened to approximately **5–6 CDs** with the basement
+  stereo, Motorola, and Emerson radio nodes, with **no previously
+  noticed mid-song dropouts**.
+- This was the **first CD playback through the music-room node**,
+  with the basement stereo concurrently on but quieter.
+- User clearly heard repeated dropout/recovery on **the music-room
+  system upstairs**. They could **not reliably tell** whether the
+  quieter basement stereo dropped out at the same time.
+- User **turned off the music-room node**, went downstairs, and
+  **thought they heard** an interruption on the basement stereo
+  during the **last ~30 seconds of track 13**.
+- Therefore **simultaneous dropout on both zones is NOT verified**.
+  The historical notes above that characterize this as a confirmed
+  both-speakers event or strongly classify it as a shared-source
+  failure are superseded by this clarification.
+
+**Other evidence remains distinct:** Earlier journal shows normal
+or at least recurring PCM `playing => idle => playing` transitions
+at track boundaries for library MP3s as well as CD songs. These
+state changes occur separately from the clearly reported
+*mid-song* upstairs glitches, and do not diagnose the cause.
+No gateway `502` or CD-read truncation was established during the
+reported glitches; lack of errors does not prove clean data.
+The speculative late-track basement glitch has no precise timestamp
+or simultaneous upstairs corroboration (upstairs node was off).
+
+**Current possibilities (not demonstrated causes):**
+
+1. Music-room ESP32/Snapcast renderer, local network or node audio
+   path — *newly exercised listening node* is the clearest variable;
+   an individual client glitch may not change Snapserver's shared
+   PCM source status.
+2. Intermittent shared CD/USB/ESP32 Wi-Fi -> gateway -> MPD
+   -> Snapserver source disruption — plausible if the tentative
+   basement symptom was real, but simultaneous two-zone playback
+   loss **not established**.
+3. Disc-specific read irregularity or infrequent stochastic
+   failure (many other CDs were reportedly fine) remains possible.
+
+**Decision:** Do not label a cause, make transport changes,
+or insist on S3 packet capture as the *first* step based on
+these observations alone. For an efficient discriminator,
+repeat a late track with the two zones separately, then
+together if needed; obtain a concrete timestamp and identify
+which system actually stutters. The user is discussing details
+rather than authorizing any build or installation.
+
+**Status:** #5 audio dropout investigation OPEN; no changes to
+firmware, server behavior, build, package, deployment or
+live Pi configuration by this documentation checkpoint.
