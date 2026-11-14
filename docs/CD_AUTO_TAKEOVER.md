@@ -670,3 +670,42 @@ seconds; then press **Previous** and listen for the original track.
 Only mark #1 fully accepted after the user reports correct audible
 tracks. No shell script or firmware/server change needed for this step.
 Items 2–9 remain open, untouched.
+
+## Cleanup item 1 — acceptance result: normal Next/Previous PASS (2026-11-13)
+
+**User-verified live result after authorized local Pi source patch:** The
+user ran `/next`, let the selected track play for ten seconds, then ran
+`/previous` and allowed ten more seconds to listen. Output:
+
+```text
+NEXT
+HTTP 200, 0.011574s
+Listening to next track for 10 seconds...
+PREVIOUS
+HTTP 200, 0.016043s
+Listening to original track for 10 seconds...
+Test complete.
+```
+
+The user's assessment was: **"seemed to work fine"**. This constitutes
+positive user-reported audible acceptance of the normal middle-track
+Next/Previous case, not a measured sample-level or full-disc guarantee.
+
+**Outcome:** #1 primary defect **CLOSED / ACCEPTED for normal active
+middle-track skipping**. HTTP acknowledgements improved from
+1.735032s / 1.790452s to 0.011574s / 0.016043s in the
+user's delayed listening test, and both requests returned 200.
+Source fix `05685152`, regression test `79fe0e42`; GitHub test
+workflow for that test commit passed. The change is in the Pi's
+working installation per the user's supplied test, not yet merged to
+default `main` or shipped via a release.
+
+**Explicit residual limits:** First/last-track boundary handling,
+paused/unusual playback modes, precise time-to-audible, and whole-disc
+automatic advancement have *not* been physically accepted by this
+test; keep them in the broader CD acceptance backlog rather than
+quietly claiming they passed. The Pi on-disk hash/backup path was not
+independently retrieved. Items #2–9 remain open; next focus is #2
+(the old intermittent CD-readiness failure) once the user elects to
+proceed. No build, package, release, installer, or firmware operation
+authorized or performed.
