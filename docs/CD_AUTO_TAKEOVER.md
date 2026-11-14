@@ -1465,3 +1465,9 @@ documentation-only; no source, firmware or live settings changed.
 ## Renderer dropout — AP affinity test (2026-11-14)
 
 **User-reported live experiment:** User moved the affected renderer nodes to a different Wi-Fi access point and locked them to that AP. They are now observing whether spontaneous audio dropouts continue. The exact AP identity, signal measurements, and any result are not yet known. The earlier confirmed phone Snapcast app remained audible through physical-node audio loss; basement stereo and Bose sub could lose audio while MPD and Snapserver status remained playing. **Do not claim AP steering/roaming or RF interference caused the fault** until the new AP test has sufficient playback evidence. Keep other variables unchanged; compare MP3 and CD listening as practical. This is a network configuration trial performed by the user, not a firmware/software build or deployment by the assistant.
+
+## Renderer dropout — AP-lock trial tracks 11–13 clean (2026-11-14)
+
+**User-reported result:** After moving the affected hardware renderer nodes to a different access point and locking them to it, the user played **CD tracks 11 through 13 without noticing any audio dropouts**. Before this AP change, they heard repeated physical-node dropouts during CD and local MP3 playback, while the phone Snapcast app stayed audible during the node interruptions. This test supports investigating Wi-Fi AP conditions/steering as a possibility. It does NOT prove the original AP or roaming caused the issue because only one post-change listening run is reported and no RF/packet measurements are available.
+
+**Current decision:** Preserve the new AP assignment and all other playback/firmware settings; continue listening for recurrence before attempting fixes. No software or firmware changes, build, release, packaging or deployment authorized or performed.
