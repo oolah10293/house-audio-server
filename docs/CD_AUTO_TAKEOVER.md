@@ -1340,3 +1340,40 @@ nodes are silent at the same instant, and if reproduced
 compare Snapserver audio payload/data delivery to the
 renderer node while MPD remains in play. No settings,
 firmware, builds, package, deployment, or changes made.
+
+## Cleanup item 5 — stereo + Bose completely silent while MPD plays; phone comparison (2026-11-13)
+
+**User clarification of 23:45:24–23:45:30 state samples:** The
+basement stereo and Bose sub were **both actually silent at
+the time those samples were taken**. Sound **returned
+spontaneously immediately afterward** (no manual recovery
+reported). This completes the previous unresolved observation
+about whether those particular nodes were silent
+contemporaneously with advancing MPD elapsed and active
+Snapserver statuses.
+
+**Additional user observation:** Android phone Snapcast app
+**does produce audible music if unmuted**. It is **not
+yet established** whether the phone was actually heard
+during the same exact seconds of joint hardware-node silence
+versus after they recovered. Do not misrepresent this as
+proof of continuously valid source PCM during the outage.
+
+**GitHub-grounded status semantics:** House Music
+`SnapcastMonitor._apply_status` defines `audible` as
+connected AND lastSeen-fresh AND not client-muted AND not
+group-muted; this reports presence/muting, not audio amplitude,
+decoder buffer health or acoustic sound. Thus both users'
+silent-but-`audible=True` observations are internally
+consistent with monitor implementation.
+
+**Diagnostic priority:** Have phone app unmuted as a reference
+during any next dropout of the same stereo and Bose, and
+note whether it too stops at the same time. If phone continues
+with audio, focus on shared characteristics of hardware
+renderers / network delivery rather than MPD or CD source.
+If phone also stops, focus upstream of Snapcast distribution
+and shared stream/audio path. This is a hypothesis
+discriminator; neither outcome alone proves exact cause.
+No new setup, code, build, install or firmware actions were
+requested or performed.
