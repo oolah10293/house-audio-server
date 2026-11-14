@@ -1461,3 +1461,7 @@ Bose and basement stereo mute is user-verified in this session;
 renderer-side failure mechanism remains unverified. Existing
 `house-audio-esp32` Issue #3 remains open. This entry is
 documentation-only; no source, firmware or live settings changed.
+
+## Renderer dropout — AP affinity test (2026-11-14)
+
+**User-reported live experiment:** User moved the affected renderer nodes to a different Wi-Fi access point and locked them to that AP. They are now observing whether spontaneous audio dropouts continue. The exact AP identity, signal measurements, and any result are not yet known. The earlier confirmed phone Snapcast app remained audible through physical-node audio loss; basement stereo and Bose sub could lose audio while MPD and Snapserver status remained playing. **Do not claim AP steering/roaming or RF interference caused the fault** until the new AP test has sufficient playback evidence. Keep other variables unchanged; compare MP3 and CD listening as practical. This is a network configuration trial performed by the user, not a firmware/software build or deployment by the assistant.
