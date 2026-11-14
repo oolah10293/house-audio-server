@@ -895,3 +895,44 @@ but uninterrupted audio quality is **not established**; #5
 audio-dropout/502/stream continuity investigation OPEN.
 No code edits, builds, releases, deployments, or service
 setting changes authorized or made under this diagnostic.
+
+## Cleanup item 5 — filtered journal correlation near track 13 (2026-11-13)
+
+**User-supplied second, more focused Pi journal output** queried
+`house-audio-input-gateway.service`, `mpd.service`, and
+`snapserver.service` in 22:00–22:20 local, excluded the repeated
+`ControlSessionTCP ... End of file` lines, and searched relevant
+errors and gateway CD GET entries. Specific results:
+
+- Gateway `GET /audio/cd-7452ed8dbd44/10.wav` 200 at
+  22:02:19; `/11.wav` 200 at 22:04:11;
+  `/12.wav` 200 at 22:09:05; `/13.wav` 200
+  at 22:11:14.
+- MPD `player: played` messages for tracks 8 at 22:00:04,
+  9 at 22:02:56, 10 at 22:04:53, 11 at 22:09:42,
+  12 at 22:11:53, and 13 at 22:16:17.
+- Snapserver `(ControlSessionTCP) Error while reading from control
+  socket: Connection reset by peer`, followed by
+  `Error in socket shutdown: Transport endpoint is not connected`,
+  occurred at 22:11:51 and 22:16:23.
+- No `CD stream failed`, `CD stream ended early`,
+  HTTP 502 or MPD decoder failure in this *filtered output*.
+  This does NOT independently prove complete WAV body receipt:
+  gateway HTTP 200 is sent before the whole stream completes,
+  and filtering omits lines not matching the pattern.
+
+**Interpretation:** The Snapserver control-session resets are
+temporally near end of track 12 and six seconds after MPD logged
+completion of track 13. They identify a *control-socket* error,
+not a confirmed PCM stream underrun or render-client dropout.
+No direct evidence identifies the cause of the user-heard audio
+glitch. A plausible connection between resets and audible glitch
+needs stronger timestamped evidence, not an assumed causal link.
+
+**Next smallest read-only check:** get complete (unfiltered except
+repetitive control-session EOF) logs for 22:15:30–22:16:40 from
+gateway, MPD and Snapserver. Check whether any renderer stream
+client, MPD output, or gateway WAV message coincides with reported
+dropout, and whether 22:16:23 followed normal last-track end.
+No settings change, code modification, compilation, release or
+deployment authorized from these findings.
