@@ -751,3 +751,33 @@ acceptance; do not claim that the on-device error is repaired yet.
 Last-track Next hardware result: PASS / stops. Items #2–9 remain
 open and untouched. No firmware, build, installer, package, or
 deployment done by this source/documentation update.
+
+## Cleanup item 1 — final field acceptance (2026-11-13)
+
+**User-confirmed physical outcome:** After applying the surgical
+track-1 Previous fix on the Pi, the user reported **"confirmed fixed"**.
+This follows the observed `ACK [5@0] {previous} Decoder failed to seek`
+error and installation instructions that replace the first-track
+target calculation with a clamp to zero, allowing `stop; play 0`.
+
+**Status — #1 CLOSED for its agreed acceptance scope.**
+- Active middle-track Next/Previous: user-heard correct transitions;
+  post-fix API latency 0.011574s Next / 0.016043s Previous, HTTP 200.
+- First-track Previous: **user-confirmed fixed on the Pi** after patch;
+  no further failed-seek report in that confirmation. Exact new
+  latency or Pi source checksum was not supplied.
+- Last-track Next: **user-confirmed stops playback** without wrap.
+- GitHub source change: `4f094365`, tests update `b4743a11`;
+  GitHub `Test house-audio-server` run for `b4743a11`
+  completed **success**, as did later documentation commit
+  `36136f1`. The initial source-only run `4f094365` failed with
+  the old boundary expectation still present; superseded by updated
+  tests, not to be represented as a clean run.
+
+**Limits:** These are user-reported field observations and passing
+GitHub model tests, not an independent inspection of the live Pi's
+on-disk file or a sample-level audio latency measurement. Unusual
+paused/mode behavior and unattended full-disc transitions remain
+separate acceptance work. PR #20 is still draft and no default-main
+merge, release or package was authorized. Items #2–9 remain
+OPEN/UNTOUCHED. Proceed to #2 only as the next separate discussion.
