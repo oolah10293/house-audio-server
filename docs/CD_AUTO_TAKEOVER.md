@@ -1536,3 +1536,7 @@ Need to confirm whether Bluetooth board has independently
 switchable power before giving wiring instructions.
 No hardware alterations, firmware, builds, packages,
 releases or deployment performed in this checkpoint.
+
+## Renderer dropouts persist after AP move with music-room node off (2026-11-14)
+
+**User-reported new result (morning of 2026-11-14):** Audible dropouts are still occurring **after the AP reassignment experiment**, despite the **music-room stereo/node being switched off**. Currently being used / experiencing dropouts: **basement stereo and Motorola**, in the user's own words. Thus one clean CD tracks-11-to-13 trial on the new AP was not a sustained resolution. Music-room Bluetooth receiver activity or the new music-room ESP32 being powered is not **necessary** for recurrence; it cannot be singled out as the cause. Unclear whether the basement stereo and Motorola cut out simultaneously or independently, and whether the phone renderer continued playing on this morning's occurrences; ask one focused observation before narrowing to shared or per-node causes. Do not conflate the Motorola with the Bose subwoofer or assume independent Snapclients without verification. Current AP retry bursts only establish 2.4-GHz retries, not causation. No firmware/build/config changes authorized or made.
