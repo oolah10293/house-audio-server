@@ -1227,3 +1227,26 @@ Do not modify firmware, buffers or systemd settings yet.
 
 No implementation changes, tests, releases, packages or
 deployments made by this documentation checkpoint.
+
+## Cleanup item 5 — mixed simultaneous/non-simultaneous dropout and MP3 A/B underway (2026-11-13)
+
+**User correction:** During the track-11 replay, the Bose sub and
+downstairs stereo dropped out **sometimes simultaneously and
+sometimes at different times**. The preceding checkpoint's
+statement that they did not drop out together was incomplete,
+not a verified absence. Both shared-source interruptions and
+individual client/network/buffer effects remain viable; cannot
+identify cause from subjective timing alone.
+
+**A/B test in progress:** User switched to locally stored MP3s with
+the same listening nodes. At the time of report, only about
+half of the first MP3 had played and **no dropout yet noticed**.
+This is not a completed clean MP3 test or proof that CD path
+is at fault. Continue listening through several tracks
+without changing nodes/settings. If MP3 playback remains
+clean while CD consistently stutters, target the CD input;
+if MP3s also glitch, prioritize the shared distribution and
+individual Snapcast clients. Audio log messages during
+transition boundaries are separate from the reported in-song
+events. No changes to firmware, Pi code, installations,
+builds, packages or settings are authorized by this checkpoint.
