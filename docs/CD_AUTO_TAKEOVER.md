@@ -1187,3 +1187,43 @@ rather than authorizing any build or installation.
 **Status:** #5 audio dropout investigation OPEN; no changes to
 firmware, server behavior, build, package, deployment or
 live Pi configuration by this documentation checkpoint.
+
+## Cleanup item 5 — live track-11 rerun, independent Bose/downstairs dropouts (2026-11-13)
+
+**User's live hardware observation:** While replaying **track 11**,
+the **Bose subwoofer renderer and downstairs stereo renderer**
+both intermittently dropped out, **but not at the same times**.
+This is stronger than the earlier uncertain basement report,
+and disproves the prior assumption of exactly simultaneous
+dropouts on all listening nodes. The dropouts were not described
+as track-boundary silence.
+
+**Interpretation (hypotheses, not established causes):**
+Independent client/render network or buffering trouble
+is plausible; a common CD/ESP32/gateway/MPD input stall
+can also trigger client dropouts at distinct times if local
+buffers or playout differ, so the source path is not
+exonerated. Scratched-disc hypothesis is less directly
+supported by the noncoincident symptoms; no physical disc
+inspection or repeatability-at-sector measurement was made.
+A passing presence/status poll is insufficient to prove
+continuous audio samples at a renderer.
+
+**Verified from current House Audio server source:** the
+`/renderers`/SnapcastMonitor snapshot represents per-client
+connected, present, audible, lastSeenAgeSeconds, latencyMs,
+host/IP, group and stream; it is not a per-client audio
+underrun metric. No grounds to call a disconnected node
+without its own timestamped status.
+
+**Next minimal discriminating comparison:** leave Bose sub and
+basement stereo active and play ordinary locally stored
+MP3 through the same Snapcast chain. If dropouts recur
+outside CD source, investigate renderer/network/Snapcast
+distribution. If local MP3 is stable while the CD repeats
+the issue, prioritize CD/ESP32 USB/network/gateway/decoder
+path. A single clean run cannot rule out intermittent failure.
+Do not modify firmware, buffers or systemd settings yet.
+
+No implementation changes, tests, releases, packages or
+deployments made by this documentation checkpoint.
