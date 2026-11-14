@@ -11,6 +11,7 @@ import http.client
 import html
 import ipaddress
 import json
+import logging
 import re
 import threading
 import time
@@ -21,6 +22,7 @@ from urllib.parse import urlsplit
 ID_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$')
 TRACK_RE = re.compile(r'^/audio/([A-Za-z0-9_-]{1,64})/([0-9]{1,3})\.wav$')
 ALIVE_SECONDS = 18
+LOG = logging.getLogger('house_audio.cd_gateway')
 
 
 @dataclass
@@ -33,11 +35,14 @@ class Source:
     tracks: list
     last_seen: float
     status: str = 'ready'
+    bootSession: str = ''
+    discRevision: int = 0
 
     def view(self, now: float) -> dict:
         return dict(sourceId=self.sourceId, name=self.name, kind=self.kind,
                     ip=self.ip, tracks=self.tracks, status=self.status,
-                    available=(now-self.last_seen) < ALIVE_SECONDS)
+                    available=(now-self.last_seen) < ALIVE_SECONDS,
+                    bootSession=self.bootSession, discRevision=self.discRevision)
 
 
 class Registry:
@@ -57,6 +62,17 @@ class Registry:
         status = data.get('status', 'ready')
         port = data.get('port', 8080)
         tracks = data.get('tracks', [])
+        boot_session = data.get('bootSession', '')
+        disc_revision = data.get('discRevision', 0)
+        if (not isinstance(boot_session, str) or
+                (boot_session and not re.fullmatch(r'[0-9a-fA-F]{16}', boot_session))):
+            raise ValueError('Invalid bootSession')
+        if type(disc_revision) is not int or not 0 <= disc_revision <= 0xffffffff:
+            raise ValueError('Invalid discRevision')
+        if (boot_session and disc_revision == 0 and tracks):
+            raise ValueError('Ready tracks need a positive discRevision')
+        if (not boot_session and disc_revision):
+            raise ValueError('Disc revision requires a boot session')
         if not isinstance(name, str) or not 1 <= len(name) <= 80:
             raise ValueError('Invalid name')
         if not isinstance(kind, str) or kind not in ('cd', 'line-in', 'other'):
@@ -74,7 +90,8 @@ class Registry:
             if len(self.sources) >= 32 and sid not in self.sources:
                 raise ValueError('Source registry full')
             self.sources[sid] = Source(sid, name, kind, str(address), port,
-                                       tracks, self.clock(), status)
+                                       tracks, self.clock(), status,
+                                       boot_session.lower(), disc_revision)
 
     def list(self):
         with self.lock:
@@ -147,8 +164,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def proxy_track(self, source: Source, number: int):
         connection = http.client.HTTPConnection(source.ip, source.port, timeout=8)
         headers_sent = False
+        remaining = None
+        # An upstream READ CD failure can truncate a fixed-length WAV. Never
+        # keep the MPD connection alive after advertising that Content-Length:
+        # it could otherwise wait indefinitely for bytes that will never come.
+        self.close_connection = True
         try:
-            connection.request('GET', f'/track/{number}.wav')
+            connection.request('GET', f'/track/{number}.wav', headers={'Connection': 'close'})
             upstream = connection.getresponse()
             if upstream.status != 200:
                 return self.send_bytes(f'Input node rejected track: HTTP {upstream.status}'.encode(), 'text/plain', 502)
@@ -158,27 +180,37 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'audio/wav')
             self.send_header('Content-Length', total)
+            self.send_header('Connection', 'close')
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             headers_sent = True
             if self.command == 'GET':
                 remaining = int(total)
                 while remaining > 0:
-                    chunk = upstream.read(min(16384, remaining))
+                    # read1 returns available data without waiting to fill a
+                    # 16 KiB buffer; preserves partial audio before abrupt EOF.
+                    chunk = upstream.read1(min(16384, remaining))
                     if not chunk:
+                        LOG.warning('CD stream ended early: source=%s track=%d missing=%d bytes',
+                                    source.sourceId, number, remaining)
                         break
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
         except (OSError, http.client.HTTPException, ValueError) as exc:
-            # If headers were already sent, the client sees a truncated stream.
-            if headers_sent:
-                return
-            try:
-                self.send_bytes(f'Source unavailable: {exc}'.encode(), 'text/plain', 502)
-            except (OSError, BrokenPipeError):
-                pass
+            # Once 200 + Content-Length are sent, we cannot send a new 502.
+            # Closing the socket is the only valid way to signal truncation.
+            LOG.warning('CD stream failed: source=%s track=%d missing=%s error=%s',
+                        source.sourceId, number, remaining, exc)
+            if not headers_sent:
+                try:
+                    self.send_bytes(f'Source unavailable: {exc}'.encode(), 'text/plain', 502)
+                except OSError:
+                    pass
         finally:
             connection.close()
+            # BaseHTTPRequestHandler will close the response socket after this
+            # handler returns. No next HTTP request may reuse a truncated WAV.
+            self.close_connection = True
 
 
 def make_server(host='127.0.0.1', port=8768, registry=None):

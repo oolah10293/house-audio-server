@@ -71,7 +71,7 @@ jobs:
           from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
           files = [
               'INSTALL_CD.txt', 'install-cd.sh', 'rollback-cd.sh', 'install.sh',
-              'house_audio_server.py', 'input_sources.py',
+              'house_audio_server.py', 'input_sources.py', 'auto_cd.py',
               'radio_history.py', 'radio_listening.py', 'radio_metadata.py',
               'radio_stations.py', 'state_file.py', 'subwoofers.py',
               'config/house-audio-server.default',

@@ -1,5 +1,9 @@
 # House Audio Server
 
+## Delivery naming rule (user requirement)
+
+**Do not include `test` in user-facing ZIP filenames, installer/package names, or version labels.** The user explicitly rejected this naming. Use neutral names such as `HouseMusic_CD_Auto_Takeover_Pi.zip` and `HouseMusic_XIAO_CD_Auto.zip`. Record tested/untested status accurately in documentation and release notes instead of embedding it in the delivered filename or version. Deliver downloadable attachments directly in the chat; do not make the user navigate GitHub for files. This instruction applies to future development and handoffs.
+
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
 **Current source release: v0.14.1 — House Music browser library sorting.**

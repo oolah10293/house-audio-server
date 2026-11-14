@@ -9,6 +9,9 @@ SERVICE_PATH=/etc/systemd/system/house-audio-server.service
 BACKUP_ROOT=/var/backups/house-audio-server
 BACKUP_DIR="$BACKUP_ROOT/pre-cd-$(date +%Y%m%d-%H%M%S)-$$"
 INSTALL_STARTED=0
+GATEWAY_SERVICE=house-audio-input-gateway.service
+GATEWAY_TARGET=/home/ads-suck/gateway.py
+GATEWAY_BACKUP_READY=0
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run: sudo sh ./install-cd.sh" >&2
@@ -16,7 +19,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Validate the complete package before touching the installed version.
-for file in install.sh house_audio_server.py input_sources.py \
+for file in install.sh house_audio_server.py input_sources.py auto_cd.py pi_input/gateway.py \
   radio_history.py radio_listening.py radio_metadata.py radio_stations.py \
   state_file.py subwoofers.py \
   web/house.html web/house.css web/house.js \
@@ -36,7 +39,7 @@ if ! grep -Fq 'SERVICE_VERSION = "0.14.2-cd1"' house_audio_server.py ||
   exit 1
 fi
 
-python3 -m py_compile house_audio_server.py input_sources.py \
+python3 -m py_compile house_audio_server.py input_sources.py auto_cd.py \
   radio_history.py radio_listening.py radio_metadata.py radio_stations.py \
   state_file.py subwoofers.py
 
@@ -45,9 +48,21 @@ if [ ! -d "$INSTALL_DIR" ] || [ ! -f "$SERVICE_PATH" ]; then
   exit 1
 fi
 
+if [ ! -f "$GATEWAY_TARGET" ] || ! systemctl cat "$GATEWAY_SERVICE" >/dev/null 2>&1; then
+  echo "Installation refused: existing CD gateway/service missing." >&2
+  exit 1
+fi
+python3 -m py_compile pi_input/gateway.py
+python3 - <<'PY'
+from urllib.request import urlopen
+with urlopen('http://127.0.0.1:8768/sources', timeout=3) as response:
+    assert response.status == 200, 'Existing gateway is unavailable'
+PY
 mkdir -p "$BACKUP_DIR"
 cp -a "$INSTALL_DIR" "$BACKUP_DIR/house-audio-server"
 cp -a "$SERVICE_PATH" "$BACKUP_DIR/house-audio-server.service"
+cp -a "$GATEWAY_TARGET" "$BACKUP_DIR/gateway.py"
+GATEWAY_BACKUP_READY=1
 echo "Previous House Music saved at: $BACKUP_DIR"
 
 rollback_on_error() {
@@ -60,6 +75,10 @@ rollback_on_error() {
     cp -a "$BACKUP_DIR/house-audio-server" "$INSTALL_DIR"
     cp -a "$BACKUP_DIR/house-audio-server.service" "$SERVICE_PATH"
     systemctl daemon-reload || true
+    if [ "$GATEWAY_BACKUP_READY" -eq 1 ]; then
+      cp -a "$BACKUP_DIR/gateway.py" "$GATEWAY_TARGET"
+      systemctl restart "$GATEWAY_SERVICE" || echo "WARNING: gateway restart failed after rollback." >&2
+    fi
     if systemctl restart "$SERVICE"; then
       echo "Previous House Music restored and restarted." >&2
     else
@@ -74,6 +93,24 @@ trap 'exit 130' 2
 trap 'exit 143' 15
 
 INSTALL_STARTED=1
+# The event gateway is a separate service and must be updated alongside
+# the server. Otherwise bootSession/discRevision are lost in transit.
+cp pi_input/gateway.py "$GATEWAY_TARGET"
+systemctl restart "$GATEWAY_SERVICE"
+python3 - <<'PY'
+import json, time
+from urllib.request import urlopen
+for attempt in range(15):
+    try:
+        with urlopen('http://127.0.0.1:8768/sources', timeout=2) as response:
+            data = json.load(response)
+        assert isinstance(data.get('sources'), list)
+        break
+    except Exception:
+        time.sleep(0.5)
+else:
+    raise SystemExit('Updated CD gateway did not start successfully')
+PY
 sh ./install.sh
 
 # Validate the actual installed browser and server version, not just systemd's PID.
@@ -109,5 +146,5 @@ trap - 0
 echo
 echo "House Music CD integration installed."
 echo "Open: http://192.168.1.12:8787/  and select CD players."
-echo "CD source gateway remains its existing independent service on port 8768."
+echo "CD source gateway updated in its existing independent service on port 8768."
 echo "Rollback copy: $BACKUP_DIR"

@@ -149,15 +149,66 @@ class CdPlaybackHttpTests(unittest.TestCase):
     def test_next_previous_and_same_disc_selection_keep_original_bookmark(self):
         first = self.play_cd(3)
         token = first["source"]["resumePlaylist"]["snapshotId"]
+        before_next = len(self.mpd.commands)
         self.assertEqual(self.request("/next", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before_next:], ["stop", "play 3"])
         self.assertEqual(self.request("/state")[1]["source"]["input"]["trackNumber"], 4)
+        before_previous = len(self.mpd.commands)
         self.assertEqual(self.request("/previous", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before_previous:], ["stop", "play 2"])
         self.assertEqual(self.request("/state")[1]["source"]["input"]["trackNumber"], 3)
         before = self.mpd.commands.count("clear")
         selected = self.play_cd(6)
         self.assertEqual(selected["source"]["input"]["trackNumber"], 6)
         self.assertEqual(selected["source"]["resumePlaylist"]["snapshotId"], token)
         self.assertEqual(self.mpd.commands.count("clear"), before)
+
+    def test_cd_previous_on_first_track_restarts_without_native_seek(self):
+        first = self.play_cd(1)
+        token = first["source"]["resumePlaylist"]["snapshotId"]
+        self.mpd.values["elapsedSeconds"] = 22.0
+        before = len(self.mpd.commands)
+        self.assertEqual(self.request("/previous", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before:], ["stop", "play 0"])
+        state = self.request("/state")[1]
+        self.assertEqual(state["source"]["input"]["trackNumber"], 1)
+        self.assertEqual(self.mpd.values["songPosition"], 0)
+        self.assertEqual(self.mpd.values["elapsedSeconds"], 0)
+        self.assertEqual(self.mpd.values["transport"], "play")
+        self.assertEqual(state["source"]["resumePlaylist"]["snapshotId"], token)
+
+    def test_cd_next_on_last_track_still_stops_without_wrapping(self):
+        first = self.play_cd(1)
+        token = first["source"]["resumePlaylist"]["snapshotId"]
+        self.play_cd(11)
+        before = len(self.mpd.commands)
+        self.assertEqual(self.request("/next", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before:], ["next"])
+        self.assertEqual(self.mpd.values["transport"], "stop")
+        self.assertEqual(self.radio.playlist_resume.view()["snapshotId"], token)
+
+    def test_cd_skip_preserves_native_mpd_behavior_outside_normal_playback(self):
+        self.play_cd(3)
+        self.assertEqual(self.request("/pause", {})[0], 200)
+        before = len(self.mpd.commands)
+        self.assertEqual(self.request("/next", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before:], ["next"])
+
+        self.mpd.values["random"] = True  # unexpected external MPD mode
+        before = len(self.mpd.commands)
+        self.assertEqual(self.request("/previous", {})[0], 200)
+        self.assertEqual(self.mpd.commands[before:], ["previous"])
+
+    def test_switching_an_active_cd_track_stops_old_wav_before_play(self):
+        first = self.play_cd(3)
+        token = first["source"]["resumePlaylist"]["snapshotId"]
+        previous = len(self.mpd.commands)
+        selected = self.play_cd(6)
+        self.assertEqual(self.mpd.commands[previous:], ["stop", "play 5"])
+        self.assertEqual(self.mpd.values["transport"], "play")
+        self.assertEqual(self.mpd.values["songPosition"], 5)
+        self.assertEqual(selected["source"]["input"]["trackNumber"], 6)
+        self.assertEqual(selected["source"]["resumePlaylist"]["snapshotId"], token)
 
     def test_pause_resume_and_stop_do_not_restart_cd_from_beginning(self):
         self.play_cd(3)
@@ -208,6 +259,36 @@ class CdPlaybackHttpTests(unittest.TestCase):
         self.assertEqual(data["mpd"]["transport"], "pause")
         self.assertTrue(self.policy.snapshot()["autoPaused"])
         self.assertEqual(self.mpd.paths, self.original)
+
+    def test_cd_track_click_recovers_from_orphaned_cd_url_queue(self):
+        # MPD keeps its queue across a House Music process restart, while
+        # RadioPlayback loses in-memory CD ownership. Clicking a track must
+        # replace the old stream, not attempt to bookmark its URL as a file.
+        stale = self.gateway.cd_selection(SOURCE["sourceId"], 1)["url"]
+        self.mpd.paths = [stale]
+        self.mpd.ids = [104]
+        self.mpd.values.update(songPosition=0, elapsedSeconds=12.0,
+                               queueVersion=2, transport="play")
+        status, result = self.request("/inputs/play", {
+            "sourceId": SOURCE["sourceId"], "trackNumber": 4})
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["source"]["type"], "cd")
+        self.assertEqual(self.mpd.values["songPosition"], 3)
+        self.assertEqual(self.mpd.paths, self.gateway.cd_selection(SOURCE["sourceId"], 4)["urls"])
+        self.assertFalse(result["source"]["resumePlaylist"]["available"])
+
+    def test_cd_track_click_skips_mixed_url_queue_bookmark(self):
+        # A mixed library/stream queue cannot be restored safely as local
+        # files. Keep CD selection usable without inventing a bookmark.
+        self.mpd.paths = ["Rap/B.mp3", "https://radio.example/old"]
+        self.mpd.ids = [104, 105]
+        self.mpd.values.update(songPosition=1, elapsedSeconds=2.0,
+                               queueVersion=3, transport="play")
+        status, result = self.request("/inputs/play", {
+            "sourceId": SOURCE["sourceId"], "trackNumber": 2})
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.mpd.values["songPosition"], 1)
+        self.assertFalse(result["source"]["resumePlaylist"]["available"])
 
     def test_invalid_or_offline_sources_never_write_mpd(self):
         before = list(self.mpd.commands)

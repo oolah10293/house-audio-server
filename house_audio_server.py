@@ -32,6 +32,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 from input_sources import InputGateway, InputGatewayError
+from auto_cd import AutoCdSource
 from radio_history import RadioHistory
 from radio_listening import RadioListening
 from subwoofers import Subwoofers, SubwooferError
@@ -1002,6 +1003,14 @@ class PlaylistResume:
         rows = mpd.queue()
         if not rows:
             return
+        # MPD can retain a previous CD/radio URL queue across a House Music
+        # service restart, when our in-memory source ownership is gone.
+        # URLs are not library files and cannot be restored by Resume Playlist.
+        # Treat such a queue as having no library bookmark instead of denying
+        # a new CD selection with the misleading /radio/play path error.
+        if any(isinstance(row.get("file"), str) and "://" in row["file"]
+               for row in rows):
+            return
         tracks = [validate_relative_path(row["file"]) for row in rows]
         if any(not path for path in tracks):
             raise ApiError(409, "playlist_not_resumable", "Queue contains an invalid library path")
@@ -1150,9 +1159,13 @@ class RadioPlayback:
         # or recapture the previous library bookmark.
         if (station.get("kind") == "cd" and self.station is not None
                 and self.station.get("kind") == "cd"
+                and not self.empty_selection
                 and self.station["sourceId"] == station["sourceId"]
                 and self.station["urls"] == station["urls"]
                 and self._matching_queue(mpd, mpd.state())):
+            # End the active HTTP WAV stream before starting another CD track.
+            # Direct play-on-play can block MPD while the old stream unwinds.
+            mpd.command("stop")
             mpd.command(f'play {station["trackIndex"]}')
             self.station = dict(station)
             self.song_id = mpd.state().get("songId")
@@ -1290,6 +1303,8 @@ class RadioPlayback:
 
     def resume(self, mpd, automatic=False):
         if self.station is not None and self.station.get("kind") == "cd":
+            if self.empty_selection:
+                raise ApiError(409, "cd_no_disc", "Insert a CD before pressing Play")
             mpd.command("play")
             self.intent, self.status, self.error = "play", "playing", None
             self.auto_paused = False
@@ -1324,6 +1339,20 @@ class RadioPlayback:
         self.auto_paused = automatic
         self._reset_retry()
         mpd.command("stop")
+
+    def eject_cd(self, mpd):
+        """Stop and empty the stale disc queue without losing its bookmark.
+
+        A new disc can then become the only valid source, while unplugging
+        still has the original pre-CD library/radio state to restore.
+        """
+        if self.station is None or self.station.get("kind") != "cd":
+            return
+        self.intent, self.status = "stop", "no_disc"
+        self.auto_paused = False
+        self._reset_retry()
+        mpd.run("stop", "clear")
+        self.empty_selection = True
 
     def stop(self, mpd):
         self._capture_history(mpd)
@@ -1428,13 +1457,17 @@ class RadioPlayback:
             entry = self.station
             index = state.get("songPosition")
             tracks = entry["trackNumbers"]
-            track = tracks[index] if type(index) is int and 0 <= index < len(tracks) else entry["trackNumber"]
+            track = (None if self.empty_selection else
+                     tracks[index] if type(index) is int and 0 <= index < len(tracks)
+                     else entry["trackNumber"])
             return {"type": "cd", "live": False, "station": None,
                     "input": {"sourceId": entry["sourceId"], "name": entry["name"],
-                              "trackNumber": track, "trackNumbers": tracks},
-                    "resumePlaylist": resume, "status": state.get("transport"),
+                              "trackNumber": track, "trackNumbers": tracks,
+                              "discEjected": self.empty_selection},
+                    "resumePlaylist": resume,
+                    "status": "no_disc" if self.empty_selection else state.get("transport"),
                     "lastError": state.get("error") or self.error,
-                    "canSeek": False, "canSkip": True,
+                    "canSeek": False, "canSkip": not self.empty_selection,
                     "canShuffle": False, "canRepeat": False}
         if self.station is None or resume["status"] == "uncertain":
             source_type = ("unknown" if resume["status"] == "uncertain" else
@@ -1491,6 +1524,7 @@ class PassiveSessionPolicy:
         controllers: Optional[ControllerRegistry] = None,
         startup: Optional[MpdStartupBoundary] = None,
         radio: Optional[RadioPlayback] = None,
+        auto_cd: Optional[AutoCdSource] = None,
     ) -> None:
         self.monitor = monitor
         self.mpd_factory = mpd_factory
@@ -1499,6 +1533,7 @@ class PassiveSessionPolicy:
         self.settings = settings
         self.startup = startup
         self.radio = radio
+        self.auto_cd = auto_cd
         self.controllers = controllers if controllers is not None else ControllerRegistry()
         self.default_folder = (
             str(settings.snapshot()["passiveDefaultFolder"])
@@ -1547,6 +1582,7 @@ class PassiveSessionPolicy:
                 "enabled": self.enabled,
                 "mode": "controllers_and_renderers",
                 "defaultFolder": self._default_folder(),
+                "cdAuto": self.auto_cd.snapshot() if self.auto_cd is not None else {"enabled": False},
                 "presentCount": self._previous_present_count,
                 "controllerCount": (self._previous_presence or {}).get("controllerCount"),
                 "passiveCount": (self._previous_presence or {}).get("passiveCount"),
@@ -1685,6 +1721,11 @@ class PassiveSessionPolicy:
         self._record(action)
 
     def _tick(self) -> None:
+        # The gateway may be slow or unplugged. Probe it outside MPD_WRITE_LOCK
+        # so ordinary Play/Pause and other HOUSE controllers remain responsive.
+        # Apply the observed event under the lock below, not in the fetch.
+        if self.auto_cd is not None and self.enabled and self.radio is not None:
+            self.auto_cd.refresh()
         # Keep the state decision and its writes together relative to API writes.
         # A failed MPD command must not kill the policy thread or lose a drain.
         try:
@@ -1762,6 +1803,10 @@ class PassiveSessionPolicy:
             self.startup.ensure_ready(self.mpd_factory())
         snap = self.monitor.snapshot()
         presence = self.controllers.snapshot(snap)
+        # Inspect CD input identity under the same MPD write lock as all
+        # explicit user controls. No heartbeat can override a manual choice.
+        if self.auto_cd is not None and self.enabled and self.radio is not None:
+            self.auto_cd.tick(self.mpd_factory(), self.radio, self, presence)
         if self.radio is not None and self.radio.playlist_resume.status == "uncertain":
             self.radio.listening.suspend()
             if self.enabled and snap.get("reachable") and presence["presentCount"] == 0:
@@ -1853,6 +1898,26 @@ class PassiveSessionPolicy:
             if presence["passiveCount"] > 0:
                 self._start_default_session(mpd)
             return
+        if radio.station is not None and radio.station.get("kind") == "cd":
+            # A plugged-in CD is a physical source, not an endless radio.
+            # Keep its saved playlist while no speakers are present; don't
+            # stream an entire disc into an inaudible house.
+            if presence["presentCount"] == 0:
+                if radio.intent == "play":
+                    radio.pause(mpd, automatic=True)
+                self._auto_paused_state = None
+                radio.observe(mpd, mpd.state())
+                return
+            if radio.auto_paused and (passive_arrival or presence["audibleCount"] > 0):
+                radio.resume(mpd, automatic=True)
+                self._record("cd_resumed_audible")
+            elif (radio.intent == "play" and presence["controllerCount"] > 0
+                  and presence["audibleCount"] == 0):
+                radio.pause(mpd, automatic=True)
+                self._record("cd_paused_muted_controllers_only")
+            self._auto_paused_state = None
+            radio.observe(mpd, mpd.state())
+            return
         if presence["presentCount"] == 0:
             # A live broadcast has no track boundary. Also handles a stream
             # selected before our first presence sample or during monitor loss.
@@ -1912,7 +1977,7 @@ RADIO = RadioPlayback(RADIO_STATIONS, history=RadioHistory(RADIO_HISTORY_FILE),
                       listening=RadioListening(RADIO_LISTENING_FILE))
 PASSIVE_SESSION_POLICY = PassiveSessionPolicy(
     SNAPCAST_MONITOR, settings=PASSIVE_DEFAULT_SETTINGS, controllers=CONTROLLERS,
-    startup=MPD_STARTUP, radio=RADIO,
+    startup=MPD_STARTUP, radio=RADIO, auto_cd=AutoCdSource(INPUT_GATEWAY),
 )
 
 
@@ -2440,7 +2505,12 @@ class ApiHandler(BaseHTTPRequestHandler):
                 def explicit_transport():
                     PASSIVE_SESSION_POLICY.explicit_transport(mpd)
 
+                def manual_source_choice():
+                    if PASSIVE_SESSION_POLICY.auto_cd is not None:
+                        PASSIVE_SESSION_POLICY.auto_cd.manual_source_choice()
+
                 def leave_radio():
+                    manual_source_choice()
                     explicit_transport()
                     if RADIO.station is not None or RADIO.pending_station is not None:
                         RADIO.reconcile(mpd, mpd.state())
@@ -2459,12 +2529,14 @@ class ApiHandler(BaseHTTPRequestHandler):
                         with PASSIVE_SESSION_POLICY._lock:
                             PASSIVE_SESSION_POLICY._auto_paused_state = PASSIVE_SESSION_POLICY._session_identity(state)
 
+                    manual_source_choice()
                     RADIO.resume_playlist(mpd, payload["snapshotId"], explicit_transport,
                                           hold, mark_retained_pause)
                     self._mpd_state_response()
                     return
 
                 if path == "/inputs/play":
+                    manual_source_choice()
                     explicit_transport()
                     RADIO.reconcile(mpd, mpd.state())
                     RADIO.select(mpd, selected_input)
@@ -2475,6 +2547,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     if set(payload) != {"stationId"}:
                         raise ApiError(400, "invalid_request", "Provide only stationId")
                     station = RADIO_STATIONS.get(payload["stationId"])
+                    manual_source_choice()
                     explicit_transport()
                     RADIO.reconcile(mpd, mpd.state())
                     RADIO.select(mpd, station)
@@ -2502,7 +2575,36 @@ class ApiHandler(BaseHTTPRequestHandler):
                                                "CD playback supports track selection, Play, Pause, Stop and Next/Previous")
                             explicit_transport()
                             if path in {"/next", "/previous"}:
-                                mpd.command(path.lstrip("/"))
+                                if RADIO.empty_selection:
+                                    raise ApiError(409, "cd_no_disc", "Insert a CD before skipping tracks")
+                                # A live CD WAV can make native skip commands
+                                # block on stream teardown. Native Previous on
+                                # track 1 also tries to seek the nonseekable WAV.
+                                # Restart track 1 with stop/play 0; use the same
+                                # fast stream teardown for adjacent CD tracks.
+                                # Preserve native last-track Next and paused/mode
+                                # behavior.
+                                state = mpd.state()
+                                current = state.get("songPosition")
+                                step = 1 if path == "/next" else -1
+                                target = (max(0, current + step) if
+                                          type(current) is int and current >= 0
+                                          else None)
+                                ordered = (state.get("random") is False
+                                           and state.get("repeat") is False
+                                           and state.get("consume") is False
+                                           and state.get("singleMode") == "0")
+                                if (state.get("transport") == "play" and ordered
+                                        and target is not None
+                                        and 0 <= target < state["queueLength"]):
+                                    mpd.command("stop")
+                                    mpd.command(f"play {target}")
+                                    RADIO.song_id = mpd.state().get("songId")
+                                    RADIO.intent, RADIO.status = "play", "playing"
+                                    RADIO.auto_paused = False
+                                    RADIO.error = None
+                                else:
+                                    mpd.command(path.lstrip("/"))
                             elif path == "/play":
                                 RADIO.resume(mpd)
                             elif path == "/pause":

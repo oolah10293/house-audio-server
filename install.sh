@@ -15,7 +15,7 @@ fi
 # wrong-branch deployment that removed the House Music root page.
 for file in \
     house_audio_server.py \
-    input_sources.py radio_history.py radio_listening.py radio_metadata.py radio_stations.py \
+    input_sources.py auto_cd.py radio_history.py radio_listening.py radio_metadata.py radio_stations.py \
     state_file.py subwoofers.py \
     web/house.css web/house.html web/house.js \
     web/subwoofers.css web/subwoofers.html web/subwoofers.js \
@@ -32,7 +32,7 @@ if ! grep -Fq 'SERVICE_VERSION = "0.14.2-cd1"' house_audio_server.py ||
     echo "Refusing installation: not the browser-enabled House Audio v0.14.2-cd1 release" >&2
     exit 1
 fi
-python3 -m py_compile house_audio_server.py input_sources.py subwoofers.py
+python3 -m py_compile house_audio_server.py input_sources.py auto_cd.py subwoofers.py
 
 if ! id houseaudio >/dev/null 2>&1; then
     useradd --system --home /nonexistent --shell /usr/sbin/nologin houseaudio
@@ -42,7 +42,7 @@ install -d -o root -g root -m 0755 "$INSTALL_DIR"
 
 for file in \
     house_audio_server.py \
-    input_sources.py \
+    input_sources.py auto_cd.py \
     radio_history.py \
     radio_listening.py \
     radio_metadata.py \
