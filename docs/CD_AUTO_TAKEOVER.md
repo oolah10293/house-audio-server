@@ -1498,3 +1498,9 @@ Do not claim observed daily retry spikes coincide with
 the dropout timestamps without correlation. Preserve new AP
 assignment while observing. No builds, firmware, deployment or
 config changes made by this documentation checkpoint.
+
+## Renderer dropout — Omada retries confirmed on 2.4 GHz (2026-11-14)
+
+**Screenshot observed:** Guest room EAP653 Omada Statistics -> Retries with the left radio selector explicitly set to `2.4 GHz` (previously `All`), 1D view. Tx retries green and Rx retries blue still show significant bursts, especially around ~09:30–noon and ~18:30–19:30 in the graph's displayed local scale, and smaller evening activity. Therefore bursts occur on the 2.4-GHz radio, not exclusively due to the 5-GHz radio. The chart displays raw retry count by interval, not a percentage, does not identify individual clients, and has not been matched to timestamps of user-observed audio interruptions. Do not infer saturated bandwidth, specific AP fault, or causal link from this alone.
+
+**Field outcome to retain:** moving and locking the affected hardware Snapcast nodes to another AP was followed by clean CD playback through tracks 11–13; repeatability remains open. Leave the working assignment unchanged; do not modify software, firmware or AP radio settings based on this screenshot.
