@@ -119,6 +119,27 @@ async function test() {
   assert.equal(calls.at(-1).payload.enabled, false,
     "Starting a CD album must disable shuffle after queue replacement.");
 
-  console.log("House Music Library display, sort, and playback regression checks passed.");
+  // CD input view is separate from ripped-CD library browsing and never
+  // supplies an arbitrary URL; selection sends only the source ID and track.
+  run('current.view = "inputs"; current.inputs = ' +
+      '[{sourceId:"cd-abc123",name:"LiteOn CD",kind:"cd",available:true,status:"ready",tracks:[3,1,2]}];' +
+      'current.state = {source:{type:"cd", input:{sourceId:"cd-abc123",name:"LiteOn CD",trackNumber:2,' +
+      'trackNumbers:[1,2,3]}, canSeek:false, resumePlaylist:{available:true,snapshotId:"abc"}}' +
+      ',mpd:{transport:"play",queueLength:3,song:{file:"http://127.0.0.1:8768/audio/cd-abc123/2.wav"},' +
+      'durationSeconds:170,elapsedSeconds:10}}; drawInputs(); renderPlayer();');
+  const cdItems = ids.get("items").children;
+  assert.equal(cdItems.length, 4, "One source heading and three CD tracks");
+  assert.equal(cdItems[1].children[0].children[1].children[0].textContent, "Track 1");
+  assert.equal(cdItems[2].children[0].children[1].children[0].textContent, "Track 2");
+  assert.equal(cdItems[2].className, "item playing", "Playing CD track is highlighted");
+  await cdItems[1].children[0].listeners.click();
+  assert.equal(calls.at(-1).path, "/inputs/play");
+  assert.equal(calls.at(-1).payload.sourceId, "cd-abc123");
+  assert.equal(calls.at(-1).payload.trackNumber, 1);
+  assert.equal(ids.get("track-title").textContent, "Track 2");
+  assert.equal(ids.get("seek").disabled, true, "CD HTTP WAV does not advertise seeking");
+  assert.equal(ids.get("resume").hidden, false, "CD source exposes Resume Playlist");
+
+  console.log("House Music Library and wireless CD source browser regressions passed.");
 }
 test().catch(error => { console.error(error); process.exitCode = 1; });

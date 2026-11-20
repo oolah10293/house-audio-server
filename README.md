@@ -1,12 +1,16 @@
 # House Audio Server
 
+## Authoritative development baseline — main
+
+Current integrated source is **0.14.2-cd1**, including the CD gateway, automatic CD takeover, retention/restore, the browser controller and per-subwoofer fallback. Start new development from `main`. See [main baseline consolidation](docs/MAIN_BASELINE_2026-11-20.md) and [CD behavior](docs/CD_AUTO_TAKEOVER.md). Source consolidation does not establish the exact live Pi file hashes or authorize a new installation. Older release descriptions below are historical.
+
 ## Delivery naming rule (user requirement)
 
 **Do not include `test` in user-facing ZIP filenames, installer/package names, or version labels.** The user explicitly rejected this naming. Use neutral names such as `HouseMusic_CD_Auto_Takeover_Pi.zip` and `HouseMusic_XIAO_CD_Auto.zip`. Record tested/untested status accurately in documentation and release notes instead of embedding it in the delivered filename or version. Deliver downloadable attachments directly in the chat; do not make the user navigate GitHub for files. This instruction applies to future development and handoffs.
 
 Central playback, control, and synchronized-audio service for the whole-house music system.
 
-**Current source release: v0.14.1 — House Music browser library sorting.**
+**Historical source release: v0.14.1 — House Music browser library sorting.**
 Adds independently selectable Filename/Metadata display and context-sensitive
 sorting in the browser Library. Folder playback follows the chosen order,
 with disc-aware CD album sequencing and modified-date options. The Resume

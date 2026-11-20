@@ -1,0 +1,11 @@
+# Main baseline consolidation — 2026-11-20
+
+User requested consolidation of working source; no build, package, installer delivery or deployment authorized.
+
+- Previous main: 4d11793b679a68fdd7a034c231912562c556a282. CD integration branch tip: 581409cc6513501e3f7ce8ec64d53b25ae48cb41. Both are parents of this consolidation. The current integrated service declares 0.14.2-cd1.
+- Preserve the CD branch's full runtime, gateway, installer, rollback, browser and tests by Git blob ID. CD auto-takeover and recovery documented in CD_AUTO_TAKEOVER.md; prior Pi direct patch and hardware results are provenance, not a fresh live-file identity check.
+- Compared trees: prior main has no unique runtime changes outside the integrated CD changes. Subwoofer manager, fallback tests, Rio status source/tests/docs and browser subwoofer assets match previous main byte for byte. Historical standalone fallback, Rio status, gateway and browser branches must not be used as new production baselines. The older standalone gateway differs from the integrated version; do not overwrite it.
+- ESP32 companion repo main now includes the hardware-confirmed Lite-On 3.4 sketch (compiled f7741b4c9faf160e84c8ca9fb5dde6da7989d59c) and Rio lineage. Keep immutable device/release/dependency pins and historical refs intact.
+- New work starts from main. Existing release tags and historical branches are rollback/provenance. Main CI runs source syntax and unit checks only; former automatic package steps removed from the main workflow. CD package workflow is manually dispatched on main only with explicit authorization. Updating version, package gate and pinned source identity is required before a future release.
+- Current network investigation: user observed ~10% Basement channel use paused, ~20% library, up to 47% CD. Moving CD uploader to Guest Room added ~20 points there. Significant AP retries coincided with dropouts. See ESP32 docs/MAIN_BASELINE_2026-11-20.md. No network/transport code changed. Lossless FLAC and power-save investigation pending.
+- No live Pi inspection, new hardware acceptance, build, package, release or installation performed by this consolidation. Do not claim the combined source has been deployed.
