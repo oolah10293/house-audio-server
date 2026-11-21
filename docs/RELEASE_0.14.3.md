@@ -47,3 +47,11 @@ HTTP connection failed and the local SSH client configuration prevented its
 connection attempt. The installer is prepared for execution from the Pi's own
 terminal. Installation remains pending until its output verifies success; do not
 record this source release as deployed based solely on packaging or CI.
+
+## Verified package delivery
+
+- Packaged source commit: `e3913441f72bf037329456bb374cbe1920a54942`.
+- GitHub source checks passed: [run 44959564903](https://github.com/oolah10293/house-audio-server/actions/runs/44959564903).
+- `HouseMusic_Server_v0.14.3_Pi.zip`: 83,972 bytes, 26 files including source identity and manifest; every packaged source file matched the committed bytes and ZIP integrity checks passed.
+- ZIP SHA-256: `bc9e5997bcaf750fe237a6a6b112c3cf2e4362256fc9b09797aacbee73bfb346`.
+- Package saved for direct chat download. Installation is authorized but remains pending execution on the Pi and confirmation of the installer output. This documentation checkpoint does not change the packaged source identity.
