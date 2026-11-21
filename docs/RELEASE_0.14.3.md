@@ -1,5 +1,7 @@
 # House Audio Server v0.14.3
 
+**Deployment confirmed on 2026-11-21 from the user's Pi installer output.**
+
 Packaging and installation explicitly authorized on 2026-11-21. This release
 packages the unmuted-controller session policy from main commit
 `4d15c92d8661bdd8664a11f25dc04dd0c7f0fc4f`, on the integrated CD/browser/subwoofer
@@ -44,9 +46,9 @@ modeled MPD/gateway state and do not establish physical audio acceptance.
 
 Direct access to the Pi at `192.168.1.12` is unavailable from this workspace:
 HTTP connection failed and the local SSH client configuration prevented its
-connection attempt. The installer is prepared for execution from the Pi's own
-terminal. Installation remains pending until its output verifies success; do not
-record this source release as deployed based solely on packaging or CI.
+connection attempt. The user subsequently ran the pinned installation command
+from the Pi's own terminal and supplied the successful output recorded below.
+This is user-provided live deployment evidence, not a direct remote inspection.
 
 ## Verified package delivery
 
@@ -54,4 +56,21 @@ record this source release as deployed based solely on packaging or CI.
 - GitHub source checks passed: [run 44959564903](https://github.com/oolah10293/house-audio-server/actions/runs/44959564903).
 - `HouseMusic_Server_v0.14.3_Pi.zip`: 83,972 bytes, 26 files including source identity and manifest; every packaged source file matched the committed bytes and ZIP integrity checks passed.
 - ZIP SHA-256: `bc9e5997bcaf750fe237a6a6b112c3cf2e4362256fc9b09797aacbee73bfb346`.
-- Package saved for direct chat download. Installation is authorized but remains pending execution on the Pi and confirmation of the installer output. This documentation checkpoint does not change the packaged source identity.
+- Package saved for direct chat download. Installation was subsequently confirmed by the user's output below. This documentation checkpoint does not change the packaged source identity.
+
+## Confirmed Pi installation — 2026-11-21
+
+The user supplied the complete successful installation output from `ads-suck@pihole`.
+It reports `Installed House Music 0.14.3; browser, service and session policy verified.`,
+followed by successful completion and return to the shell prompt.
+
+- Installed source: the provided command pinned commit `e3913441f72bf037329456bb374cbe1920a54942`.
+- Installer checks completed: installed server/assets/gateway byte comparison, v0.14.3 identity, healthy startup/MPD/Snapserver status, browser CD controls and updated session-policy API.
+- Server restarted and the independent CD gateway was updated/restarted on port 8768.
+- Backup: `/var/backups/house-audio-server/pre-cd-20261121-180937-2627635`.
+- Extracted release directory: `/home/ads-suck/housemusic-v0.14.3.uyxu3E`.
+- Rollback entry point in that directory: `sudo sh ./rollback-cd.sh`.
+
+Installation and startup verification are confirmed. The user's on-device acceptance
+of unmuted paused retention, muted-only session ending and continued playback on
+other room nodes remains pending; the installer does not prove those listening tests.
