@@ -552,6 +552,8 @@ Controller presence and muted-phone/output-state policy remain the next server w
 
 The controller API is shared by Android, Windows, and browser clients. No Android receiver or UI is implemented in this release. The existing MPD transport endpoints remain authoritative. Presence calls update bookkeeping; the policy applies resulting playback transitions on its next poll (normally within 0.5 seconds while dependencies are available).
 
+**2026-11-21 update:** session retention requires an unmuted controller. The current definitions and transition table below supersede the original v0.8.0 muted-controller retention behavior; see [verification checkpoint](UNMUTED_SESSION_RETENTION.md).
+
 ### Read presence: `GET /controllers`
 
 Returns `service`, `version`, and `presence`:
@@ -559,7 +561,8 @@ Returns `service`, `version`, and `presence`:
 - `controllers`: controller id, associated renderer id (or null), `present`, `outputMuted`, `outputReady`, remaining lease seconds, and latest sequence; lease tokens are omitted.
 - `renderers`: Snapcast renderer id, owning controller id (or null), passive classification, effective presence, and policy audibility.
 - `controllerCount`: live controller leases; `passiveCount`: present unassociated radios.
-- `presentCount`: passive radios plus unique controlling devices with a live lease or a still-audible output. A phone is counted once across its roles.
+- `unmutedControllerCount`: live controller leases reporting `outputMuted: false`, regardless of receiver readiness.
+- `presentCount`: effective session participants: passive radios plus unique controlling devices with a live **unmuted** lease or a still-audible output. A phone is counted once across its roles. Muted/control-only clients remain in `controllerCount` and `controllers[].present` but do not hold sessions. Raw Snapcast presence in `/renderers` is unchanged.
 - `audibleCount`: passive audible outputs plus unique audible controlling devices.
 - `passiveIds`, `snapserverReachable`, `heartbeatSeconds`, and `leaseSeconds`.
 
@@ -623,7 +626,7 @@ All five fields are required. Sequence is a positive integer strictly greater th
 
 A controlling output counts as audible only when it is reported unmuted/ready and its associated Snapcast renderer is effectively present and audible. An unmute report without a live receiver cannot resume an automatic pause. A real renderer can remain audible after its control lease expires; it remains a controlling output and never becomes a passive auto-starter.
 
-Background/screen-off apps count while they continue renewing. Expiry is fifteen seconds after the last accepted attach/heartbeat using a monotonic clock; a suspended browser or dead process cannot hold a session indefinitely. Timings are configurable via `CONTROLLER_HEARTBEAT_SECONDS` and `CONTROLLER_LEASE_SECONDS` (heartbeat must be positive and less than expiry).
+Background/screen-off apps remain registered while they renew; only unmuted controllers hold the session. Expiry is fifteen seconds after the last accepted attach/heartbeat using a monotonic clock; a suspended browser or dead process cannot hold a session indefinitely. Timings are configurable via `CONTROLLER_HEARTBEAT_SECONDS` and `CONTROLLER_LEASE_SECONDS` (heartbeat must be positive and less than expiry).
 
 ### Quit: `POST /controllers/detach`
 
@@ -639,16 +642,18 @@ Stop this device's receiver, stop its heartbeat loop, then detach. The response 
 | --- | --- |
 | Controller merely attaches to fresh idle, even unmuted | Stay stopped; wait for explicit Play/selection. The legacy handoff API is a separate operation, not attach behavior or an independent-app requirement. |
 | Controller joins/quits while a radio remains audible | Preserve shared queue, track, position, and transport. |
-| Only controllers with muted/unavailable outputs remain | Pause exactly where playback is, retain queue, mark `autoPaused: true`. |
+| Unmuted controllers remain but their outputs are unavailable | Pause exactly where playback is, retain queue, mark `autoPaused: true`. |
+| Only muted/control-only controllers remain | Finish the playing library track, then fresh idle. End a paused controller-held session without advancing. Live radio releases immediately; physical CD retains its separate no-speaker policy. |
 | Output becomes audible during that automatic pause | Resume retained playback. |
 | Explicit HTTP Pause/Stop after an automatic pause | Clear automatic-resume ownership; controller arrival/unmute cannot undo it. A passive-radio arrival may still resume ordinary Pause. |
-| Last controller leaves/expires during automatic pause | Stop without advancing; the session ends. Next passive arrival starts a new shuffled configured default. |
+| Last unmuted controller mutes/leaves/expires during automatic or manual pause | Stop without advancing; the session ends. Next passive arrival starts a new shuffled configured default. |
 | All nodes leave while playing | Finish the current track, then become fresh idle. |
-| Controller returns before drain completion | Cancel drain; keep playing if audible, otherwise pause/retain. |
+| Unmuted controller returns before drain completion | Cancel drain; keep playing if audible, otherwise pause/retain. |
+| Muted controller returns or renews during drain | Keep the pending final-track stop; do not retain a pause or rebuild the queue. |
 | Controller returns after drain completion | Stay fresh idle; do not resurrect the old queue. |
 | Passive radio returns after completed drain | Start the saved MP3s/Rap default with fresh randomness. |
 
-Session snapshots now use `mode: "controllers_and_renderers"`, combined `presentCount`, separate `controllerCount`/`passiveCount`/`audibleCount`, `controllerPresenceImplemented: true`, and `autoPaused`/`pauseReason` (null or `no_audible_output`). These reflect the last successful policy poll.
+Session snapshots now use `mode: "controllers_and_renderers"`, combined `presentCount`, separate `controllerCount`/`unmutedControllerCount`/`passiveCount`/`audibleCount`, `controllerPresenceImplemented: true`, and `autoPaused`/`pauseReason` (null or `no_audible_output`). These reflect the last successful policy poll.
 
 The table above describes presence-driven behavior. The legacy v0.9.0 handoff implementation also serializes transfers with passive auto-start, preserves an already-active HOUSE session, and reconciles uncertain acknowledgements. Those safeguards remain part of the shipped endpoint contract, not a requirement to integrate the independent apps.
 

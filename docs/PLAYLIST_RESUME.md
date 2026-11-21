@@ -8,6 +8,8 @@ output confirmed Pi installation and healthy startup on 2026-10-18. Live
 playlist-restore/audio acceptance remains pending. House Music v0.4.0 delivered
 the button on 2026-10-18; its first reported live restore failed as documented below.
 
+**2026-11-21 session update:** a restore with only muted controllers remains silent during reconstruction, then ends on the next successful policy poll. It is not held for a later Unmute. An unmuted controller awaiting receiver readiness can retain the restored pause. See [current session rules](SESSION_BEHAVIOR.md#5-only-an-unmuted-controller-holds-a-session). Historical release evidence below describes the earlier policy.
+
 ## Field failure and v0.13.1 correction — 2026-10-18
 
 The user reported a failed restore from House Music v0.4.0. The Pi's `/state`

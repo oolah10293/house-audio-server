@@ -185,10 +185,11 @@ class PlaylistResumeTests(unittest.TestCase):
         self.assertEqual(self.mpd.commands.count("seekcur 47.125"), 1)
         self.assertEqual(body["source"]["resumePlaylist"]["status"], "completed")
 
-    def test_slow_decoder_muted_restore_keeps_paused_policy_and_position(self):
+    def test_slow_decoder_unmuted_unready_restore_keeps_paused_policy_and_position(self):
         token = self.select()
         self.monitor.nodes.clear()
-        self.registry.attach({"controllerId": "phone"})
+        self.registry.attach({"controllerId": "phone", "rendererId": "phone-out",
+                              "outputMuted": False, "outputReady": False})
         self.mpd.decoder_delay_reads = 3
         status, body = self.resume(token)
         self.assertEqual(status, 200, body)
@@ -378,23 +379,68 @@ class PlaylistResumeTests(unittest.TestCase):
         with self.assertRaises(h.ApiError):
             fresh.resume_playlist(self.mpd, token)
 
-    def test_muted_phone_restore_remains_paused_until_eligible_output_returns(self):
+    def test_muted_phone_restore_ends_session_and_later_unmute_cannot_resume_it(self):
         token = self.select()
         self.monitor.nodes.clear()
         lease = self.registry.attach({"controllerId": "phone", "rendererId": "phone-out"})
         status, body = self.resume(token)
         self.assertEqual(status, 200, body)
         self.assertEqual(body["mpd"]["transport"], "pause")
-        self.assertTrue(body["sessionPolicy"]["autoPaused"])
+        self.assertFalse(body["sessionPolicy"]["autoPaused"])
         self.assertTrue(self.registry.snapshot(self.monitor.snapshot())["controllers"][0]["outputMuted"])
-        self.policy._tick()
         self.assertEqual(self.mpd.values["elapsedSeconds"], 47.125)
+        self.policy._tick()
+        self.assertEqual(self.mpd.values["transport"], "stop")
         self.registry.heartbeat({"controllerId": "phone", "leaseId": lease["leaseId"],
                                  "sequence": 1, "outputMuted": False, "outputReady": True})
         self.monitor.set("phone-out")
         self.policy._tick()
-        self.assertEqual(self.mpd.values["transport"], "play")
-        self.assertEqual(self.mpd.values["elapsedSeconds"], 47.125)
+        self.assertEqual(self.mpd.values["transport"], "stop")
+
+    def test_muted_phone_does_not_hold_playing_or_paused_radio_or_resume_bookmark(self):
+        for paused in (False, True):
+            with self.subTest(paused=paused):
+                self.monitor.set("speaker")
+                token = self.select()
+                self.registry.attach({"controllerId": "phone", "rendererId": "phone-out"})
+                self.policy._tick()
+                if paused:
+                    self.assertEqual(self.request("/pause", {})[0], 200)
+                self.monitor.nodes.clear()
+                self.policy._tick()
+                self.assertIsNone(self.radio.station)
+                self.assertEqual(self.mpd.values["transport"], "stop")
+                self.assertIsNone(self.radio.playlist_resume.token)
+                self.assertEqual(self.policy.snapshot()["controllerCount"], 1)
+                self.assertEqual(self.policy.snapshot()["presentCount"], 0)
+                self.assertEqual(self.resume(token)[0], 409)
+                self.monitor.set("speaker")
+                self.policy._tick()
+                self.assertEqual(self.mpd.paths, ["MP3s/Default.mp3"])
+
+    def test_unmuted_phone_holds_explicit_radio_pause_without_ready_receiver(self):
+        token = self.select()
+        self.registry.attach({"controllerId": "phone", "rendererId": "phone-out",
+                              "outputMuted": False, "outputReady": False})
+        self.assertEqual(self.request("/pause", {})[0], 200)
+        self.monitor.nodes.clear()
+        before = list(self.mpd.commands)
+        self.policy._tick()
+        self.assertEqual(self.mpd.commands, before)
+        self.assertEqual(self.radio.playlist_resume.token, token)
+        self.assertEqual(self.radio.intent, "pause")
+        self.assertEqual(self.radio.status, "paused")
+        self.assertEqual(self.mpd.values["transport"], "stop")
+
+    def test_muted_phone_can_still_pause_and_resume_other_speakers(self):
+        self.registry.attach({"controllerId": "phone", "rendererId": "phone-out"})
+        self.policy._tick()
+        for path, transport in (("/pause", "pause"), ("/play", "play")):
+            self.assertEqual(self.request(path, {})[0], 200)
+            self.policy._tick()
+            self.assertEqual(self.mpd.values["transport"], transport)
+            self.assertEqual(self.mpd.paths, self.original)
+        self.assertTrue(self.registry.snapshot(self.monitor.snapshot())["controllers"][0]["outputMuted"])
 
     def test_unknown_presence_is_not_treated_as_muted_only(self):
         token = self.select()
@@ -432,10 +478,11 @@ class PlaylistResumeTests(unittest.TestCase):
             self.assertEqual(self.mpd.commands, before)
             self.assertEqual(self.mpd.values["elapsedSeconds"], 60)
 
-    def test_manual_pause_after_muted_restore_cancels_automatic_resume(self):
+    def test_manual_pause_after_unmuted_unready_restore_cancels_automatic_resume(self):
         token = self.select()
         self.monitor.nodes.clear()
-        self.registry.attach({"controllerId": "phone"})
+        self.registry.attach({"controllerId": "phone", "rendererId": "phone-out",
+                              "outputMuted": False, "outputReady": False})
         self.assertEqual(self.resume(token)[0], 200)
         self.assertTrue(self.policy.snapshot()["autoPaused"])
         self.assertEqual(self.request("/pause", {})[0], 200)

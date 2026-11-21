@@ -166,7 +166,8 @@ class StartupPolicyTests(StartupFixture):
 
     def test_dependency_reconnect_does_not_reset_new_queue_or_resume_manual_pause(self):
         self.policy._tick()
-        self.controllers.attach({"controllerId": "browser"})
+        self.controllers.attach({"controllerId": "phone", "rendererId": "phone-out",
+                                 "outputMuted": False, "outputReady": False})
         self.mpd.run('add "CDs/New/A.mp3"')
         self.mpd.state_data.update(transport="pause", elapsedSeconds=37)
         before = copy.deepcopy((self.mpd.queue_files, self.mpd.state_data))

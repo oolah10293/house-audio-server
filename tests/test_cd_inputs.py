@@ -257,8 +257,10 @@ class CdPlaybackHttpTests(unittest.TestCase):
         status, data = self.request("/inputs/resume-playlist", {"snapshotId": token})
         self.assertEqual(status, 200, data)
         self.assertEqual(data["mpd"]["transport"], "pause")
-        self.assertTrue(self.policy.snapshot()["autoPaused"])
+        self.assertFalse(self.policy.snapshot()["autoPaused"])
         self.assertEqual(self.mpd.paths, self.original)
+        self.policy._tick()
+        self.assertEqual(self.mpd.values["transport"], "stop")
 
     def test_cd_track_click_recovers_from_orphaned_cd_url_queue(self):
         # MPD keeps its queue across a House Music process restart, while

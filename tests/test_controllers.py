@@ -46,8 +46,8 @@ class ControllerFixture(unittest.TestCase):
     def detach(self, lease):
         return self.registry.detach({"controllerId": lease["controller"]["controllerId"], "leaseId": lease["leaseId"]})
 
-    def pause_for_muted_phone(self):
-        lease = self.attach()
+    def pause_for_unavailable_phone(self):
+        lease = self.attach(muted=False)
         self.monitor.set("radio")
         self.policy._tick()
         self.monitor.set("radio", present=False)
@@ -67,7 +67,9 @@ class RegistryTests(ControllerFixture):
         self.assertNotIn("leaseId", presence["controllers"][0])
         self.heartbeat(lease, muted=True)
         presence = self.registry.snapshot(self.monitor.snapshot())
-        self.assertEqual((presence["presentCount"], presence["audibleCount"]), (1, 0))
+        self.assertEqual((presence["presentCount"], presence["audibleCount"]), (0, 0))
+        self.assertEqual(presence["controllerCount"], 1)
+        self.assertEqual(presence["unmutedControllerCount"], 0)
 
     def test_unmuted_report_requires_real_present_audible_renderer(self):
         self.attach(muted=False)
@@ -156,6 +158,122 @@ class RegistryTests(ControllerFixture):
 
 
 class ControllerPolicyTests(ControllerFixture):
+    def test_muting_last_paused_phone_ends_session_and_passive_return_starts_fresh(self):
+        for automatic in (False, True):
+            with self.subTest(automatic=automatic):
+                self.setUp()
+                if automatic:
+                    lease = self.pause_for_unavailable_phone()
+                else:
+                    lease = self.attach(muted=False)
+                    self.mpd.state_data["transport"] = "pause"
+                    self.policy._tick()
+                self.heartbeat(lease, muted=True)
+                self.policy._tick()
+                self.assertEqual(self.mpd.state_data["transport"], "stop")
+                self.assertFalse(self.policy.snapshot()["autoPaused"])
+                self.assertFalse(self.policy.snapshot()["pendingFinalStop"])
+                self.assertEqual(self.policy.snapshot()["controllerCount"], 1)
+                self.assertEqual(self.policy.snapshot()["presentCount"], 0)
+                self.monitor.set("radio")
+                self.policy._tick()
+                self.assertEqual(self.mpd.queue_files, list(reversed(self.mpd.library["MP3s"])))
+
+    def test_muted_only_first_sample_cannot_hold_existing_pause(self):
+        self.attach()
+        self.mpd.state_data["transport"] = "pause"
+        self.policy._tick()
+        self.assertEqual(self.mpd.commands, ["stop"])
+
+    def test_unmuted_paused_phone_holds_session_with_background_heartbeats(self):
+        for ready in (False, True):
+            with self.subTest(ready=ready):
+                self.setUp()
+                lease = self.attach(muted=False)
+                self.mpd.state_data["transport"] = "pause"
+                before = copy.deepcopy((self.mpd.state_data, self.mpd.queue_files))
+                for sequence in range(1, 5):
+                    self.clock.advance(5)
+                    self.heartbeat(lease, muted=False, ready=ready, sequence=sequence)
+                    self.policy._tick()
+                self.assertEqual((self.mpd.state_data, self.mpd.queue_files), before)
+                self.assertEqual(self.mpd.commands, [])
+                self.assertEqual(self.policy.snapshot()["unmutedControllerCount"], 1)
+                self.assertEqual(self.policy.snapshot()["presentCount"], 1)
+
+    def test_one_unmuted_phone_holds_pause_among_muted_controllers_until_expiry(self):
+        self.attach(muted=False)
+        muted = self.attach(name="second", renderer="second-out")
+        self.attach(name="browser", renderer=None)
+        self.mpd.state_data["transport"] = "pause"
+        self.policy._tick()
+        self.clock.advance(14)
+        self.heartbeat(muted, muted=True)
+        self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "pause")
+        self.clock.advance(1)
+        self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "stop")
+        self.assertEqual(self.policy.snapshot()["controllerCount"], 1)
+
+    def test_muted_heartbeats_do_not_prevent_drain_completion_or_fresh_shuffle(self):
+        lease = self.attach()
+        self.monitor.set("radio")
+        self.policy._tick()
+        self.monitor.set("radio", present=False)
+        self.policy._tick()
+        self.assertTrue(self.policy.snapshot()["pendingFinalStop"])
+        for sequence in range(1, 4):
+            self.clock.advance(5)
+            self.heartbeat(lease, muted=True, sequence=sequence)
+            self.policy._tick()
+            self.assertTrue(self.policy.snapshot()["pendingFinalStop"])
+            self.assertEqual(self.mpd.state_data["transport"], "play")
+        self.mpd.state_data.update(transport="pause", songId=99, elapsedSeconds=0)
+        self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "stop")
+        self.assertFalse(self.policy.snapshot()["pendingFinalStop"])
+        self.heartbeat(lease, muted=False, sequence=4)
+        self.monitor.set("phone-audio")
+        self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "stop")
+        self.monitor.set("radio")
+        self.policy._tick()
+        self.assertEqual(self.mpd.queue_files, list(reversed(self.mpd.library["MP3s"])))
+
+    def test_muting_phone_preserves_other_node_playback_and_manual_pause(self):
+        lease = self.attach(muted=False)
+        self.monitor.set("radio")
+        self.monitor.set("phone-audio")
+        self.policy._tick()
+        for sequence, transport in enumerate(("play", "pause"), 1):
+            self.mpd.state_data["transport"] = transport
+            before = copy.deepcopy((self.mpd.state_data, self.mpd.queue_files))
+            self.heartbeat(lease, muted=True, sequence=sequence)
+            self.policy._tick()
+            self.assertEqual((self.mpd.state_data, self.mpd.queue_files), before)
+        self.assertEqual(self.mpd.commands, [])
+
+    def test_pause_during_muted_only_drain_ends_without_advancing(self):
+        self.attach()
+        self.policy._tick()
+        self.assertTrue(self.policy.snapshot()["pendingFinalStop"])
+        self.mpd.state_data["transport"] = "pause"
+        self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "stop")
+        self.assertFalse(self.policy.snapshot()["pendingFinalStop"])
+        self.assertTrue(self.mpd.state_data["repeat"])
+        self.assertEqual(self.mpd.state_data["elapsedSeconds"], 90.5)
+
+    def test_failed_manual_pause_session_end_retries_with_muted_controller(self):
+        self.attach()
+        self.mpd.state_data["transport"] = "pause"
+        with patch.object(self.mpd, "command", side_effect=OSError("offline")):
+            self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "pause")
+        self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "stop")
+
     def test_controller_only_fresh_idle_never_starts_even_unmuted(self):
         for muted in (True, False):
             self.attach(muted=muted)
@@ -176,17 +294,17 @@ class ControllerPolicyTests(ControllerFixture):
         self.assertEqual((self.mpd.state_data, self.mpd.queue_files), before)
         self.assertEqual(self.mpd.commands, [])
 
-    def test_last_radio_leaves_muted_phone_pauses_without_draining_or_rebuilding(self):
+    def test_unmuted_phone_without_receiver_holds_pause_when_last_radio_leaves(self):
         original = list(self.mpd.queue_files)
-        self.pause_for_muted_phone()
+        self.pause_for_unavailable_phone()
         self.assertEqual(self.mpd.commands, ["pause 1"])
         self.assertFalse(self.policy.snapshot()["pendingFinalStop"])
         self.assertEqual(self.mpd.queue_files, original)
         self.assertEqual(self.mpd.state_data["elapsedSeconds"], 90.5)
         self.shuffle.assert_not_called()
 
-    def test_unmute_resumes_only_after_renderer_is_audible(self):
-        lease = self.pause_for_muted_phone()
+    def test_unmuted_receiver_recovery_resumes_only_when_audible(self):
+        lease = self.pause_for_unavailable_phone()
         self.heartbeat(lease, muted=False)
         self.policy._tick()
         self.assertEqual(self.mpd.state_data["transport"], "pause")
@@ -197,14 +315,14 @@ class ControllerPolicyTests(ControllerFixture):
         self.assertEqual(self.mpd.state_data["elapsedSeconds"], 90.5)
 
     def test_passive_radio_resumes_retained_pause(self):
-        self.pause_for_muted_phone()
+        self.pause_for_unavailable_phone()
         self.monitor.set("radio")
         self.policy._tick()
         self.assertEqual(self.mpd.commands, ["pause 1", "play"])
         self.shuffle.assert_not_called()
 
     def test_manual_pause_overrides_automatic_pause_on_controller_unmute(self):
-        lease = self.pause_for_muted_phone()
+        lease = self.pause_for_unavailable_phone()
         self.policy.explicit_transport(self.mpd)
         self.mpd.command("pause 1")
         self.heartbeat(lease, muted=False)
@@ -223,8 +341,8 @@ class ControllerPolicyTests(ControllerFixture):
         self.policy._tick()
         self.assertEqual(self.mpd.commands, [])
 
-    def test_last_muted_detach_ends_session_without_advancing(self):
-        lease = self.pause_for_muted_phone()
+    def test_last_unmuted_detach_ends_automatic_pause_without_advancing(self):
+        lease = self.pause_for_unavailable_phone()
         self.detach(lease)
         self.policy._tick()
         self.assertEqual(self.mpd.commands, ["pause 1", "stop"])
@@ -235,23 +353,24 @@ class ControllerPolicyTests(ControllerFixture):
         self.policy._tick()
         self.assertEqual(self.mpd.queue_files, list(reversed(self.mpd.library["MP3s"])))
 
-    def test_last_muted_expiry_ends_session_but_one_remaining_controller_holds_it(self):
-        first = self.pause_for_muted_phone()
+    def test_control_only_browser_does_not_hold_session_after_unmuted_phone_leaves(self):
+        first = self.pause_for_unavailable_phone()
         self.attach(name="browser", renderer=None)
         self.detach(first)
         self.policy._tick()
-        self.assertEqual(self.mpd.state_data["transport"], "pause")
-        self.clock.advance(15)
-        self.policy._tick()
         self.assertEqual(self.mpd.state_data["transport"], "stop")
+        self.assertEqual(self.policy.snapshot()["controllerCount"], 1)
+        self.assertEqual(self.policy.snapshot()["presentCount"], 0)
 
-    def test_lone_unmuted_phone_mute_causes_automatic_pause(self):
+    def test_lone_playing_phone_mute_arms_final_track_drain(self):
         lease = self.attach(muted=False)
         self.monitor.set("phone-audio")
         self.policy._tick()
         self.heartbeat(lease, muted=True)
         self.policy._tick()
-        self.assertEqual(self.mpd.commands, ["pause 1"])
+        self.assertEqual(self.mpd.commands, ["repeat 0", "single oneshot"])
+        self.assertTrue(self.policy.snapshot()["pendingFinalStop"])
+        self.assertFalse(self.policy.snapshot()["autoPaused"])
 
     def test_output_failure_and_recovery_preserve_unmuted_choice(self):
         lease = self.attach(muted=False)
@@ -277,7 +396,7 @@ class ControllerPolicyTests(ControllerFixture):
         self.assertTrue(self.policy.snapshot()["pendingFinalStop"])
 
     def test_manual_stop_cannot_be_undone_by_controller_unmute(self):
-        lease = self.pause_for_muted_phone()
+        lease = self.pause_for_unavailable_phone()
         self.policy.explicit_transport(self.mpd)
         self.mpd.command("stop")
         self.heartbeat(lease, muted=False)
@@ -286,7 +405,7 @@ class ControllerPolicyTests(ControllerFixture):
         self.assertEqual(self.mpd.state_data["transport"], "stop")
         self.assertNotIn("play", self.mpd.commands)
 
-    def test_phone_leaves_playing_arms_drain_and_muted_return_cancels_then_pauses(self):
+    def test_muted_phone_return_does_not_cancel_final_track_drain(self):
         lease = self.attach(muted=False)
         self.monitor.set("phone-audio")
         self.policy._tick()
@@ -295,8 +414,8 @@ class ControllerPolicyTests(ControllerFixture):
         self.assertTrue(self.policy.snapshot()["pendingFinalStop"])
         self.attach()
         self.policy._tick()
-        self.assertFalse(self.policy.snapshot()["pendingFinalStop"])
-        self.assertTrue(self.policy.snapshot()["autoPaused"])
+        self.assertTrue(self.policy.snapshot()["pendingFinalStop"])
+        self.assertFalse(self.policy.snapshot()["autoPaused"])
         self.assertEqual(self.mpd.state_data["songId"], 42)
         self.assertEqual(self.mpd.state_data["elapsedSeconds"], 90.5)
         self.assertNotIn("clear", self.mpd.commands)
@@ -351,8 +470,8 @@ class ControllerPolicyTests(ControllerFixture):
         self.policy._tick()
         self.assertEqual(self.mpd.commands, [])
 
-    def test_failed_pause_and_last_muted_stop_retry_on_next_poll(self):
-        lease = self.attach()
+    def test_failed_pause_and_last_unmuted_stop_retry_on_next_poll(self):
+        lease = self.attach(muted=False)
         self.monitor.set("radio")
         self.policy._tick()
         self.monitor.set("radio", present=False)
@@ -444,7 +563,7 @@ class ControllerHttpTests(ControllerFixture):
                     self.assertEqual(body["error"], "not_found")
 
     def test_explicit_pause_via_http_prevents_auto_resume_but_passive_arrival_can_resume(self):
-        lease = self.pause_for_muted_phone()
+        lease = self.pause_for_unavailable_phone()
         with patch.object(h, "MpdClient", return_value=self.mpd):
             self.assertEqual(self.request("/pause", {})[0], 200)
         self.heartbeat(lease, muted=False)

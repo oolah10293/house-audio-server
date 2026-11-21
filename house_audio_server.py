@@ -341,6 +341,11 @@ class ControllerRegistry:
             controllers = [self._view(key, lease, now) for key, lease in sorted(self._leases.items())]
             live = {item["controllerId"] for item in controllers
                     if item["present"] and item["rendererId"] not in dependent}
+            # A muted controller remains authorized to control the house, but
+            # only an unmuted controller holds its session. Readiness is separate:
+            # an unmuted phone can retain Pause while its receiver recovers.
+            unmuted = {item["controllerId"] for item in controllers
+                       if item["controllerId"] in live and not item["outputMuted"]}
             passive, passive_audible, controlled_audible = set(), set(), set()
             renderers = []
             for client in snap.get("clients", []):
@@ -376,7 +381,8 @@ class ControllerRegistry:
                 "heartbeatSeconds": self.heartbeat_seconds, "leaseSeconds": self.lease_seconds,
                 "controllers": controllers, "renderers": renderers,
                 "controllerCount": len(live), "passiveCount": len(passive),
-                "presentCount": len(passive) + len(live | controlled_audible),
+                "unmutedControllerCount": len(unmuted),
+                "presentCount": len(passive) + len(unmuted | controlled_audible),
                 "audibleCount": len(passive_audible) + len(controlled_audible),
                 "passiveIds": sorted(passive),
                 "snapserverReachable": bool(snap.get("reachable", False)),
@@ -1504,8 +1510,9 @@ class PassiveSessionPolicy:
     - final passive renderer leaves during playback -> finish current track,
       then stop;
     - renderer returns before that track ends -> cancel the pending stop.
-    - controllers without audible outputs hold an automatic retained pause;
-    - last controller leaving that automatic pause ends the session immediately.
+    - unmuted controllers without audible outputs hold an automatic pause;
+    - muted controllers stay connected without holding or cancelling a drain;
+    - losing the last participant in a controller-held pause ends it immediately.
 
     Each genuinely fresh session gets a new default-folder shuffle. Completed
     drains end the old session, even when MPD lands paused on its next track.
@@ -1585,6 +1592,7 @@ class PassiveSessionPolicy:
                 "cdAuto": self.auto_cd.snapshot() if self.auto_cd is not None else {"enabled": False},
                 "presentCount": self._previous_present_count,
                 "controllerCount": (self._previous_presence or {}).get("controllerCount"),
+                "unmutedControllerCount": (self._previous_presence or {}).get("unmutedControllerCount"),
                 "passiveCount": (self._previous_presence or {}).get("passiveCount"),
                 "audibleCount": (self._previous_presence or {}).get("audibleCount"),
                 "autoPaused": self._auto_paused_state is not None,
@@ -1782,18 +1790,18 @@ class PassiveSessionPolicy:
                     self.radio.playlist_resume.clear()
                 with self._lock:
                     self._auto_paused_state = None
-                self._record("last_muted_controller_left_session_idle")
+                self._record("last_session_participant_left_session_idle")
             elif presence["audibleCount"] > 0:
                 mpd.command("play")
                 with self._lock:
                     self._auto_paused_state = None
                 self._record("audible_node_resumed_retained_session")
-        elif (transport == "play" and presence["controllerCount"] > 0
+        elif (transport == "play" and presence["unmutedControllerCount"] > 0
               and presence["audibleCount"] == 0):
             mpd.command("pause 1")
             with self._lock:
                 self._auto_paused_state = self._session_identity(state)
-            self._record("paused_muted_controllers_only")
+            self._record("paused_unmuted_controller_output_unavailable")
 
     def _tick_locked(self) -> None:
         # A process restart ends the old session even if Snapserver is offline
@@ -1845,6 +1853,10 @@ class PassiveSessionPolicy:
         with self._lock:
             previous = self._previous_presence
             pending = self._pending_final_stop
+        # Apply controller retention even at the first muted-only sample.
+        # Preserve the existing passive-only baseline/reconnection behavior.
+        controller_session = bool(presence["controllerCount"]
+                                  or (previous or {}).get("controllerCount"))
         mpd = self.mpd_factory()
         passive_arrival = bool(set(presence["passiveIds"]) - set((previous or {}).get("passiveIds", [])))
 
@@ -1861,7 +1873,8 @@ class PassiveSessionPolicy:
             transport = state.get("transport")
             boundary_pause = (transport == "pause" and self._pending_song_id is not None
                               and state.get("songId") != self._pending_song_id)
-            if transport == "stop" or boundary_pause:
+            if (transport == "stop" or boundary_pause
+                    or (transport == "pause" and present_count == 0 and controller_session)):
                 self._complete_final_stop(mpd)
                 if presence["passiveCount"] > 0:
                     self._start_default_session(mpd)
@@ -1879,10 +1892,18 @@ class PassiveSessionPolicy:
             elif previous is None:
                 self._record("presence_baseline_established")
             self._apply_controller_pause(mpd, presence)
-            if previous is not None and previous["presentCount"] > 0 and present_count == 0:
+            if present_count == 0 and (controller_session
+                                      or (previous is not None and previous["presentCount"] > 0)):
                 state = mpd.state()
                 if state.get("transport") == "play":
                     self._begin_final_stop(mpd, state)
+                elif state.get("transport") == "pause" and controller_session:
+                    # Manual Pause is also held only by session participants.
+                    # Muted heartbeats must not preserve it indefinitely.
+                    mpd.command("stop")
+                    if self.radio is not None:
+                        self.radio.playlist_resume.clear()
+                    self._record("last_session_participant_left_session_idle")
                 elif state.get("transport") != "stop":
                     self._record("last_renderer_left_transport_not_playing")
         with self._lock:
@@ -1911,10 +1932,10 @@ class PassiveSessionPolicy:
             if radio.auto_paused and (passive_arrival or presence["audibleCount"] > 0):
                 radio.resume(mpd, automatic=True)
                 self._record("cd_resumed_audible")
-            elif (radio.intent == "play" and presence["controllerCount"] > 0
+            elif (radio.intent == "play" and presence["unmutedControllerCount"] > 0
                   and presence["audibleCount"] == 0):
                 radio.pause(mpd, automatic=True)
-                self._record("cd_paused_muted_controllers_only")
+                self._record("cd_paused_unmuted_controller_output_unavailable")
             self._auto_paused_state = None
             radio.observe(mpd, mpd.state())
             return
@@ -1933,10 +1954,10 @@ class PassiveSessionPolicy:
                 or (radio.auto_paused and presence["audibleCount"] > 0)):
             radio.resume(mpd, automatic=True)
             self._record("radio_resumed_live")
-        if (radio.intent == "play" and presence["controllerCount"] > 0
+        if (radio.intent == "play" and presence["unmutedControllerCount"] > 0
                 and presence["audibleCount"] == 0):
             radio.pause(mpd, automatic=True)
-            self._record("radio_paused_muted_controllers_only")
+            self._record("radio_paused_unmuted_controller_output_unavailable")
         self._auto_paused_state = ("radio", radio.station["id"]) if radio.auto_paused else None
         radio.observe(mpd, mpd.state())
 
@@ -2531,7 +2552,8 @@ class ApiHandler(BaseHTTPRequestHandler):
 
                     manual_source_choice()
                     RADIO.resume_playlist(mpd, payload["snapshotId"], explicit_transport,
-                                          hold, mark_retained_pause)
+                                          hold, mark_retained_pause
+                                          if presence["unmutedControllerCount"] > 0 else None)
                     self._mpd_state_response()
                     return
 

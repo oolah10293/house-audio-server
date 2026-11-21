@@ -8,6 +8,8 @@ The 2026-09-30 clarification makes Bluetooth audio a requirement for Android pho
 
 **2026-10-01 decision: Android SMB Music and HOUSE Music are completely independent apps (§8).** This supersedes all earlier Android home/away handoff requirements, including the 2026-09-30 active-SMB return-home transfer and the subsequent transition-coordinator proposal. Do not implement automatic or manual transfer, shared queue/song/position, SMB-triggered HOUSE queue reset, or cross-app coordination. SMB Music v0.5.0 and House Music v0.1.0 now implement this split in separate Android packages. Their release records distinguish build verification from pending phone acceptance. Server v0.9.0 is unchanged.
 
+**2026-11-21 decision: only an unmuted phone/controller can hold a session (§5).** Muted controllers remain connected for controls but do not prevent last-node shutdown. This supersedes the earlier muted-controller retention rule. The physical CD-source exception in [CD_AUTO_TAKEOVER.md](CD_AUTO_TAKEOVER.md) remains in effect.
+
 These rules supersede earlier suggestions of an always-playing private radio station, starting music whenever any controller opens, and treating every failed server request as permission to switch to standalone playback.
 
 ## 1. One house session; separate control and sound
@@ -47,28 +49,26 @@ If the controller disconnects while other nodes remain, its selected playlist st
 
 When the last node disconnects during playback, the Pi lets the current track **finish**, then stops. The pending stop takes precedence over Repeat All; the queue must not roll into another song with nobody connected.
 
-**Any node reconnecting before that final track ends cancels the pending stop and preserves the existing playlist.** An audible node continues the current track/session without a restart or fresh default shuffle. If the returning device is only a muted controller, apply the muted-controller pause rule rather than keeping inaudible music running.
+**A passive node or unmuted controller reconnecting before that final track ends cancels the pending stop and preserves the existing playlist.** An audible node continues the current track/session without a restart or fresh default shuffle. A muted controller reconnecting or sending heartbeats does not cancel the pending stop. An unmuted controller whose output is not yet ready can hold an automatic pause until its receiver is audible.
 
 If the track reaches its end with nobody reconnected, the listening session ends. The house becomes **fresh idle**. The next passive-node startup loads the currently configured default folder (`MP3s` or `Rap`) with a **new random shuffle**, not the previous session's temporary queue or saved shuffle progress. MPD retaining the old queue in `pause @ 0.0` does not keep the session alive.
 
 There is therefore one intentional exception to "no connected nodes means no playback": the final-track finishing period.
 
-## 5. A muted phone holds a paused session
+## 5. Only an unmuted controller holds a session
 
-A muted phone is still a connected controller. It can keep the current session and playlist alive **without keeping the music running**.
+**Authorized 2026-11-21:** a phone may keep the house session open only while its output is unmuted. Pause and local mute remain separate.
 
-The agreed case is:
+- An unmuted phone holds the playlist, track and position while playback is paused. Background/screen-off heartbeats continue to count. Receiver readiness is separate from mute: an unmuted phone with a temporarily unavailable receiver still holds the session.
+- A muted phone stays registered and can browse and control the house. Its heartbeat and stale Snapcast socket do not hold the session or cancel a final-track drain.
+- Other house nodes continue to hold the session normally. Muting a phone must not disturb their playback or an explicit Pause while they remain present.
+- When only muted controllers remain during library playback, finish the current track and then enter fresh idle. If that controller-held session is already paused (manually or automatically), end it without advancing the song. A muted controller arriving at an existing pause cannot hold it.
+- A passive node or unmuted phone returning before the final track ends can retain the session. A muted phone returning cannot. After session end, merely unmuting does not restart playback; a later passive-node arrival starts the configured default with a new shuffle.
+- Automatic pause/recovery remains available for an **unmuted** controller whose receiver is unavailable. Actual audible output must return before automatic resume. Explicit Pause/Stop still overrides that automatic resume.
 
-1. Music is playing and a phone remains connected with its output muted.
-2. The last unmuted node disconnects.
-3. MPD **pauses and retains the playlist, current track, and exact position**. It does not finish the track and discard the session as though all nodes had gone away.
-4. An unmuted node reconnecting, the phone being unmuted, **or a passive radio being powered on** resumes that retained session from the paused position.
+The same output-state rule applies to PC/browser controllers using this API. A control-only browser has no unmuted renderer and cannot hold a session by itself. Live radio releases its station and saved playlist when the last session participant leaves. A plugged-in physical CD retains its existing no-speaker pause/bookmark behavior under [CD_AUTO_TAKEOVER.md](CD_AUTO_TAKEOVER.md); that retention belongs to the CD source, not the muted phone. When CD removal restores a library with only muted controllers present, the restored session ends.
 
-Muting the phone while other audible nodes remain must not pause those nodes. An existing retained session is not a fresh idle session, so resuming it is not permission for a controller connecting to an otherwise idle house to start a new track.
-
-The same rule applies to PC/browser controllers. **If the last controller leaves an already automatically paused session, end the session without advancing the song.** The next passive radio starts a fresh session using the configured default. This choice was confirmed on 2026-09-29.
-
-**Background apps and screen-off phones remain present while heartbeats continue.** The agreed initial timing is one heartbeat every five seconds, expiring after fifteen seconds without renewal. Explicit Quit detaches immediately rather than waiting for expiry. Quit also clears client-local HOUSE presentation/cache; it does not send global MPD Stop/Clear merely to clean up the client UI. A still-audible renderer can remain an output if its control connection alone is lost; its roles still belong to one device. Android must maintain its background heartbeat through the appropriate service lifecycle. Browser timer suspension is a lost heartbeat, not proof of presence. These choices were confirmed on 2026-09-29.
+Controller leases still use one heartbeat every five seconds and expire after fifteen seconds without renewal. Explicit Quit detaches immediately, clears the phone's local presentation, and sends no global Stop/Clear directly. An audible renderer may outlive its control lease and is counted once across its roles. Muted controllers remain visible in `controllerCount`; `unmutedControllerCount` and effective `presentCount` identify session participation. See [API.md](API.md).
 
 ## 6. New shuffle for every fresh passive session
 
@@ -90,7 +90,7 @@ This replaces the older requirement to persist/continue an exact default rotatio
 
 The phone should show a **Mute output** control in HOUSE mode, switching to **Unmute output** when muted. This is a local output control, not MPD Pause or global mute. On Android it belongs in the lower Media3 Now Playing control strip beside transport, Shuffle/Repeat, and track time; a separate standalone button is not the desired UI.
 
-If MPD is still playing for other rooms, an eligible phone unmuting joins the **current** house position rather than replaying the point when that phone was muted. If the session was automatically paused because only the muted phone remained, eligible output return resumes that retained session.
+If MPD is still playing for other rooms, an eligible phone unmuting joins the **current** house position rather than replaying the point when that phone was muted. If the session was automatically paused for an unmuted phone with an unavailable receiver, audible output return resumes that retained session. Muted-only controllers do not hold that pause.
 
 Preserve the phone's mute choice across a reconnect. A network event must not unexpectedly make a muted remote controller start sounding.
 
@@ -106,12 +106,11 @@ Bluetooth audio route state determines **phone renderer eligibility**, not norma
 
 - Bluetooth audio disconnect mutes the phone renderer/output report and never directly sends MPD Pause/Stop.
 - If another house output remains audible, MPD and those outputs continue.
-- If the phone becomes the only remaining muted controller, the existing server policy auto-pauses and retains the exact queue/song/position.
-- If that final muted controller later disconnects/expires, the existing last-controller rule ends the retained session without advancing it.
+- If only muted controllers remain, library playback finishes the current track and ends; an already-paused controller-held session ends without advancing. There is no need to wait for Quit or lease expiry.
 - Bluetooth audio connect while HOUSE is already playing auto-unmutes the phone and joins the current synchronized stream, overriding a prior manual phone mute.
 - HOUSE attach/reopen must evaluate **current route state**. If Bluetooth is already connected and HOUSE is already playing, join unmuted; do not require a new Bluetooth-connect callback.
 - Bluetooth connect or pre-existing Bluetooth alone does not issue Play against fresh idle or deliberate Pause/Stop. The phone is eligible; if the user subsequently starts music, a ready, unmuted Bluetooth output can render without treating Play as an unmute command.
-- If the server had automatically paused a retained session because the muted phone was the only remaining node, Bluetooth reconnect/unmute allows the existing automatic-pause rule to resume that retained session.
+- Bluetooth reconnect/unmute can retain an unfinished final-track drain, but cannot resurrect a completed session. An automatic pause held by an unmuted phone can resume once an output is audible.
 
 The client reports its actual local mute/readiness state; the server remains the authority for zero-audible-output pause/retention under §5. Session transport and phone eligibility are separate: the phone cannot bypass the Bluetooth requirement to satisfy a Play command.
 
@@ -126,7 +125,7 @@ Standalone Bluetooth output behavior is Android-local and is defined in [smb-mus
 - There is no automatic or manual handoff in either direction, no queue/song/position/settings sharing, no "Play this at home" action, and no SMB-triggered reset of the HOUSE queue.
 - Neither app launches, stops, or otherwise coordinates the other app. The user chooses which app to use. Normal Android audio focus is not a project-specific cross-app integration.
 - Changing networks changes connection availability within each app; it does not select another app or transfer playback. HOUSE connection loss remains HOUSE reconnecting/unavailable. It never starts the SMB engine.
-- Independent SMB listening has no effect on the HOUSE session or passive default folder. Passive S3 startup, existing-session adoption, muted-controller retention, final-node drain, and server restart continue to follow §§2–6 and §13.
+- Independent SMB listening has no effect on the HOUSE session or passive default folder. Passive S3 startup, existing-session adoption, unmuted-controller retention, final-node drain, and server restart continue to follow §§2–6 and §13.
 
 ### HOUSE connection and recovery
 
@@ -138,7 +137,7 @@ Begin reconnecting when a failure is detected. Distinguish a failed control conn
 
 Android v0.4.3 and server v0.9.0 were built for the former automatic home/away contract. The 2026-10-01 field report recorded failures in both directions. Independent SMB Music v0.5.0 and House Music v0.1.0 now remove those Android transfer paths; their physical acceptance remains separate from source/build verification. The existing server handoff endpoints remain part of the shipped API until an explicit implementation removes them; the independent apps must not use them. Their reservation/commit behavior is documented as legacy functionality in [API.md](API.md#return-home-handoff-v090). Preserve historical release and field evidence without treating it as the current product requirement.
 
-**Server cleanup remains pending:** after migrating phones off the combined app, remove the return-home handoff endpoints, transient reservations/receipts, transfer-only controller lease extensions, and handoff hooks that block passive-session policy or cancel transfers on ordinary commands. Keep controller attach/heartbeat/detach, renderer ownership, normal MPD write serialization, passive default startup, muted-controller retention, final-track drain and startup reset. Existing combined v0.4.3 phones can still call the legacy endpoints when returning home during SMB playback; deleting them before migration can strand that old transition. House Music v0.1.0 needs none of them and requires no server update.
+**Server cleanup remains pending:** after migrating phones off the combined app, remove the return-home handoff endpoints, transient reservations/receipts, transfer-only controller lease extensions, and handoff hooks that block passive-session policy or cancel transfers on ordinary commands. Keep controller attach/heartbeat/detach, renderer ownership, normal MPD write serialization, passive default startup, unmuted-controller retention, final-track drain and startup reset. Existing combined v0.4.3 phones can still call the legacy endpoints when returning home during SMB playback; deleting them before migration can strand that old transition. House Music v0.1.0 needs none of them and requires no server update.
 
 ## 9. Implementation notes and unresolved edges
 

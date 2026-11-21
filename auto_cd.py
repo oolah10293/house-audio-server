@@ -87,18 +87,18 @@ class AutoCdSource:
         bookmark = radio.playlist_resume.view()
         if bookmark["available"] and bookmark["snapshotId"]:
             snap = policy.monitor.snapshot()
-            muted_controller_hold = (
+            unavailable_output_hold = (
                 policy.enabled and bool(snap.get("reachable"))
-                and presence["controllerCount"] > 0 and presence["audibleCount"] == 0)
+                and presence["unmutedControllerCount"] > 0 and presence["audibleCount"] == 0)
             hold = (previous_transport in ("pause", "stop")
-                    or presence["presentCount"] == 0 or muted_controller_hold)
+                    or presence["presentCount"] == 0 or unavailable_output_hold)
 
             def retained(state):
                 policy._auto_paused_state = policy._session_identity(state)
 
             radio.resume_playlist(mpd, bookmark["snapshotId"],
                                   lambda: policy.explicit_transport(mpd), hold,
-                                  retained if muted_controller_hold and
+                                  retained if unavailable_output_hold and
                                   previous_transport not in ("pause", "stop") else None)
             if previous_transport == "stop":
                 mpd.command("stop")
