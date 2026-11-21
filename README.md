@@ -2,7 +2,9 @@
 
 ## Authoritative development baseline — main
 
-Current integrated source is **0.14.2-cd1**, including the CD gateway, automatic CD takeover, retention/restore, the browser controller and per-subwoofer fallback. Start new development from `main`. See [main baseline consolidation](docs/MAIN_BASELINE_2026-11-20.md) and [CD behavior](docs/CD_AUTO_TAKEOVER.md). Source consolidation does not establish the exact live Pi file hashes or authorize a new installation. Older release descriptions below are historical.
+Current integrated source is **0.14.3**, including the CD gateway, automatic CD takeover, retention/restore, the browser controller and per-subwoofer fallback. Start new development from `main`. See [main baseline consolidation](docs/MAIN_BASELINE_2026-11-20.md) and [CD behavior](docs/CD_AUTO_TAKEOVER.md). Source consolidation does not establish the exact live Pi file hashes or authorize a new installation. Older release descriptions below are historical.
+
+**2026-11-21 release preparation:** server **v0.14.3** is authorized for packaging and installation. See [release and installation notes](docs/RELEASE_0.14.3.md).
 
 **2026-11-21 source update:** only unmuted controllers hold a session; muted phones remain usable as remote controls. See [implementation and verification checkpoint](docs/UNMUTED_SESSION_RETENTION.md).
 

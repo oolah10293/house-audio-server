@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install CD-enabled House Music; back up and automatically restore existing server on failure.
+# Install the complete House Music server; back up and automatically restore existing server on failure.
 # Run from the extracted package directory: sudo sh ./install-cd.sh
 set -eu
 
@@ -31,7 +31,7 @@ do
     exit 1
   fi
 done
-if ! grep -Fq 'SERVICE_VERSION = "0.14.2-cd1"' house_audio_server.py ||
+if ! grep -Fq 'SERVICE_VERSION = "0.14.3"' house_audio_server.py ||
    ! grep -Fq 'data-view="inputs"' web/house.html ||
    ! grep -Fq '"/inputs/play"' house_audio_server.py ||
    ! grep -Fq 'input_sources.py' install.sh; then
@@ -112,12 +112,25 @@ else:
     raise SystemExit('Updated CD gateway did not start successfully')
 PY
 sh ./install.sh
+if [ -f SOURCE_SHA.txt ]; then
+  install -o root -g root -m 0644 SOURCE_SHA.txt "$INSTALL_DIR/SOURCE_SHA.txt"
+fi
 
 # Validate the actual installed browser and server version, not just systemd's PID.
 python3 - <<'PY'
+import hashlib
 import json
 import time
+from pathlib import Path
 from urllib.request import urlopen
+
+for source in [*Path('.').glob('*.py'), *Path('web').glob('*')]:
+    if source.is_file():
+        installed = Path('/opt/house-audio-server') / source
+        if hashlib.sha256(source.read_bytes()).digest() != hashlib.sha256(installed.read_bytes()).digest():
+            raise SystemExit('Installed file differs from package: ' + str(source))
+if Path('pi_input/gateway.py').read_bytes() != Path('/home/ads-suck/gateway.py').read_bytes():
+    raise SystemExit('Installed gateway differs from package')
 
 base = "http://127.0.0.1:8787"
 last_error = None
@@ -129,11 +142,17 @@ for attempt in range(20):
             browser = response.read().decode("utf-8")
         with urlopen(base + "/house.js", timeout=2) as response:
             js = response.read().decode("utf-8")
-        if health.get("version") != "0.14.2-cd1":
+        if health.get("version") != "0.14.3":
             raise RuntimeError("Unexpected installed server version: " + str(health.get("version")))
+        if health.get("status") != "ok":
+            raise RuntimeError("House service dependencies/startup are not healthy yet")
         if 'data-view="inputs"' not in browser or 'drawInputs' not in js:
             raise RuntimeError("CD player browser controls are missing")
-        print("Installed House Music 0.14.2-cd1; browser and service health endpoint verified.")
+        with urlopen(base + "/session", timeout=2) as response:
+            session = json.load(response)
+        if "unmutedControllerCount" not in session.get("sessionPolicy", {}):
+            raise RuntimeError("Updated session policy is missing")
+        print("Installed House Music 0.14.3; browser, service and session policy verified.")
         break
     except Exception as exc:
         last_error = exc
@@ -144,7 +163,7 @@ PY
 
 trap - 0
 echo
-echo "House Music CD integration installed."
-echo "Open: http://192.168.1.12:8787/  and select CD players."
+echo "House Music server 0.14.3 installed."
+echo "Open: http://192.168.1.12:8787/"
 echo "CD source gateway updated in its existing independent service on port 8768."
 echo "Rollback copy: $BACKUP_DIR"

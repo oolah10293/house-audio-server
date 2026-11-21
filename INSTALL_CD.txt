@@ -1,47 +1,47 @@
-HOUSE MUSIC — CD PLAYER INTEGRATION
-====================================
-Version: 0.14.2-cd1, based on the working House Music server v0.14.2
-For: Raspberry Pi running House Music and separate CD input gateway
+HOUSE MUSIC SERVER v0.14.3 — RASPBERRY PI UPDATE
+================================================
 
-WHAT YOU GET
-  - CD players tab at http://192.168.1.12:8787/
-  - Select any track from a discovered USB CD drive
-  - CD tracks play in MPD's house queue to existing synchronized Snapcast speakers
-  - Resume Playlist returns to your previous local playlist
-  - Existing radio, library sorting, subwoofer settings and renderer controls retained
-  - Backup/automatic rollback if the new server fails its installation startup checks
+Only unmuted phones/controllers now keep a house session open, including while
+paused. Muted phones remain available for browsing and controls. When only muted
+controllers remain, a playing library track finishes and the session ends; an
+already-paused controller-held session ends without advancing the song.
 
-REQUIREMENTS
-  - The separate gateway service is already running at 192.168.1.12:8768
-  - Matching ESP32-S3 automatic-CD firmware is on Wi-Fi and registering (bootSession and discRevision required)
-  - Working House Music installation exists at /opt/house-audio-server
-  - python3, systemd, and unzip on the Pi
+This is the complete integrated server: browser controls, radio, Resume Playlist,
+CD input/automatic takeover, library sorting and subwoofer support are included.
+The existing physical CD no-speaker retention rule remains in effect.
 
-INSTALL
-  1. Copy the ZIP to the Pi (e.g., /home/ads-suck).
-  2. On the Pi:
-       unzip HouseMusic_CD_Input_Installer.zip
-       cd HouseMusic_CD_Input
+INSTALL FROM THIS ZIP
+  1. Copy HouseMusic_Server_v0.14.3_Pi.zip to the Pi.
+  2. In the directory containing the ZIP, run:
+       unzip HouseMusic_Server_v0.14.3_Pi.zip
+       cd HouseMusic_Server_v0.14.3
        sudo sh ./install-cd.sh
-  3. Open http://192.168.1.12:8787/ and select CD players.
 
-IMPORTANT
-  - Installation restarts the House Music service and interrupts current music.
-    House Music's existing restart policy clears its current MPD queue.
-  - It DOES back up, update and restart the independent CD gateway on port 8768.\n  - Installation refuses to proceed if the existing gateway service/file is missing,
-    MPD, Snapserver, or any ESP32 firmware.
-  - It does NOT change /etc/default/house-audio-server if already configured.
-  - A backup of both server and gateway stays under /var/backups/house-audio-server.
-  - Source tests may pass; inspect the matching CI run. Real MPD/CD-to-Snapcast audio from
-    the ESP32 has NOT yet been tested at your house.
-  - The WAV stream is finite, and CD seeking is disabled for now; CD track
-    transitions are the first physical test.
+The install-cd.sh filename is retained from the existing full-server installer.
+It backs up both server and gateway, installs the matching files, restarts both
+services and checks the actual installed files, version, health, browser and
+session-policy API. A failed installation check restores the backup.
 
-IF YOU WANT TO GO BACK
-  From this same extracted folder, run:
-       sudo sh ./rollback-cd.sh
+REQUIREMENTS AND EFFECT
+  - Existing House Music in /opt/house-audio-server.
+  - Existing CD gateway service house-audio-input-gateway.service, with its Python
+    file at /home/ads-suck/gateway.py and its API listening on port 8768.
+  - Python 3, systemd and unzip.
+  - Installation interrupts current playback. The normal server restart policy
+    clears the current MPD queue and starts a fresh session if a passive node is on.
+  - Existing /etc/default/house-audio-server and persistent settings are preserved.
+  - The installer reports the backup directory under /var/backups/house-audio-server.
 
-IF THE CD IS MISSING
-  First check the CD gateway at http://192.168.1.12:8768/.
-  Then check the ESP32 CD page (previously http://192.168.1.175/).
-  The XIAO address may change with DHCP.
+VERIFY
+  Success ends with:
+    Installed House Music 0.14.3; browser, service and session policy verified.
+  Open http://192.168.1.12:8787/ and check playback.
+  Check a lone paused phone unmuted, then muted. Check that muting a phone while
+  another room is playing does not disturb that room.
+  SOURCE_SHA.txt identifies the exact committed source included in this package.
+  MANIFEST.json records each packaged source file's SHA-256.
+
+ROLL BACK
+  From this extracted folder, run:
+    sudo sh ./rollback-cd.sh
+  This restores the newest complete backup produced by this installer.

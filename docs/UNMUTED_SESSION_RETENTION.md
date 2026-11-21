@@ -7,7 +7,8 @@ house nodes retain their existing behavior.
 
 Base: main commit `082c9feac117741ad091ba9765a975b2d2f7dd9a`, the integrated
 `0.14.2-cd1` source. This update contains source, tests and documentation;
-packaging/version preparation and live Pi installation remain subsequent work.
+packaging and installation were subsequently authorized for v0.14.3; see
+[release status](RELEASE_0.14.3.md) for preparation and deployment evidence.
 
 ## Implementation
 
