@@ -66,3 +66,13 @@ The user should confirm the page's actual layout, scrolling, Queue positioning
 and speaker order in a browser after installation. If the browser shows
 stale assets, perform a hard refresh before assessing layout. No automatic
 remote installation is claimed.
+
+## User acceptance update — 2026-11-23
+
+Following delivery of the v0.14.5 installation command, the user reported:
+“nice work. everything looks good”. This is positive user-reported visual
+acceptance of the webpage update. No installer terminal output, verified
+installed source SHA, or detailed per-control field test output has yet been
+provided in this conversation. Therefore this checkpoint records positive
+user feedback, **not** independent verification of the Pi's installation
+identity or each individual UI interaction. No further changes requested.
