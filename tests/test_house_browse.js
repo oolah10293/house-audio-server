@@ -153,7 +153,7 @@ async function test() {
   run('current.view = "queue"; current.queue = ' +
       '[{id:11,title:"First"},{id:22,title:"Second"},{id:33,title:"Third"}];' +
       'current.state = {mpd:{songId:22,queueVersion:8}};');
-  ids.get("main-panel").scrollTop = 300;
+  context.document.getElementById("main-panel").scrollTop = 300;
   run("drawQueue({alignPlaying:true})");
   let queueRows = ids.get("items").children;
   assert.equal(queueRows.length, 3);
@@ -162,12 +162,12 @@ async function test() {
     "Entering the queue scrolls the playing song to the top.");
   assert.equal(run("JSON.stringify(current.queue.map(x=>x.id))"), "[11,22,33]",
     "Changing the visible queue position does not reorder MPD songs.");
-  ids.get("main-panel").scrollTop = 475;
+  context.document.getElementById("main-panel").scrollTop = 475;
   run("drawQueue()");
   queueRows = ids.get("items").children;
   assert.equal(queueRows[1].scrollCall, undefined,
     "Background queue redraw must not auto-scroll.");
-  assert.equal(ids.get("main-panel").scrollTop, 475,
+  assert.equal(context.document.getElementById("main-panel").scrollTop, 475,
     "Queue redraw preserves the user's scroll position.");
 
   // Speaker grouping is stable: all audible speakers first, then inactive.
