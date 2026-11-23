@@ -33,6 +33,8 @@ do
 done
 if ! grep -Fq 'SERVICE_VERSION = "0.14.5"' house_audio_server.py ||
    ! grep -Fq 'data-view="inputs"' web/house.html ||
+   ! grep -Fq 'id="default-playlist-control"' web/house.html ||
+   ! grep -Fq 'id="main-panel"' web/house.html ||
    ! grep -Fq '"/inputs/play"' house_audio_server.py ||
    ! grep -Fq 'input_sources.py' install.sh ||
    ! grep -Fq 'def run_batched(' house_audio_server.py ||
@@ -150,6 +152,8 @@ for attempt in range(20):
             raise RuntimeError("House service dependencies/startup are not healthy yet")
         if 'data-view="inputs"' not in browser or 'drawInputs' not in js:
             raise RuntimeError("CD player browser controls are missing")
+        if 'id="default-playlist-control"' not in browser or 'id="main-panel"' not in browser:
+            raise RuntimeError("Updated Library layout is missing")
         with urlopen(base + "/session", timeout=2) as response:
             session = json.load(response)
         if "unmutedControllerCount" not in session.get("sessionPolicy", {}):
