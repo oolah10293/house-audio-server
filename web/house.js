@@ -219,7 +219,10 @@ function clearView(kicker, title) {
   byId("view-kicker").textContent = kicker;
   byId("view-title").textContent = title;
   byId("breadcrumbs").replaceChildren();
-  byId("view-actions").replaceChildren();
+  // Preserve the settings control and its event listener through every view redraw.
+  const defaultPlaylist = byId("default-playlist-control");
+  defaultPlaylist.hidden = true;
+  byId("view-actions").replaceChildren(defaultPlaylist);
   byId("items").replaceChildren();
 }
 function action(label, handler, primary = false, disabled = false) {
@@ -253,6 +256,7 @@ function row(icon, title, detail, onClick, options = {}) {
     item.append(controls);
   }
   byId("items").append(item);
+  return item;
 }
 async function refreshState() {
   if (current.pollInFlight) return;
@@ -379,6 +383,7 @@ function drawBrowse() {
     bread.append(node("span", "crumb-separator", "/"),
       button(chunk, "", () => loadBrowse(path)));
   }
+  byId("default-playlist-control").hidden = false;
   librarySelect("Display", current.displayMode,
     [["filename", "Filename"], ["metadata", "Metadata"]], (value) => {
       if (value !== "filename" && value !== "metadata") return;
@@ -392,8 +397,6 @@ function drawBrowse() {
     saveBrowsePreferences();
     drawBrowseList();
   });
-  const playable = current.entries.some((entry) => entry.type === "file");
-  action("▶ Play folder", () => playFiles(sortedLibraryFiles(), 0), true, !playable);
   action("⟳ Rescan", async () => {
     const ok = await command("/library/update", { force: true });
     if (ok) { notice("Library scan started"); await loadBrowse(current.folder); }
@@ -407,6 +410,8 @@ function drawBrowse() {
   search.value = current.search;
   search.addEventListener("input", () => { current.search = search.value; drawBrowseList(); });
   byId("view-actions").append(search);
+  const playable = current.entries.some((entry) => entry.type === "file");
+  action("▶ Play folder", () => playFiles(sortedLibraryFiles(), 0), true, !playable);
   drawBrowseList();
 }
 function drawBrowseList() {
@@ -448,18 +453,21 @@ async function playFiles(files, startIndex) {
   if (ok && current.folder.startsWith("CDs/") && current.state?.mpd?.random)
     await command("/shuffle", { enabled: false });
 }
-async function loadQueue() {
+async function loadQueue({ alignPlaying = false } = {}) {
   if (current.view !== "queue") return;
   try {
     const data = await request("/queue");
     if (current.view !== "queue") return;
     current.queue = data.queue || [];
     current.queueVersion = current.state?.mpd?.queueVersion;
-    drawQueue();
+    drawQueue({ alignPlaying });
   } catch (error) { notice(error.message); }
 }
-function drawQueue() {
+function drawQueue({ alignPlaying = false } = {}) {
   if (current.view !== "queue") return;
+  // A background queue refresh must not yank the scrollbar away from the user.
+  const mainPanel = byId("main-panel");
+  const previousScroll = mainPanel.scrollTop;
   clearView("CURRENT SESSION", "Queue");
   action("A–Z Sort", () => sortQueue(), false, current.queue.length < 2);
   action("Clear queue", async () => {
@@ -469,10 +477,15 @@ function drawQueue() {
   }, false, current.queue.length === 0);
   const count = current.queue.length;
   byId("breadcrumbs").textContent = count + (count === 1 ? " song" : " songs") + " in the shared MPD queue";
-  if (!count) { empty("Queue is empty", "Play a folder or choose a radio station to start listening."); return; }
+  if (!count) {
+    empty("Queue is empty", "Play a folder or choose a radio station to start listening.");
+    if (!alignPlaying) mainPanel.scrollTop = previousScroll;
+    return;
+  }
+  let playingRow = null;
   current.queue.forEach((song, index) => {
     const playing = song.id === current.state?.mpd?.songId;
-    row(playing ? "♫" : String(index + 1), niceName(song),
+    const item = row(playing ? "♫" : String(index + 1), niceName(song),
       [song.artist, song.album].filter(Boolean).join(" · ") || song.file,
       () => playQueueId(song.id),
       { playing, right: formatTime(song.durationSeconds),
@@ -482,7 +495,12 @@ function drawQueue() {
           { text: "↓", label: "Move " + niceName(song) + " down", disabled: index === count - 1,
             click: () => moveQueue(index, index + 1) }
         ] });
+    if (playing) playingRow = item;
   });
+  // Position the current song at the top of the visible list on entry only.
+  // This never changes the MPD queue or repeatedly auto-scrolls while browsing.
+  if (alignPlaying && playingRow) playingRow.scrollIntoView({ block: "start" });
+  else if (!alignPlaying) mainPanel.scrollTop = previousScroll;
 }
 async function moveQueue(from, to) {
   const ids = current.queue.map((song) => song.id);
@@ -619,7 +637,9 @@ function drawSpeakers() {
     empty("No speakers reported", "Turn on a renderer or check the connection to Snapserver.");
     return;
   }
-  current.speakers.forEach((speaker) => {
+  const active = current.speakers.filter((speaker) => speaker.audible);
+  const inactive = current.speakers.filter((speaker) => !speaker.audible);
+  [...active, ...inactive].forEach((speaker) => {
     const detail = [speaker.present ? "Present" : speaker.connected ? "Connected (not recently seen)" : "Disconnected",
       speaker.muted || speaker.groupMuted ? "Muted" : "Unmuted",
       Number.isFinite(Number(speaker.volumePercent)) ? speaker.volumePercent + "% Snapcast" : ""].filter(Boolean).join(" · ");
@@ -635,14 +655,16 @@ async function loadSettings() {
 }
 async function selectView(view) {
   if (!["browse", "queue", "radio", "inputs", "speakers"].includes(view)) return;
+  const changedView = current.view !== view;
   current.view = view;
+  if (changedView) byId("main-panel").scrollTop = 0;
   document.querySelectorAll("[data-view]").forEach((control) => {
     const active = control.dataset.view === view;
     control.classList.toggle("active", active);
     control.setAttribute("aria-current", active ? "page" : "false");
   });
   if (view === "browse") drawBrowse();
-  if (view === "queue") await loadQueue();
+  if (view === "queue") await loadQueue({ alignPlaying: true });
   if (view === "radio") await loadStations();
   if (view === "inputs") await loadInputs();
   if (view === "speakers") await loadSpeakers();

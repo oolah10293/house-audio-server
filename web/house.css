@@ -63,3 +63,17 @@ h1{margin:0;font-size:34px;font-weight:720;letter-spacing:-.03em;line-height:1.1
 @media(max-width:1050px){:root{--sidebar:198px}.sidebar{padding-left:12px;padding-right:12px}.workarea{padding:30px 25px 110px}.player{gap:14px;grid-template-columns:minmax(180px,1fr) minmax(270px,1.3fr) minmax(110px,.6fr);padding:14px 20px}.transport-controls{gap:9px}}
 @media(max-width:760px){:root{--player:171px}.shell{display:block}.sidebar{padding:0;border-right:0;border-bottom:1px solid var(--border);gap:0}.sidebar>.brand,.sidebar>.nav-caption,.sidebar-bottom{display:none}.navigation{display:grid;grid-template-columns:repeat(5,1fr);gap:0;padding:5px 8px}.nav-button{font-size:12px;flex-direction:column;gap:2px;padding:7px 2px;text-align:center;justify-content:center}.nav-button>span:first-child{font-size:19px}.nav-count{display:none}.topbar{height:54px;padding:0 16px;justify-content:space-between}.topbar-brand{display:block;font-size:14px;font-weight:800;letter-spacing:.15em}.topbar-brand span{color:var(--accent)}.status-strip{gap:9px;font-size:11px}.speaker-pill{padding:5px 7px}.workarea{padding:23px 13px 185px}.view-header{min-height:95px;align-items:start;gap:10px}.view-header h1{font-size:27px}.view-actions{max-width:57%;gap:6px}.action{padding:7px 10px;font-size:11px}.item{padding:10px 12px;gap:10px;min-height:62px}.item.playing{padding-left:9px}.item-icon{flex-basis:34px;height:34px;font-size:19px}.item-main{gap:10px}.item-side{display:none}.player{grid-template-columns:1fr;grid-template-rows:auto auto;gap:7px;min-height:var(--player);padding:11px 14px calc(12px + env(safe-area-inset-bottom))}.record{flex-basis:42px;height:42px;font-size:24px}.record span{height:30px;width:30px;line-height:28px}.track-block{padding-right:107px}.source-label{font-size:9px}.track-meta strong{font-size:14px}.transport-controls{margin-bottom:6px;gap:18px}.transport{height:30px}.transport.play{width:37px;height:37px}.player-end{position:absolute;right:14px;top:16px;align-items:end}.playback-state{font-size:9px}.resume-button{font-size:10px;padding:6px}.notice{bottom:calc(var(--player) + 15px)}}
 @media(max-width:370px){.transport-controls{gap:11px}.item-controls .mini-button{min-width:26px}.record{display:none}}
+
+/* Desktop: independently scroll the navigation and content panes while the
+   status bar and bottom transport stay visible. Mobile retains page scrolling. */
+@media(min-width:761px){
+  html,body{height:100%;overflow:hidden}
+  .shell{height:calc(100dvh - var(--player));min-height:0;overflow:hidden}
+  .sidebar,.main{min-height:0;overflow-y:auto;overscroll-behavior:contain}
+  .main{height:100%}
+  .topbar{position:sticky;top:0;z-index:4;background:var(--bg)}
+  .items .item.playing{scroll-margin-top:79px}
+}
+@media(max-width:760px){
+  .items .item.playing{scroll-margin-top:8px}
+}

@@ -1,9 +1,9 @@
 # House Music webpage layout update — planning checkpoint (2026-11-23)
 
-**Status: design requirements recorded; implementation NOT authorized yet.**
-No HTML/CSS/JavaScript, firmware, service configuration, or playback logic
-is changed by this document. The currently installed, working Pi server
-remains v0.14.4.
+**Status: webpage implementation explicitly authorized on 2026-11-23.**
+Source changes and automated tests are committed on the webpage implementation
+branch, pending merger and a versioned Pi deployment. The currently installed
+working Pi server remains v0.14.4 until the user runs a new installer.
 
 ## Reference and scope
 
@@ -72,7 +72,7 @@ except for the explicitly requested layout and presentation changes below.
   This is display-only: do not change node mute, volume, session
   retention, Snapcast, or audio behavior.
 
-## Implementation boundary and verification (pending authorization)
+## Implementation boundary and verification (scope authorized; source changes in review)
 
 - Change only relevant webpage HTML/CSS/JS. Do not change ESP32 YAML/firmware,
   MPD startup, server session policy or other audio paths.
@@ -85,5 +85,29 @@ except for the explicitly requested layout and presentation changes below.
 - Do not claim this is deployed on the Pi until user-supplied installation
   output verifies it.
 
-This checkpoint captures the user's requested layout; it does **not**
-constitute permission to implement source changes.
+This checkpoint captures the user's requested layout, and implementation
+was separately and explicitly authorized in the conversation on 2026-11-23.
+
+## Implemented source and verification checkpoint
+
+- `web/house.html`: moved the **same** `default-folder` DOM select from the
+  sidebar to the Library toolbar, preserving the settings backend and subwoofer
+  link. The right content area has a stable `main-panel` ID.
+- `web/house.js`: preserves that dropdown through view redraws, places it
+  before Display and Sort, moves Play Folder to the far right after Rescan
+  and Filter, scrolls to the playing Queue row **on entry only**, and displays
+  audible Speakers first with stable ordering inside active/inactive groups.
+- `web/house.css`: the sidebar and main panel independently scroll on
+  desktop, with sticky status header and existing fixed playback bar. Mobile
+  retains the existing responsive single-column page scrolling.
+- `tests/test_house_browse.js`: checks selector persistence and action
+  order, queue alignment without MPD reordering or continuous auto-scrolling,
+  active-speaker stable groups, and desktop pane styles.
+- GitHub Actions source checks and full regression test suite passed on
+  implementation branch after the browser test harness correction; no
+  direct Pi installation, manual browser visual acceptance, or hardware
+  measurements are claimed here.
+
+No device firmware, house playback logic, Snapcast/MPD configurations, or
+audio buffer settings were changed by this implementation. A release
+package and on-Pi installation remain separately verifiable steps.

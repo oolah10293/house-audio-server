@@ -24,17 +24,11 @@
         <button type="button" data-view="speakers" class="nav-button"><span aria-hidden="true">◈</span> Speakers</button>
       </nav>
       <div class="sidebar-bottom">
-        <label for="default-folder" class="setting-caption">New-session playlist</label>
-        <select id="default-folder" aria-label="Default folder when a radio turns on">
-          <option value="MP3s">MP3s</option>
-          <option value="Rap">Rap</option>
-        </select>
-        <p>Used next time a passive radio starts a fresh session.</p>
         <a href="/subwoofers">Subwoofer settings <span aria-hidden="true">↗</span></a>
       </div>
     </aside>
 
-    <main class="main">
+    <main class="main" id="main-panel">
       <header class="topbar">
         <div class="topbar-brand">HOUSE <span>MUSIC</span></div>
         <div class="status-strip">
@@ -50,7 +44,17 @@
             <h1 id="view-title">Library</h1>
             <div id="breadcrumbs" class="breadcrumbs" aria-label="Folder path"></div>
           </div>
-          <div id="view-actions" class="view-actions"></div>
+          <div id="view-actions" class="view-actions">
+            <label id="default-playlist-control" class="library-select">
+              <span class="library-select-caption">Default Playlist</span>
+              <select id="default-folder" class="action browse-select"
+                      aria-label="Default Playlist for the next fresh session"
+                      title="Used when a passive radio starts a fresh session">
+                <option value="MP3s">MP3s</option>
+                <option value="Rap">Rap</option>
+              </select>
+            </label>
+          </div>
         </div>
         <div id="items" class="items" aria-live="polite"></div>
       </section>
