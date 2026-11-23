@@ -1,8 +1,6 @@
 # House Audio Server v0.14.4 — startup measurements and MPD batching
 
-**Release candidate; not yet installed on the Pi.** The user's 2026-11-22
-authorization covers packaging and installation of the previously approved
-fresh-session startup timing and batched MPD transfer update.
+**Pi installation confirmed on 2026-11-22 from the user's complete terminal output.** Packaging and installation were authorized for the approved fresh-session startup timing and batched MPD transfer update. Actual startup timings and audible hardware acceptance remain pending.
 
 ## Changes since installed v0.14.3
 
@@ -56,3 +54,31 @@ session without changing its queue.
 after publishing the release commit; physical Pi install/audio measurements are
 not proven merely by passing CI. See the release checkpoint or user-provided
 installation output for deployment confirmation.
+
+## Confirmed Pi installation — 2026-11-22
+
+The user ran a single command on `ads-suck@pihole` that cloned the repository,
+checked out pinned release source `d657e783de379b275f93010b7c14318b980fb90b`,
+created and verified the Pi ZIP locally, extracted it, and invoked
+`sudo sh ./install-cd.sh`. The returned terminal output contained:
+
+- Package: `/home/ads-suck/housemusic-v0.14.4.ig0XNS/HouseMusic_Server_v0.14.4_Pi.zip`
+- Package bytes: `87711`, files: `27`
+- Source SHA: `d657e783de379b275f93010b7c14318b980fb90b`
+- ZIP SHA-256: `a4dd9b26a0c6a9be44a3e679ad380b316a7663533d2406dd4a4d3ab4e33a22e6`
+- Backup: `/var/backups/house-audio-server/pre-cd-20261122-210324-3284964`
+- Installer result: `Installed House Music 0.14.4; browser, service and session policy verified.`
+- Completion: `House Music server 0.14.4 installed.`
+- CD input gateway updated in its independent service on port 8768.
+
+The successful installer output confirms its version, installed-file checks,
+service health, and session-policy API check. It does **not** establish a real
+startup latency improvement, first-audio transmission timing, or physical
+listening acceptance.
+
+The next field step is to run:
+```sh
+sudo journalctl -u house-audio-server -f -o cat | grep --line-buffered startup_trace
+```
+and power one ESP32 radio on from a genuinely fresh/fully drained session.
+Capture complete `startup_trace` output and confirm audible playback.
