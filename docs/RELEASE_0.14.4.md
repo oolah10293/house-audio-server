@@ -154,3 +154,20 @@ fresh-session timing boundaries. This comparison is proposed, not yet measured.
 ## Additional observation — Motorola join into active playback
 
 The user confirms **both comparisons concern the same Motorola radio**; it was the original motivation for the startup-delay investigation. The Motorola produces sound in approximately **2–3 seconds** when joining existing playback, but takes approximately **15 seconds** from power-on to audio for a fresh-session start. In the recorded fresh start, MPD state was observed playing after **126.2 ms** from the server's fresh-session decision, and Snapserver stream status was observed playing after **944.5 ms**. The difference therefore appears specific to fresh-session startup, not an inherent 15-second Motorola boot time. However, current logging does not timestamp physical radio power-on or directly timestamp first outgoing audio packets or first audible sound, so it **does not yet locate the missing time** before versus after the server policy's decision. The next discriminating evidence is a timestamped event between radio connection/presence recognition and the first `startup_trace`, and an observation of whether the logs appear early or just before sound. No code changes have been authorized or performed based on these measurements.
+
+## Existing-session join comparison — both radios
+
+The user clarified that **both** the C6-based Motorola radio and the S3-based
+basement stereo each began producing sound in **under 3 seconds** when joining
+an already-playing House Music session. The ~15-second fresh-session test was
+on the Motorola. This is stronger evidence that a fresh-session-specific
+path, rather than a universal ESP32 boot/Wi-Fi delay, deserves investigation.
+It does not prove which component caused the delay: the current trace starts
+only when passive session startup has already been selected.
+
+The user cannot reasonably monitor a terminal/stopwatch/radio simultaneously.
+Further diagnostics should therefore use **automatically timestamped events
+that can be examined after the test**, preferably server-side status changes
+and Snapserver event observations. Do not claim the current trace measures
+the entire power-on-to-audio interval. No additional code or firmware changes
+have been authorized by this report.
