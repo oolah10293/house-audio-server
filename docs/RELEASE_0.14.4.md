@@ -82,3 +82,39 @@ sudo journalctl -u house-audio-server -f -o cat | grep --line-buffered startup_t
 ```
 and power one ESP32 radio on from a genuinely fresh/fully drained session.
 Capture complete `startup_trace` output and confirm audible playback.
+
+## First measured fresh-session trace — Rap, 839 tracks (user-provided Pi journal)
+
+Observed on the installed v0.14.4 service using
+`sudo journalctl -u house-audio-server -f -o cat | grep --line-buffered startup_trace`.
+All numbers are monotonic milliseconds relative to server policy beginning this
+fresh passive session, **not** radio power-on or ESP32 audible output.
+
+| Stage | Elapsed ms | Delta ms |
+| --- | ---: | ---: |
+| Fresh passive session detected (folder `Rap`) | 0.0 | 0.0 |
+| MPD library query started | 0.1 | 0.0 |
+| MPD library query completed (839 tracks) | 133.6 | 133.5 |
+| Python shuffle completed | 134.5 | 0.9 |
+| MPD queue transfer started (846 commands) | 134.8 | 0.3 |
+| MPD command batch acknowledged (846/846) | 139.7 | 4.8 |
+| MPD queue transfer completed | 139.8 | 0.2 |
+| MPD playback state observed (`play`, 839 tracks) | 141.5 | 1.7 |
+| Awaiting Snapserver stream observation | 141.5 | 0.0 |
+| Snapserver `default` stream observed `playing` | 911.8 | 770.2 |
+
+**Interpretation:** the 839-song batch transfer took approximately 5 ms and
+the service observed MPD playing by approximately 142 ms after the new-session
+policy decision. The 770.2 ms between that point and the Snapserver observation
+is **not proven audio transport latency**: Snapserver is sampled by a monitor
+configured to poll every 1 second; this event is not a timestamp of the actual
+first audio packet, nor of audible playback on an ESP32. The listall query
+(133.5 ms) is the largest directly timed server preparation step. The trace
+does not prove a before/after speedup because the old v0.14.3 code had no
+matching instrumentation.
+
+**Field status:** these measurements verify the batched startup path reached
+MPD `play` and the monitor subsequently reported Snapserver `playing`.
+User has not yet reported audible start time or measured ESP32 power-on to
+sound. Keep a separate follow-up for an accurate actual Snapserver audio onset
+if needed. No additional changes authorized by this measurement.
