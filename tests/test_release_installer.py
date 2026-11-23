@@ -26,11 +26,14 @@ class InstallerVerificationTests(unittest.TestCase):
         self.check = self.check.replace('/home/ads-suck/gateway.py', str(self.root / 'live-gateway/gateway.py'))
         self.health = dict(version='0.14.5', status='ok')
         self.session = dict(sessionPolicy=dict(unmutedControllerCount=0))
+        self.browser = ('<div data-view="inputs"></div>'
+                        '<label id="default-playlist-control"></label>'
+                        '<main id="main-panel"></main>')
 
     def response(self, url, **kwargs):
         body = {
             '/health': json.dumps(self.health),
-            '/': '<div data-view="inputs"></div>',
+            '/': self.browser,
             '/house.js': 'function drawInputs() {}',
             '/session': json.dumps(self.session),
         }[url.removeprefix('http://127.0.0.1:8787')]
@@ -66,3 +69,12 @@ class InstallerVerificationTests(unittest.TestCase):
         self.session = dict(sessionPolicy={})
         with self.assertRaisesRegex(SystemExit, 'Updated session policy is missing'):
             self.verify()
+
+    def test_rejects_missing_updated_browser_layout(self):
+        for missing_id in ('default-playlist-control', 'main-panel'):
+            with self.subTest(missing_id=missing_id):
+                saved = self.browser
+                self.browser = self.browser.replace('id="' + missing_id + '"', '')
+                with self.assertRaisesRegex(SystemExit, 'Updated Library layout is missing'):
+                    self.verify()
+                self.browser = saved
