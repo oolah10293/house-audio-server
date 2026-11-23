@@ -1,19 +1,21 @@
-HOUSE MUSIC SERVER v0.14.4 — RASPBERRY PI UPDATE
+HOUSE MUSIC SERVER v0.14.5 — RASPBERRY PI UPDATE
 ================================================
 
-Fresh passive-radio sessions now load MPD playlists with bounded command lists,
-preserving the existing Python shuffle and all established session rules.
-Startup stages are timestamped in the server journal for field measurement.
+Webpage update: move Default Playlist into the Library toolbar before Display;
+reorder the controls so Play Folder is last; add separate desktop scrollbars
+for navigation/content; show the playing Queue song at the top of its view;
+and place active speakers first. MPD shuffle, audio, and session rules remain
+unchanged.
 
 This is the complete integrated server: browser controls, radio, Resume Playlist,
 CD input/automatic takeover, library sorting and subwoofer support are included.
 The existing physical CD no-speaker retention rule remains in effect.
 
 INSTALL FROM THIS ZIP
-  1. Copy HouseMusic_Server_v0.14.4_Pi.zip to the Pi.
+  1. Copy HouseMusic_Server_v0.14.5_Pi.zip to the Pi.
   2. In the directory containing the ZIP, run:
-       unzip HouseMusic_Server_v0.14.4_Pi.zip
-       cd HouseMusic_Server_v0.14.4
+       unzip HouseMusic_Server_v0.14.5_Pi.zip
+       cd HouseMusic_Server_v0.14.5
        sudo sh ./install-cd.sh
 
 The install-cd.sh filename is retained from the existing full-server installer.
@@ -33,12 +35,13 @@ REQUIREMENTS AND EFFECT
 
 VERIFY
   Success ends with:
-    Installed House Music 0.14.4; browser, service and session policy verified.
+    Installed House Music 0.14.5; browser, service and session policy verified.
   Open http://192.168.1.12:8787/ and check playback.
-  Check a lone paused phone unmuted, then muted. Check that muting a phone while
-  another room is playing does not disturb that room.
-  Capture fresh-start stage timings:
-    sudo journalctl -u house-audio-server -f -o cat | grep --line-buffered startup_trace
+  Check Library: Default Playlist / Display / Sort / Rescan / Filter / Play folder.
+  Verify independent navigation/content scrolling and fixed top status and player.
+  Check Queue opening at the current song without reordering playback.
+  Check Speakers with active entries before inactive ones.
+  The installer also checks healthy services and existing CD controls.
   SOURCE_SHA.txt identifies the exact committed source included in this package.
   MANIFEST.json records each packaged source file's SHA-256.
 
