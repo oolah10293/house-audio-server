@@ -423,6 +423,73 @@ def validate_relative_path(value: str) -> str:
     return "" if normalized == "." else normalized
 
 
+class StartupTimeline:
+    """Monotonic timings for fresh passive playback, ending at observed Snapcast stream activity.
+
+    Snapserver's playing status is sampled, not a timestamp of first transmitted
+    packet or audible output. It may already be playing for another source.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._start = None
+        self._previous = None
+        self._awaiting_stream = False
+
+    def _mark_locked(self, event, **details):
+        if self._start is None:
+            return
+        now = time.monotonic()
+        elapsed_ms = (now - self._start) * 1000
+        delta_ms = (now - self._previous) * 1000
+        self._previous = now
+        suffix = " ".join(f"{key}={value}" for key, value in details.items())
+        print(f"startup_trace event={event} elapsed_ms={elapsed_ms:.1f} "
+              f"delta_ms={delta_ms:.1f} {suffix}".rstrip(), flush=True)
+
+    def begin(self, folder):
+        with self._lock:
+            self._start = time.monotonic()
+            self._previous = self._start
+            self._awaiting_stream = False
+            self._mark_locked("fresh_passive_session_detected", folder=folder)
+
+    def mark(self, event, **details):
+        with self._lock:
+            self._mark_locked(event, **details)
+
+    def await_stream(self):
+        with self._lock:
+            if self._start is not None:
+                self._awaiting_stream = True
+                self._mark_locked("waiting_for_snapserver_stream")
+
+    def observe_streams(self, streams):
+        with self._lock:
+            if self._start is None or not self._awaiting_stream:
+                return
+            for stream in streams:
+                if stream.get("id") == "default" and stream.get("status") == "playing":
+                    self._mark_locked("snapserver_stream_playing_observed", stream="default")
+                    self._start = None
+                    self._awaiting_stream = False
+                    return
+            if time.monotonic() - self._start > 20:
+                self._mark_locked("snapserver_stream_not_observed_within_20s")
+                self._start = None
+                self._awaiting_stream = False
+
+    def failed(self, error):
+        with self._lock:
+            if self._start is not None:
+                self._mark_locked("startup_failed", error=str(error))
+                self._start = None
+                self._awaiting_stream = False
+
+
+STARTUP_TIMELINE = StartupTimeline()
+
+
 class MpdClient:
     """Small MPD protocol client using only the Python standard library."""
 
@@ -469,6 +536,62 @@ class MpdClient:
                 self._command_on_stream(stream, command) for command in commands
             ]
             return greeting.removeprefix("OK MPD ").strip(), responses
+
+    def run_batched(self, *commands: str, max_batch_bytes: int = 65536,
+                    on_batch=None) -> None:
+        """Execute ordered MPD writes with bounded command lists and one connection.
+
+        The 64 KiB limit stays comfortably below MPD's configured command-list
+        size on typical installations. The next list is not sent before the
+        previous one has been acknowledged. No per-song replies are requested.
+        """
+        if not commands:
+            return
+        overhead = len(b"command_list_begin\ncommand_list_end\n")
+        if max_batch_bytes <= overhead:
+            raise ValueError("MPD command-list byte limit is too small")
+        with socket.create_connection((self.host, self.port), timeout=self.timeout) as sock:
+            # A large queue may take longer than one ordinary MPD status request.
+            sock.settimeout(max(self.timeout, 30.0))
+            stream = sock.makefile("rb", buffering=0)
+            greeting = self._readline(stream)
+            if not greeting.startswith("OK MPD "):
+                raise MpdError(f"Unexpected MPD greeting: {greeting!r}")
+            batch = []
+            size = overhead
+            completed = 0
+
+            def send_batch():
+                nonlocal batch, size, completed
+                if not batch:
+                    return
+                payload = ("command_list_begin\n" + "\n".join(batch)
+                           + "\ncommand_list_end\n").encode("utf-8")
+                sock.sendall(payload)
+                while True:
+                    line = self._readline(stream)
+                    if line == "OK":
+                        break
+                    if line.startswith("ACK "):
+                        raise MpdError(line)
+                    raise MpdError(f"Unexpected MPD command-list response: {line!r}")
+                completed += len(batch)
+                if on_batch is not None:
+                    on_batch(completed, len(commands))
+                batch = []
+                size = overhead
+
+            for command in commands:
+                if "\n" in command or "\r" in command:
+                    raise ValueError("MPD command contains a newline")
+                length = len((command + "\n").encode("utf-8"))
+                if length + overhead > max_batch_bytes:
+                    raise ValueError("MPD command exceeds command-list byte limit")
+                if batch and size + length > max_batch_bytes:
+                    send_batch()
+                batch.append(command)
+                size += length
+            send_batch()
 
     def command(self, command: str) -> None:
         self.run(command)
@@ -914,6 +1037,7 @@ class SnapcastMonitor:
                 "streams": normalized_streams,
                 "staleAfterSeconds": self.stale_after_seconds,
             }
+        STARTUP_TIMELINE.observe_streams(normalized_streams)
 
     def _run(self) -> None:
         wait_seconds = self.poll_seconds
@@ -1630,12 +1754,16 @@ class PassiveSessionPolicy:
         # Take one selection at the start of this fresh session. A setting
         # change after this point belongs to the next fresh session.
         folder = self._default_folder()
+        STARTUP_TIMELINE.begin(folder)
+        STARTUP_TIMELINE.mark("mpd_library_query_started")
         tracks = mpd.library_files(folder)
+        STARTUP_TIMELINE.mark("mpd_library_query_completed", tracks=len(tracks))
         if not tracks:
             raise MpdError(f"Default folder {folder!r} is empty")
         if self.radio is not None:
             self.radio.release(mpd)
         self._shuffle(tracks)
+        STARTUP_TIMELINE.mark("python_shuffle_completed", tracks=len(tracks))
         # Explicitly randomize the actual queue as well as enabling MPD Random.
         # Starting item zero is unbiased because the entire list was shuffled.
         # A chance repeat of the first song (or order) is allowed, never rerolled.
@@ -1649,10 +1777,16 @@ class PassiveSessionPolicy:
             "random 1",
             "play 0",
         ]
+        STARTUP_TIMELINE.mark("mpd_queue_transfer_started", commands=len(commands))
         with MPD_WRITE_LOCK:
-            mpd.run(*commands)
-
+            mpd.run_batched(*commands, on_batch=lambda done, total:
+                            STARTUP_TIMELINE.mark("mpd_command_batch_acknowledged",
+                                                  completed=done, total=total))
+        STARTUP_TIMELINE.mark("mpd_queue_transfer_completed")
         state = mpd.state()
+        STARTUP_TIMELINE.mark("mpd_playback_state_observed",
+                              transport=state.get("transport"),
+                              queue_length=state.get("queueLength"))
         if state.get("queueLength", 0) == 0:
             raise MpdError(
                 f"Default folder {folder!r} produced an empty queue"
@@ -1662,6 +1796,7 @@ class PassiveSessionPolicy:
                 f"MPD did not start default folder {folder!r}"
             )
         self._record("started_default_session")
+        STARTUP_TIMELINE.await_stream()
 
     def _handle_renderer_arrival(self, mpd: MpdClient, baseline: bool = False) -> None:
         state = mpd.state()
@@ -1740,6 +1875,7 @@ class PassiveSessionPolicy:
             with MPD_WRITE_LOCK:
                 self._tick_locked()
         except (OSError, MpdError) as exc:
+            STARTUP_TIMELINE.failed(exc)
             # Keep the previous successful sample so a failed departure/pause
             # write is retried, not lost by treating the next poll as a baseline.
             with MPD_WRITE_LOCK:

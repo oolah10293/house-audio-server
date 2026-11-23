@@ -210,6 +210,12 @@ class FakeMpd:
     def command(self, command):
         self.run(command)
 
+    def run_batched(self, *commands, on_batch=None, **kwargs):
+        result = self.run(*commands)
+        if on_batch is not None:
+            on_batch(len(commands), len(commands))
+        return result
+
     def run(self, *commands):
         self.commands.extend(commands)
         for command in commands:

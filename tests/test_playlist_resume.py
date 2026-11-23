@@ -52,6 +52,12 @@ class MpdModel(h.MpdClient):
     def library_files(self, folder):
         return sorted(p for p in self.indexed if not folder or p.startswith(folder + "/"))
 
+    def run_batched(self, *commands, on_batch=None, **kwargs):
+        result = self.run(*commands)
+        if on_batch is not None:
+            on_batch(len(commands), len(commands))
+        return result
+
     def run(self, *commands):
         for command in commands:
             if self.block is not None:
