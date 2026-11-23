@@ -150,3 +150,7 @@ Joining an existing session does not rebuild the default MPD queue. A similar
 15-second result would point attention toward node boot/network/Snapclient
 arrival/buffering, whereas a much shorter result would suggest investigating
 fresh-session timing boundaries. This comparison is proposed, not yet measured.
+
+## Additional observation — Motorola join into active playback
+
+The user reports the Motorola radio takes approximately **2–3 seconds** to produce audio in response to the suggested test of powering on a second radio while a first radio is already playing. The preceding fresh-start stopwatch observation was approximately **15 seconds**, but it is not yet confirmed whether both tests used the same physical radio. Consequently, this result shows a faster existing-session join is possible; it does **not yet isolate** the extra fresh-start delay to server logic versus different device boot/connect behavior. The next discriminating observation is whether the 15-second fresh-start trial was also performed with the Motorola. No code changes have been authorized or performed based on these measurements.
