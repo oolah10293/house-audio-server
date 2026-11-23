@@ -12,6 +12,7 @@ function element(tag = "div") {
     addEventListener(name, callback) { this.listeners[name] = callback; },
     append(...children) { this.children.push(...children); },
     replaceChildren(...children) { this.children = [...children]; },
+    scrollIntoView(options) { this.scrollCall = options; },
     classList: { toggle() {} }
   };
 }
@@ -90,13 +91,20 @@ async function test() {
   ], "Metadata Title A–Z sorts metadata rather than filenames.");
   run("drawBrowse()");
   let controls = ids.get("view-actions").children;
-  assert.equal(controls[0].children[1].value, "metadata");
-  assert.equal(controls[1].children[1].value, "title_asc");
-  assert.ok(!controls[1].children[1].children.some(item => item.value === "date_desc"),
+  assert.equal(controls[0], ids.get("default-playlist-control"),
+    "Original default playlist selector stays mounted in the Library toolbar.");
+  assert.equal(controls[0].hidden, false);
+  assert.equal(controls[1].children[1].value, "metadata");
+  assert.equal(controls[2].children[1].value, "title_asc");
+  assert.ok(!controls[2].children[1].children.some(item => item.value === "date_desc"),
     "Metadata display hides filename-only date sorting.");
-  controls[0].children[1].listeners.change({target:{value:"filename"}});
+  assert.equal(controls[3].textContent, "⟳ Rescan");
+  assert.equal(controls[4].placeholder, "Filter this folder");
+  assert.equal(controls[5].textContent, "▶ Play folder",
+    "Play Folder is the rightmost Library action.");
+  controls[1].children[1].listeners.change({target:{value:"filename"}});
   controls = ids.get("view-actions").children;
-  assert.ok(controls[1].children[1].children.some(item => item.value === "date_desc"),
+  assert.ok(controls[2].children[1].children.some(item => item.value === "date_desc"),
     "Filename display includes modified-date sorting.");
   run("saveBrowsePreferences()");
   assert.equal(JSON.parse([...preferences.values()][0]).displayMode, "filename");
@@ -140,6 +148,53 @@ async function test() {
   assert.equal(ids.get("seek").disabled, true, "CD HTTP WAV does not advertise seeking");
   assert.equal(ids.get("resume").hidden, false, "CD source exposes Resume Playlist");
 
-  console.log("House Music Library and wireless CD source browser regressions passed.");
+  // The Queue view positions the playing row at the top of the visible
+  // scroller without rotating MPD order or repeatedly jumping on refresh.
+  run('current.view = "queue"; current.queue = ' +
+      '[{id:11,title:"First"},{id:22,title:"Second"},{id:33,title:"Third"}];' +
+      'current.state = {mpd:{songId:22,queueVersion:8}};');
+  ids.get("main-panel").scrollTop = 300;
+  run("drawQueue({alignPlaying:true})");
+  let queueRows = ids.get("items").children;
+  assert.equal(queueRows.length, 3);
+  assert.equal(queueRows[1].className, "item playing");
+  assert.equal(queueRows[1].scrollCall.block, "start",
+    "Entering the queue scrolls the playing song to the top.");
+  assert.equal(run("JSON.stringify(current.queue.map(x=>x.id))"), "[11,22,33]",
+    "Changing the visible queue position does not reorder MPD songs.");
+  ids.get("main-panel").scrollTop = 475;
+  run("drawQueue()");
+  queueRows = ids.get("items").children;
+  assert.equal(queueRows[1].scrollCall, undefined,
+    "Background queue redraw must not auto-scroll.");
+  assert.equal(ids.get("main-panel").scrollTop, 475,
+    "Queue redraw preserves the user's scroll position.");
+
+  // Speaker grouping is stable: all audible speakers first, then inactive.
+  run('current.view = "speakers"; current.speakers = ' +
+      '[{id:"quiet-1",audible:false},{id:"active-1",audible:true},' +
+      '{id:"quiet-2",audible:false},{id:"active-2",audible:true}]; drawSpeakers();');
+  const speakerRows = ids.get("items").children;
+  const speakerNames = speakerRows.map(item => item.children[0].children[1].children[0].textContent);
+  assert.deepEqual(speakerNames, ["active-1","active-2","quiet-1","quiet-2"]);
+  assert.equal(run("JSON.stringify(current.speakers.map(x=>x.id))"),
+    '["quiet-1","active-1","quiet-2","active-2"]',
+    "Grouping should not mutate server order.");
+
+  const html = fs.readFileSync("web/house.html", "utf8");
+  const css = fs.readFileSync("web/house.css", "utf8");
+  assert.equal((html.match(/id="default-folder"/g) || []).length, 1);
+  assert.ok(html.indexOf('id="view-actions"') < html.indexOf('id="default-folder"'),
+    "The default playlist dropdown belongs to the header, not the sidebar.");
+  assert.ok(html.includes('id="main-panel"'));
+  assert.ok(css.includes(".sidebar,.main{min-height:0;overflow-y:auto"),
+    "Independent desktop scrolling must be configured.");
+  run('current.view = "radio"; clearView("Radio", "Radio")');
+  assert.equal(ids.get("default-playlist-control").hidden, true,
+    "Default Playlist is shown on Library only.");
+  assert.equal(ids.get("view-actions").children[0], ids.get("default-playlist-control"),
+    "The persistent select remains mounted when changing views.");
+
+  console.log("House Music Library, queue, speakers, and CD browser regressions passed.");
 }
 test().catch(error => { console.error(error); process.exitCode = 1; });
