@@ -1,20 +1,19 @@
-HOUSE MUSIC SERVER v0.14.3 — RASPBERRY PI UPDATE
+HOUSE MUSIC SERVER v0.14.4 — RASPBERRY PI UPDATE
 ================================================
 
-Only unmuted phones/controllers now keep a house session open, including while
-paused. Muted phones remain available for browsing and controls. When only muted
-controllers remain, a playing library track finishes and the session ends; an
-already-paused controller-held session ends without advancing the song.
+Fresh passive-radio sessions now load MPD playlists with bounded command lists,
+preserving the existing Python shuffle and all established session rules.
+Startup stages are timestamped in the server journal for field measurement.
 
 This is the complete integrated server: browser controls, radio, Resume Playlist,
 CD input/automatic takeover, library sorting and subwoofer support are included.
 The existing physical CD no-speaker retention rule remains in effect.
 
 INSTALL FROM THIS ZIP
-  1. Copy HouseMusic_Server_v0.14.3_Pi.zip to the Pi.
+  1. Copy HouseMusic_Server_v0.14.4_Pi.zip to the Pi.
   2. In the directory containing the ZIP, run:
-       unzip HouseMusic_Server_v0.14.3_Pi.zip
-       cd HouseMusic_Server_v0.14.3
+       unzip HouseMusic_Server_v0.14.4_Pi.zip
+       cd HouseMusic_Server_v0.14.4
        sudo sh ./install-cd.sh
 
 The install-cd.sh filename is retained from the existing full-server installer.
@@ -34,10 +33,12 @@ REQUIREMENTS AND EFFECT
 
 VERIFY
   Success ends with:
-    Installed House Music 0.14.3; browser, service and session policy verified.
+    Installed House Music 0.14.4; browser, service and session policy verified.
   Open http://192.168.1.12:8787/ and check playback.
   Check a lone paused phone unmuted, then muted. Check that muting a phone while
   another room is playing does not disturb that room.
+  Capture fresh-start stage timings:
+    sudo journalctl -u house-audio-server -f -o cat | grep --line-buffered startup_trace
   SOURCE_SHA.txt identifies the exact committed source included in this package.
   MANIFEST.json records each packaged source file's SHA-256.
 
