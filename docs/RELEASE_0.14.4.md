@@ -177,3 +177,7 @@ join-comparison test is complete. No additional firmware/server source or
 configuration changes are authorized by the observations. Further diagnostics,
 if desired, should be automatically timestamped for later review instead of
 requiring someone to watch a Pi terminal and a stopwatch simultaneously.
+
+## Latest repeat test — both radios start within three seconds
+
+The user retried both the **Motorola ESP32-C6** and the **basement stereo ESP32-S3** after the v0.14.4 server installation and reports that **both now begin playing within three seconds**. These observations supersede treating the prior approximately 15-second basement-stereo startup as a currently reproducible problem. Its cause was not established; it may have been transient. There is no evidence in these reports for a persistent 15-second startup issue or for a new firmware/configuration fix. The fast MPD command-batch result is directly measured, but the overall before/after acceleration cannot be quantified without comparable pre-update tracing. No additional implementation changes are indicated by the current tests.
