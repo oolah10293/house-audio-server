@@ -121,8 +121,9 @@ if needed. No additional changes authorized by this measurement.
 
 ## Second fresh-session trace and stopwatch observation — Rap, 839 tracks
 
-The user timed approximately **15 seconds from switching on a radio to hearing
-music** with a stopwatch. The concurrent fresh-session trace was:
+The user timed approximately **15 seconds from powering on the basement stereo
+ESP32-S3 to hearing music** with a stopwatch (device assignment clarified in a
+subsequent user correction). The concurrent fresh-session trace was:
 
 | Event | Elapsed ms | Delta ms |
 | --- | ---: | ---: |
@@ -144,30 +145,35 @@ received packets, or produced audible sound. Consequently, the approximately
 14-second discrepancy cannot be assigned to a specific stage (or solely to
 ESP32 boot/network connection) from these observations.
 
-**Diagnostic next step (without new firmware changes):** while one radio is
-already playing, power on a second radio and time its power-on-to-audio delay.
-Joining an existing session does not rebuild the default MPD queue. A similar
-15-second result would point attention toward node boot/network/Snapclient
-arrival/buffering, whereas a much shorter result would suggest investigating
-fresh-session timing boundaries. This comparison is proposed, not yet measured.
+**Follow-up performed:** both the Motorola C6 and basement stereo S3 joined an
+already-playing session in under 3 seconds. Furthermore, the Motorola C6
+started a *fresh* session after v0.14.4 in approximately 2–3 seconds.
+The ~15-second fresh-session delay was on the basement stereo S3.
+These are separate observed trials, not controlled benchmarks.
 
-## Additional observation — Motorola join into active playback
+## Corrected two-radio startup comparison — user clarification
 
-The user confirms **both comparisons concern the same Motorola radio**; it was the original motivation for the startup-delay investigation. The Motorola produces sound in approximately **2–3 seconds** when joining existing playback, but takes approximately **15 seconds** from power-on to audio for a fresh-session start. In the recorded fresh start, MPD state was observed playing after **126.2 ms** from the server's fresh-session decision, and Snapserver stream status was observed playing after **944.5 ms**. The difference therefore appears specific to fresh-session startup, not an inherent 15-second Motorola boot time. However, current logging does not timestamp physical radio power-on or directly timestamp first outgoing audio packets or first audible sound, so it **does not yet locate the missing time** before versus after the server policy's decision. The next discriminating evidence is a timestamped event between radio connection/presence recognition and the first `startup_trace`, and an observation of whether the logs appear early or just before sound. No code changes have been authorized or performed based on these measurements.
+The user corrected an earlier assistant error: **the approximately 15-second
+fresh start was the basement stereo (ESP32-S3), not the Motorola (ESP32-C6).**
+The Motorola was the original reason for investigating startup responsiveness,
+but after installing server v0.14.4 the user reported a fresh Motorola session
+began audibly in **approximately 2–3 seconds**.
 
-## Existing-session join comparison — both radios
+| Renderer | Fresh passive session | Joins existing playback |
+| --- | --- | --- |
+| Motorola ESP32-C6 | Approx. 2–3 seconds (after v0.14.4) | Under 3 seconds |
+| Basement stereo ESP32-S3 | Approx. 15 seconds | Under 3 seconds |
 
-The user clarified that **both** the C6-based Motorola radio and the S3-based
-basement stereo each began producing sound in **under 3 seconds** when joining
-an already-playing House Music session. The ~15-second fresh-session test was
-on the Motorola. This is stronger evidence that a fresh-session-specific
-path, rather than a universal ESP32 boot/Wi-Fi delay, deserves investigation.
-It does not prove which component caused the delay: the current trace starts
-only when passive session startup has already been selected.
+This comparison makes a global fresh-session server bottleneck less convincing
+and focuses attention on differences in the S3's behavior depending on the
+state of the system when it joins. It **does not establish the cause**. In
+particular, startup traces begin when the server session policy starts work,
+not when a node is powered on; they do not measure first audible output.
+The earlier claims that the 15-second test was on the Motorola were false and
+are explicitly superseded by this correction.
 
-The user cannot reasonably monitor a terminal/stopwatch/radio simultaneously.
-Further diagnostics should therefore use **automatically timestamped events
-that can be examined after the test**, preferably server-side status changes
-and Snapserver event observations. Do not claim the current trace measures
-the entire power-on-to-audio interval. No additional code or firmware changes
-have been authorized by this report.
+Both join-to-playing tests were reported as under 3 seconds, so the suggested
+join-comparison test is complete. No additional firmware/server source or
+configuration changes are authorized by the observations. Further diagnostics,
+if desired, should be automatically timestamped for later review instead of
+requiring someone to watch a Pi terminal and a stopwatch simultaneously.
