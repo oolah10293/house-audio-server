@@ -2,7 +2,9 @@
 
 ## Authoritative development baseline — main
 
-Current integrated source is **0.14.3**, including the CD gateway, automatic CD takeover, retention/restore, the browser controller and per-subwoofer fallback. Start new development from `main`. See [main baseline consolidation](docs/MAIN_BASELINE_2026-11-20.md) and [CD behavior](docs/CD_AUTO_TAKEOVER.md). Source consolidation does not establish the exact live Pi file hashes or authorize a new installation. Older release descriptions below are historical.
+Current integrated source is **0.14.4**, including the CD gateway, automatic CD takeover, retention/restore, the browser controller and per-subwoofer fallback. Start new development from `main`. See [main baseline consolidation](docs/MAIN_BASELINE_2026-11-20.md) and [CD behavior](docs/CD_AUTO_TAKEOVER.md). Source consolidation does not establish the exact live Pi file hashes or authorize a new installation. Older release descriptions below are historical.
+
+**2026-11-22 source release preparation:** v0.14.4 keeps the existing Python shuffle but sends fresh default playlist additions in bounded MPD command lists and logs per-stage startup timings. See [startup timing details](docs/STARTUP_TIMING_AND_MPD_BATCHES.md) and [release 0.14.4](docs/RELEASE_0.14.4.md). Pi deployment and measurements are pending.
 
 **2026-11-21 release preparation:** server **v0.14.3** is authorized for packaging and installation. See [release and installation notes](docs/RELEASE_0.14.3.md).
 

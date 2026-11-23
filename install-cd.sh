@@ -31,10 +31,12 @@ do
     exit 1
   fi
 done
-if ! grep -Fq 'SERVICE_VERSION = "0.14.3"' house_audio_server.py ||
+if ! grep -Fq 'SERVICE_VERSION = "0.14.4"' house_audio_server.py ||
    ! grep -Fq 'data-view="inputs"' web/house.html ||
    ! grep -Fq '"/inputs/play"' house_audio_server.py ||
-   ! grep -Fq 'input_sources.py' install.sh; then
+   ! grep -Fq 'input_sources.py' install.sh ||
+   ! grep -Fq 'def run_batched(' house_audio_server.py ||
+   ! grep -Fq 'startup_trace event=' house_audio_server.py; then
   echo "Installation refused: package is not the complete CD integration." >&2
   exit 1
 fi
@@ -142,7 +144,7 @@ for attempt in range(20):
             browser = response.read().decode("utf-8")
         with urlopen(base + "/house.js", timeout=2) as response:
             js = response.read().decode("utf-8")
-        if health.get("version") != "0.14.3":
+        if health.get("version") != "0.14.4":
             raise RuntimeError("Unexpected installed server version: " + str(health.get("version")))
         if health.get("status") != "ok":
             raise RuntimeError("House service dependencies/startup are not healthy yet")
@@ -152,7 +154,7 @@ for attempt in range(20):
             session = json.load(response)
         if "unmutedControllerCount" not in session.get("sessionPolicy", {}):
             raise RuntimeError("Updated session policy is missing")
-        print("Installed House Music 0.14.3; browser, service and session policy verified.")
+        print("Installed House Music 0.14.4; browser, service and session policy verified.")
         break
     except Exception as exc:
         last_error = exc
@@ -163,7 +165,7 @@ PY
 
 trap - 0
 echo
-echo "House Music server 0.14.3 installed."
+echo "House Music server 0.14.4 installed."
 echo "Open: http://192.168.1.12:8787/"
 echo "CD source gateway updated in its existing independent service on port 8768."
 echo "Rollback copy: $BACKUP_DIR"

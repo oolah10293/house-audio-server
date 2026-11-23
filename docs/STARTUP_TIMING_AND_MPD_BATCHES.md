@@ -78,7 +78,6 @@ cannot be claimed from source tests alone.
 - GitHub Actions test job passed for PR #22 after the source and tests.
 - No live Pi, real MPD decoder/FIFO output or physical ESP32 acceptance
   has been performed for this change.
-- The server's shipped version and installer package identity remain
-  `0.14.3`. An updated release/package and Pi install are separate
-  deployment work; do not misidentify the pre-change 0.14.3 archive as
-  containing these changes.
+- The source was merged to main in commit `9724c0fad780da8dcc9c5faf075aa28c58c3eb66`.
+- v0.14.4 is the versioned release candidate; it is not yet installed or field-measured.
+  The previous v0.14.3 archive does not contain these changes.

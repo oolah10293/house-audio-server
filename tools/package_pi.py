@@ -31,7 +31,8 @@ def main():
              'house_audio_server.py', 'auto_cd.py', 'input_sources.py',
              'radio_history.py', 'radio_listening.py', 'radio_metadata.py',
              'radio_stations.py', 'state_file.py', 'subwoofers.py',
-             'docs/RELEASE_0.14.3.md', 'docs/UNMUTED_SESSION_RETENTION.md']
+             'docs/RELEASE_0.14.4.md', 'docs/UNMUTED_SESSION_RETENTION.md',
+             'docs/STARTUP_TIMING_AND_MPD_BATCHES.md']
     files.extend(git('ls-files', 'config', 'web', 'systemd', 'pi_input').splitlines())
     files = sorted(set(files))
     payload = {name: (root / name).read_bytes() for name in files}
