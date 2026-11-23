@@ -118,3 +118,35 @@ MPD `play` and the monitor subsequently reported Snapserver `playing`.
 User has not yet reported audible start time or measured ESP32 power-on to
 sound. Keep a separate follow-up for an accurate actual Snapserver audio onset
 if needed. No additional changes authorized by this measurement.
+
+## Second fresh-session trace and stopwatch observation — Rap, 839 tracks
+
+The user timed approximately **15 seconds from switching on a radio to hearing
+music** with a stopwatch. The concurrent fresh-session trace was:
+
+| Event | Elapsed ms | Delta ms |
+| --- | ---: | ---: |
+| Fresh passive session detected | 0.0 | 0.0 |
+| MPD library query started | 0.0 | 0.0 |
+| Library query completed; 839 tracks | 118.4 | 118.4 |
+| Python shuffle completed | 119.3 | 0.9 |
+| Queue transfer started; 846 commands | 119.6 | 0.4 |
+| Batch acknowledged; 846/846 commands | 124.5 | 4.9 |
+| MPD queue transfer completed | 124.7 | 0.1 |
+| MPD state confirmed play; queue 839 | 126.2 | 1.5 |
+| Awaiting Snapserver observation | 126.2 | 0.0 |
+| Snapserver default stream observed playing | 944.5 | 818.3 |
+
+The stopwatch and the log measure **different boundaries**. The log starts at
+the server's fresh-passive-session decision and ends at a *polled* Snapserver
+stream status; it does not establish when the node powered up, first connected,
+received packets, or produced audible sound. Consequently, the approximately
+14-second discrepancy cannot be assigned to a specific stage (or solely to
+ESP32 boot/network connection) from these observations.
+
+**Diagnostic next step (without new firmware changes):** while one radio is
+already playing, power on a second radio and time its power-on-to-audio delay.
+Joining an existing session does not rebuild the default MPD queue. A similar
+15-second result would point attention toward node boot/network/Snapclient
+arrival/buffering, whereas a much shorter result would suggest investigating
+fresh-session timing boundaries. This comparison is proposed, not yet measured.
