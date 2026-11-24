@@ -24,9 +24,10 @@ class InstallerVerificationTests(unittest.TestCase):
         (self.root / 'live-gateway/gateway.py').write_text('gateway bytes\n')
         self.check = self.check.replace('/opt/house-audio-server', str(self.root / 'installed'))
         self.check = self.check.replace('/home/ads-suck/gateway.py', str(self.root / 'live-gateway/gateway.py'))
-        self.health = dict(version='0.14.5', status='ok')
+        self.health = dict(version='0.14.6', status='ok')
         self.session = dict(sessionPolicy=dict(unmutedControllerCount=0))
-        self.browser = ('<div data-view="inputs"></div>'
+        self.browser_js = 'function drawInputs() { const category = "source-category"; }'
+        self.browser = ('<div data-view="inputs"> Sources</button></div>'
                         '<label id="default-playlist-control"></label>'
                         '<main id="main-panel"></main>')
 
@@ -34,7 +35,7 @@ class InstallerVerificationTests(unittest.TestCase):
         body = {
             '/health': json.dumps(self.health),
             '/': self.browser,
-            '/house.js': 'function drawInputs() {}',
+            '/house.js': self.browser_js,
             '/session': json.dumps(self.session),
         }[url.removeprefix('http://127.0.0.1:8787')]
         return io.BytesIO(body.encode())
@@ -59,7 +60,7 @@ class InstallerVerificationTests(unittest.TestCase):
 
     def test_rejects_old_version_or_degraded_dependencies(self):
         for health in (dict(version='0.14.2-cd1', status='ok'),
-                       dict(version='0.14.5', status='degraded')):
+                       dict(version='0.14.6', status='degraded')):
             with self.subTest(health=health):
                 self.health = health
                 with self.assertRaisesRegex(SystemExit, 'Installed server validation failed'):
@@ -78,3 +79,14 @@ class InstallerVerificationTests(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, 'Updated Library layout is missing'):
                     self.verify()
                 self.browser = saved
+
+    def test_rejects_missing_sources_layout(self):
+        original_html, original_js = self.browser, self.browser_js
+        self.browser = original_html.replace('> Sources</button>', '> CD players</button>')
+        with self.assertRaisesRegex(SystemExit, 'Sources page update is missing'):
+            self.verify()
+        self.browser = original_html
+        self.browser_js = 'function drawInputs() {}'
+        with self.assertRaisesRegex(SystemExit, 'Sources page update is missing'):
+            self.verify()
+        self.browser_js = original_js

@@ -2,7 +2,9 @@
 
 ## Authoritative development baseline — main
 
-Current integrated source is **0.14.5**, including the CD gateway, automatic CD takeover, retention/restore, the browser controller and per-subwoofer fallback. Start new development from `main`. See [main baseline consolidation](docs/MAIN_BASELINE_2026-11-20.md) and [CD behavior](docs/CD_AUTO_TAKEOVER.md). Source consolidation does not establish the exact live Pi file hashes or authorize a new installation. Older release descriptions below are historical.
+Current integrated source is **0.14.6**, including the CD gateway, automatic CD takeover, retention/restore, the browser controller and per-subwoofer fallback. Start new development from `main`. See [main baseline consolidation](docs/MAIN_BASELINE_2026-11-20.md) and [CD behavior](docs/CD_AUTO_TAKEOVER.md). Source consolidation does not establish the exact live Pi file hashes or authorize a new installation. Older release descriptions below are historical.
+
+**2026-11-23 Sources Phase 1:** v0.14.6 renames CD Players to Sources, groups actually registered devices, and expands the existing CD track controls when the device is selected. Line-in and Other are discoverable but not playable yet. No ADC streaming, gateway, firmware or MPD/session changes. See [Sources plan/checkpoint](docs/SOURCES_EXPANSION_PLAN_2026-11-23.md) and [v0.14.6 release](docs/RELEASE_0.14.6.md). Physical installation/acceptance pending.
 
 **2026-11-23 webpage update:** v0.14.5 moves Default Playlist beside Display, reorders the Library actions, adds independent desktop scroll panes, scrolls Queue to the current song on entry, and groups audible Speakers first. Browser regression checks passed. See [approved layout and implementation](docs/WEBPAGE_UPDATE_PLAN_2026-11-23.md) and [v0.14.5 release notes](docs/RELEASE_0.14.5.md). Pi deployment remains pending.
 
