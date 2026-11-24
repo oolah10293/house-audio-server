@@ -1,6 +1,6 @@
 # House Music — general Sources page and future analog inputs
 
-**Status: proposal only, documented on 2026-11-23. No implementation authorization.**
+**Status: Phase A (Sources webpage) explicitly authorized and implemented; phases B/C remain proposals and are NOT authorized.**
 
 The user wants to rename the sidebar's **CD players** entry to **Sources** and
 have that page provide a way to choose among CD players, an analog-to-digital
@@ -63,7 +63,7 @@ is authorized.
 
 ## Proposed incremental sequence (each stage needs separate explicit approval)
 
-**A. Sources UI only (small, browser-focused change).**
+**A. Sources UI only (authorized, implemented in browser source).**
 Rename the navigation/page headings, show the actual registered source
 categories, and expose existing CD controls under their CD source. Preserve
 CD functionality and display line-in/other as information-only until supported.
@@ -101,13 +101,27 @@ Do not assume every source follows CD track or ADC live-stream semantics.
 
 ## Boundaries and checkpoint
 
-This is **documentation only**. No HTML, CSS, JavaScript, server code,
-gateway, CD node, ADC node firmware/YAML, dependencies, audio settings, or
-installed Pi services have been changed. There is no authorization to
-implement phase A, B, or C yet. Treat the running CD integration and House
-Music v0.14.5 browser as the working baseline.
+**Implementation checkpoint:** On 2026-11-23 the user explicitly authorized
+only Phase A, the Sources webpage update. The implementation branch updates:
 
-Before any future implementation, inspect GitHub main again and agree on
-the specific phase and scope. Run targeted browser and server/gateway
-regressions and verify physical playback separately after authorized
-packaging/deployment.
+- `web/house.html`: navigation renamed to **Sources**, keeping `data-view="inputs"`.
+- `web/house.js`: grouped registry devices under CD players, Analog / Line
+  Inputs, or Other, showing categories only when actual devices exist. Click a
+  CD player to expand or collapse its existing numbered track controls.
+  Line-in and other devices are clearly marked **Playback not available yet**
+  and are noninteractive.
+- `web/house.css`: category/expanded-track styling at desktop/mobile sizes.
+- `tests/test_house_browse.js`: mixed source kinds, unknown kinds, unavailable
+  devices, expandable CD controls, unchanged `/inputs/play` payload and
+  existing browser regressions.
+
+GitHub Actions passed Python unit, shell syntax and browser regression checks
+for the Phase A implementation branch. There has been **no field acceptance
+or on-Pi installation evidence** for this new UI as of this checkpoint.
+
+No ADC stream or other input playback has been implemented; Phase B/C still
+require separate explicit authorization. No ESP32 firmware, gateway, MPD
+control/session logic, physical CD behavior or audio settings changed.
+
+Before any future Phase B/C implementation, inspect GitHub main again and
+agree on that phase's specific scope, then test it independently.

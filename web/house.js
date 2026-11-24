@@ -13,7 +13,7 @@ const current = {
   displayMode: "metadata",
   sortModes: { filename: null, metadata: null },
   state: null, stateReceivedAt: 0, queue: [], queueVersion: null,
-  stations: [], inputs: [], speakers: [], busy: false, online: false,
+  stations: [], inputs: [], expandedInputId: null, speakers: [], busy: false, online: false,
   pollInFlight: false, browseRequest: 0, notifyTimer: null,
   lastRadioId: null, lastSongId: null
 };
@@ -591,31 +591,75 @@ async function loadInputs() {
 }
 function drawInputs() {
   if (current.view !== "inputs") return;
-  clearView("WIRELESS AUDIO SOURCES", "CD players");
+  clearView("HOUSE AUDIO INPUTS", "Sources");
   action("⟳ Refresh", loadInputs);
-  const cds = current.inputs.filter((item) => item.kind === "cd");
-  byId("breadcrumbs").textContent = cds.length + " discovered CD players · playback uses the house speakers";
-  if (!cds.length) {
-    empty("No CD players available", "Check that the ESP32 and Pi input gateway are running.");
+  const sources = current.inputs;
+  byId("breadcrumbs").textContent = sources.length +
+    (sources.length === 1 ? " registered source" : " registered sources") +
+    " · CD playback uses the house speakers";
+  if (!sources.length) {
+    empty("No sources available", "Check that the input gateway and connected devices are running.");
     return;
   }
+
+  const groups = [
+    ["cd", "CD players", "CD Player"],
+    ["line-in", "Analog / Line Inputs", "Analog Input"],
+    ["other", "Other sources", "Other Source"]
+  ];
   const active = current.state?.source;
-  for (const source of cds) {
-    const ready = Boolean(source.available && source.status === "ready" &&
-                          Array.isArray(source.tracks) && source.tracks.length);
-    row("◉", source.name || "CD Player",
-      (source.available ? "Connected" : "Offline") + " · " +
-      (ready ? source.tracks.length + " audio tracks" : "No readable CD"),
-      () => {}, { iconClass: "cd", disabled: true });
-    if (!ready) continue;
-    const tracks = [...source.tracks].sort((a, b) => a - b);
-    for (const number of tracks) {
-      const selected = active?.type === "cd" &&
-                       active.input?.sourceId === source.sourceId &&
-                       active.input?.trackNumber === number;
-      row("♪", "Track " + number, source.name || "CD Player",
-        () => command("/inputs/play", { sourceId: source.sourceId, trackNumber: number }),
-        { iconClass: "cd", playing: selected });
+  for (const [kind, heading, fallbackName] of groups) {
+    // Unrecognized future kinds remain visible in Other, never silently hidden.
+    const devices = sources.filter((source) =>
+      kind === "other" ? source.kind !== "cd" && source.kind !== "line-in"
+                       : source.kind === kind);
+    if (!devices.length) continue;
+    byId("items").append(node("div", "hint source-category",
+      heading + " · " + devices.length));
+    for (const source of devices) {
+      const name = source.name || fallbackName;
+      const connected = source.available === true;
+      if (kind !== "cd") {
+        const detail = (connected ? "Connected" : "Offline") +
+          " · Playback not available yet";
+        const placeholder = row(kind === "line-in" ? "≋" : "◇", name, detail, () => {},
+          { disabled: true, iconClass: kind === "line-in" ? "line-in" : "" });
+        placeholder.className += " source-placeholder";
+        continue;
+      }
+
+      const ready = connected && source.status === "ready" &&
+        Array.isArray(source.tracks) && source.tracks.length > 0;
+      const expanded = current.expandedInputId === source.sourceId;
+      const detail = (connected ? "Connected" : "Offline") + " · " +
+        (ready ? source.tracks.length + " audio tracks" : "No readable CD");
+      const device = row("◉", (expanded ? "▾ " : "▸ ") + name, detail,
+        () => {
+          current.expandedInputId = expanded ? null : source.sourceId;
+          drawInputs();
+        }, { iconClass: "cd" });
+      device.className += " source-device";
+      device.children[0].setAttribute("aria-expanded", String(expanded));
+      device.children[0].setAttribute("aria-label",
+        (expanded ? "Collapse " : "Expand ") + name + " CD tracks");
+      if (!expanded) continue;
+      if (!ready) {
+        byId("items").append(node("div", "hint source-track-hint",
+          connected ? "No readable CD" : "CD player offline"));
+        continue;
+      }
+
+      // Keep the existing sorted CD-track controls and /inputs/play request.
+      const tracks = [...source.tracks].sort((a, b) => a - b);
+      for (const number of tracks) {
+        const selected = active?.type === "cd" &&
+                         active.input?.sourceId === source.sourceId &&
+                         active.input?.trackNumber === number;
+        const track = row("♪", "Track " + number, name,
+          () => command("/inputs/play", { sourceId: source.sourceId, trackNumber: number }),
+          { iconClass: "cd", playing: selected });
+        track.className += " source-track";
+      }
     }
   }
 }

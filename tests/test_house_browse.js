@@ -127,26 +127,71 @@ async function test() {
   assert.equal(calls.at(-1).payload.enabled, false,
     "Starting a CD album must disable shuffle after queue replacement.");
 
-  // CD input view is separate from ripped-CD library browsing and never
-  // supplies an arbitrary URL; selection sends only the source ID and track.
-  run('current.view = "inputs"; current.inputs = ' +
+  // The Sources page discovers devices by type. Existing CD controls only
+  // expand when a specific CD is selected; their playback command is unchanged.
+  run('current.view = "inputs"; current.expandedInputId = null; current.inputs = ' +
       '[{sourceId:"cd-abc123",name:"LiteOn CD",kind:"cd",available:true,status:"ready",tracks:[3,1,2]}];' +
       'current.state = {source:{type:"cd", input:{sourceId:"cd-abc123",name:"LiteOn CD",trackNumber:2,' +
       'trackNumbers:[1,2,3]}, canSeek:false, resumePlaylist:{available:true,snapshotId:"abc"}}' +
       ',mpd:{transport:"play",queueLength:3,song:{file:"http://127.0.0.1:8768/audio/cd-abc123/2.wav"},' +
       'durationSeconds:170,elapsedSeconds:10}}; drawInputs(); renderPlayer();');
-  const cdItems = ids.get("items").children;
-  assert.equal(cdItems.length, 4, "One source heading and three CD tracks");
-  assert.equal(cdItems[1].children[0].children[1].children[0].textContent, "Track 1");
-  assert.equal(cdItems[2].children[0].children[1].children[0].textContent, "Track 2");
-  assert.equal(cdItems[2].className, "item playing", "Playing CD track is highlighted");
-  await cdItems[1].children[0].listeners.click();
+  let sourceItems = ids.get("items").children;
+  assert.equal(ids.get("view-title").textContent, "Sources");
+  assert.equal(sourceItems.length, 2, "CD device list is initially collapsed.");
+  assert.equal(sourceItems[0].textContent, "CD players · 1");
+  assert.equal(sourceItems[1].children[0].attrs["aria-expanded"], "false");
+  assert.equal(sourceItems[1].children[0].children[1].children[0].textContent, "▸ LiteOn CD");
+  sourceItems[1].children[0].listeners.click();
+  sourceItems = ids.get("items").children;
+  assert.equal(sourceItems.length, 5, "Expanding a CD displays only its track controls.");
+  assert.equal(sourceItems[1].children[0].attrs["aria-expanded"], "true");
+  assert.equal(sourceItems[2].children[0].children[1].children[0].textContent, "Track 1");
+  assert.equal(sourceItems[3].children[0].children[1].children[0].textContent, "Track 2");
+  assert.equal(sourceItems[3].className, "item playing source-track",
+    "Currently playing CD track remains highlighted.");
+  await sourceItems[2].children[0].listeners.click();
   assert.equal(calls.at(-1).path, "/inputs/play");
   assert.equal(calls.at(-1).payload.sourceId, "cd-abc123");
   assert.equal(calls.at(-1).payload.trackNumber, 1);
   assert.equal(ids.get("track-title").textContent, "Track 2");
   assert.equal(ids.get("seek").disabled, true, "CD HTTP WAV does not advertise seeking");
   assert.equal(ids.get("resume").hidden, false, "CD source exposes Resume Playlist");
+  sourceItems[1].children[0].listeners.click();
+  assert.equal(ids.get("items").children.length, 2, "CD track controls collapse cleanly.");
+
+  // Mixed registered inputs: CD, analog and unknown/future types all appear,
+  // but non-CD devices never offer a fake Play or send a CD playback request.
+  run('current.inputs = [' +
+      '{sourceId:"adc-1",name:"Audio ADC",kind:"line-in",available:true,status:"ready"},' +
+      '{sourceId:"other-1",name:"Future Device",kind:"future-kind",available:true},' +
+      '{sourceId:"cd-off",name:"Spare CD",kind:"cd",available:false,status:"ready",tracks:[1]},' +
+      '{sourceId:"cd-abc123",name:"LiteOn CD",kind:"cd",available:true,status:"ready",tracks:[3,1,2]}];' +
+      'current.expandedInputId = null; drawInputs();');
+  sourceItems = ids.get("items").children;
+  assert.equal(sourceItems.length, 7, "Only populated type groups are shown.");
+  assert.equal(sourceItems[0].textContent, "CD players · 2");
+  assert.equal(sourceItems[1].children[0].children[1].children[0].textContent, "▸ Spare CD");
+  assert.equal(sourceItems[2].children[0].children[1].children[0].textContent, "▸ LiteOn CD");
+  assert.equal(sourceItems[3].textContent, "Analog / Line Inputs · 1");
+  assert.equal(sourceItems[4].children[0].children[1].children[0].textContent, "Audio ADC");
+  assert.equal(sourceItems[4].children[0].disabled, true,
+    "Registered line-in must not pretend to be playable.");
+  assert.ok(sourceItems[4].children[0].children[1].children[1].textContent.includes(
+    "Playback not available yet"));
+  assert.equal(sourceItems[5].textContent, "Other sources · 1");
+  assert.equal(sourceItems[6].children[0].disabled, true,
+    "Unrecognized future kinds are visible but have no playback commands.");
+  sourceItems[1].children[0].listeners.click();
+  sourceItems = ids.get("items").children;
+  assert.equal(sourceItems[2].textContent, "CD player offline");
+  assert.equal(sourceItems[2].className, "hint source-track-hint");
+  assert.equal(calls.at(-1).path, "/inputs/play",
+    "No additional playback command is sent by viewing offline/ADC sources.");
+
+  run('current.expandedInputId = null; current.inputs = []; drawInputs()');
+  sourceItems = ids.get("items").children;
+  assert.equal(sourceItems.length, 1);
+  assert.equal(sourceItems[0].children[0].textContent, "No sources available");
 
   // The Queue view positions the playing row at the top of the visible
   // scroller without rotating MPD order or repeatedly jumping on refresh.
@@ -187,6 +232,9 @@ async function test() {
   assert.ok(html.indexOf('id="view-actions"') < html.indexOf('id="default-folder"'),
     "The default playlist dropdown belongs to the header, not the sidebar.");
   assert.ok(html.includes('id="main-panel"'));
+  assert.ok(html.includes('data-view="inputs" class="nav-button"><span aria-hidden="true">♫</span> Sources</button>'),
+    "Navigation entry is Sources, using the same inputs view.");
+  assert.ok(!html.includes('> CD players</button>'));
   assert.ok(css.includes(".sidebar,.main{min-height:0;overflow-y:auto"),
     "Independent desktop scrolling must be configured.");
   run('current.view = "radio"; clearView("Radio", "Radio")');
@@ -195,6 +243,6 @@ async function test() {
   assert.equal(ids.get("view-actions").children[0], ids.get("default-playlist-control"),
     "The persistent select remains mounted when changing views.");
 
-  console.log("House Music Library, queue, speakers, and CD browser regressions passed.");
+  console.log("House Music Library, Sources/CD, queue, and speakers browser regressions passed.");
 }
 test().catch(error => { console.error(error); process.exitCode = 1; });
