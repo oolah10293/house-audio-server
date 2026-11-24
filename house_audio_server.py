@@ -1284,7 +1284,7 @@ class RadioPlayback:
             except (OSError, MpdError):
                 self.history.suspend()
 
-    def select(self, mpd, station):
+    def select(self, mpd, station, *, start_paused=False):
         # Re-selecting a CD track on the same disc does not replace its queue
         # or recapture the previous library bookmark.
         if (station.get("kind") == "cd" and self.station is not None
@@ -1337,11 +1337,13 @@ class RadioPlayback:
             self.song_id = queue[station.get("trackIndex", 0)].get("id")
             self.pending_station = None
             self.empty_selection = False
-            mpd.command(f'play {station.get("trackIndex", 0)}')
+            if not start_paused:
+                mpd.command(f'play {station.get("trackIndex", 0)}')
         except (OSError, MpdError) as exc:
             self.status, self.error = "error", str(exc)
             raise
-        self.intent, self.status = "play", "connecting"
+        self.intent, self.status = (("pause", "paused") if start_paused
+                                    else ("play", "connecting")
         if recovering:
             # Explicit station selection abandons the uncertain attempt but
             # keeps the original library bookmark, never the partial queue.
@@ -1683,6 +1685,9 @@ class PassiveSessionPolicy:
         self._previous_present_count: Optional[int] = None
         self._previous_presence: Optional[dict] = None
         self._auto_paused_state: Optional[tuple] = None
+        # Eject-restored sources wait for explicit Play, not passive arrival.
+        # Bound to queue identity so unrelated source replacement isn't held.
+        self._cd_eject_paused_state: Optional[tuple] = None
         self._pending_final_stop = False
         self._pending_song_id: Optional[int] = None
         self._saved_repeat = False
@@ -1751,6 +1756,7 @@ class PassiveSessionPolicy:
         return self.default_folder
 
     def _start_default_session(self, mpd: MpdClient) -> None:
+        self._cd_eject_paused_state = None
         # Take one selection at the start of this fresh session. A setting
         # change after this point belongs to the next fresh session.
         folder = self._default_folder()
@@ -1811,6 +1817,9 @@ class PassiveSessionPolicy:
                 else "renderer_joined_existing_session"
             )
         elif transport == "pause":
+            if self.cd_eject_pause_active(state):
+                self._record("cd_eject_restore_waiting_for_play")
+                return
             # Passive-radio arrival is an explicit request for audible music.
             # Resume the existing paused house queue/position; do not replace
             # it with the default MP3s queue.
@@ -1897,6 +1906,14 @@ class PassiveSessionPolicy:
     def _session_identity(state):
         return state.get("songId"), state.get("queueVersion")
 
+    def mark_cd_eject_pause(self, mpd):
+        """Prevent automatic passive-node resumption of this eject-restored queue."""
+        self._cd_eject_paused_state = self._session_identity(mpd.state())
+
+    def cd_eject_pause_active(self, state):
+        return (self._cd_eject_paused_state is not None
+                and self._cd_eject_paused_state == self._session_identity(state))
+
     def explicit_transport(self, mpd):
         """Called under MPD_WRITE_LOCK before deliberate play/pause/stop/queue edits."""
         if self.radio is not None:
@@ -1905,6 +1922,7 @@ class PassiveSessionPolicy:
             self._restore_options(mpd, "pending_stop_cancelled_explicit_command")
         with self._lock:
             self._auto_paused_state = None
+            self._cd_eject_paused_state = None
 
     def _apply_controller_pause(self, mpd, presence):
         state = mpd.state()
@@ -2080,14 +2098,16 @@ class PassiveSessionPolicy:
             # selected before our first presence sample or during monitor loss.
             radio.release(mpd, clear=True)
             self._auto_paused_state = None
+            self._cd_eject_paused_state = None
             self._record("radio_last_node_left_session_idle")
             return
         if passive_arrival and radio.intent == "stop":
             self._start_default_session(mpd)
             self._auto_paused_state = None
             return
-        if ((passive_arrival and radio.intent == "pause")
-                or (radio.auto_paused and presence["audibleCount"] > 0)):
+        if (not self.cd_eject_pause_active(mpd.state())
+                and ((passive_arrival and radio.intent == "pause")
+                     or (radio.auto_paused and presence["audibleCount"] > 0))):
             radio.resume(mpd, automatic=True)
             self._record("radio_resumed_live")
         if (radio.intent == "play" and presence["unmutedControllerCount"] > 0
