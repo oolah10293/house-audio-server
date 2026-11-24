@@ -84,6 +84,44 @@ Integrate one additional device category at a time using the existing
 source identity/availability contract and type-specific playback handling.
 Do not assume every source follows CD track or ADC live-stream semantics.
 
+## Agreed ADC/CD coexistence rules (user specification, 2026-11-23)
+
+**Design specification only — not an implementation authorization.**
+The ADC node's physical "plug in" event means **powering on the S3**, not
+detecting an analog cable or incoming audio amplitude.
+
+- Powering on an ADC source makes it eligible for automatic selection even
+  when its analog audio is silent, provided no higher-priority new CD
+  event is taking over.
+- Powering on a CD node with a valid audio disc, or inserting a *new valid
+  audio disc*, takes over from the ADC whether the ADC signal is audible,
+  silent, playing, paused or otherwise selected.
+- While a CD is actively selected, an ADC powering on or reconnecting
+  should not steal playback from the CD.
+- If the CD disconnects and the ADC is still online, return to that ADC
+  rather than blindly restore the pre-ADC library/radio bookmark.
+- If the ADC disconnects while it owns playback and no other source has
+  claimed the session, restore the pre-ADC radio/library state where valid.
+- A user's manual source selection is honored and stale heartbeats or
+  reconnects never immediately reclaim it; genuinely new physical
+  insertion/boot events can still invoke their respective auto-takeover
+  rules. Do not repeatedly restart or oscillate the selected source.
+- If the ADC disconnects while the CD owns playback, keep the CD playing;
+  do not later restore a disconnected ADC.
+- Source restoration must be based on the *current* selected source and
+  valid recorded prior state so it never overwrites a newer manual choice.
+
+The current `auto_cd.py` has a CD-only event owner and radio/library
+restoration mechanism; it does not yet implement ADC fallback. Extend
+source arbitration/restore coherently rather than running independent
+competing takeover loops. Existing CD eject logic remains unchanged
+until specifically discussed: ejection currently stops CD playback and
+waits for another disc, whereas **physical CD disconnect** triggers
+restoration.
+
+These are intended Phase B behaviors. No server, gateway, web code or
+S3 firmware implementation is authorized here.
+
 ## Open design decisions before adding a live input
 
 - Whether a line-in source is manually selected, automatically takes over
