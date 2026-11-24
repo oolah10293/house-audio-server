@@ -70,29 +70,43 @@ class AutoCdSource:
         self.missing_since = None
 
     def _restore(self, mpd, radio, policy, presence, reason="disconnected"):
-        # Called only while the selected CD queue is still ours. Never
-        # overwrite another writer's intentional source selection.
-        # A confirmed disc eject releases the same ownership as unplugging;
-        # only a later real boot/disc-revision event may retake playback.
+        # Only the still-owned CD may restore a previous source. Disconnect
+        # keeps its existing behavior; confirmed eject has a distinct policy.
         saved_radio = self.prior_radio
         previous_transport = self.prior_transport
+        ejected = reason == "ejected"
         self._end_ownership()
+
+        # A zero participant count is conclusive only when Snapserver is
+        # reachable. Unknown presence must not destroy a listening bookmark.
+        if (ejected and presence["presentCount"] == 0
+                and policy.monitor.snapshot().get("reachable")):
+            policy.explicit_transport(mpd)
+            radio.release(mpd, clear=True)
+            self.last_action = "cd_ejected_session_idle"
+            return
+
         if saved_radio is not None:
             policy.explicit_transport(mpd)
-            radio.select(mpd, saved_radio)
-            if previous_transport == "pause":
+            # Queue a live station without starting its stream. Selecting it
+            # normally and then pausing can emit unwanted audio on eject.
+            radio.select(mpd, saved_radio, start_paused=ejected)
+            if ejected:
+                policy.mark_cd_eject_pause(mpd)
+            elif previous_transport == "pause":
                 radio.pause(mpd)
             elif previous_transport == "stop":
                 radio.stop(mpd)
             self.last_action = f"cd_{reason}_returned_to_radio"
             return
+
         bookmark = radio.playlist_resume.view()
         if bookmark["available"] and bookmark["snapshotId"]:
             snap = policy.monitor.snapshot()
             unavailable_output_hold = (
                 policy.enabled and bool(snap.get("reachable"))
                 and presence["unmutedControllerCount"] > 0 and presence["audibleCount"] == 0)
-            hold = (previous_transport in ("pause", "stop")
+            hold = (ejected or previous_transport in ("pause", "stop")
                     or presence["presentCount"] == 0 or unavailable_output_hold)
 
             def retained(state):
@@ -101,9 +115,12 @@ class AutoCdSource:
             radio.resume_playlist(mpd, bookmark["snapshotId"],
                                   lambda: policy.explicit_transport(mpd), hold,
                                   retained if unavailable_output_hold and
-                                  previous_transport not in ("pause", "stop") else None)
-            if previous_transport == "stop":
+                                  previous_transport not in ("pause", "stop") and not ejected
+                                  else None)
+            if previous_transport == "stop" and not ejected:
                 mpd.command("stop")
+            if ejected:
+                policy.mark_cd_eject_pause(mpd)
             self.last_action = f"cd_{reason}_restored_library"
         else:
             policy.explicit_transport(mpd)
@@ -199,9 +216,8 @@ class AutoCdSource:
             elif not self.ready(current):
                 self.missing_since = None
                 if current.get("status") == "no_disc":
-                    # A confirmed physical eject must not strand House Music
-                    # in an empty CD queue. Reuse the proven unplug restore,
-                    # preserving the original radio/library transport state.
+                    # Confirmed eject restores paused if listeners remain,
+                    # otherwise clears to fresh idle; unplug remains unchanged.
                     try:
                         self._restore(mpd, radio, policy, presence, reason="ejected")
                     except Exception as exc:
