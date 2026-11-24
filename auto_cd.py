@@ -69,9 +69,11 @@ class AutoCdSource:
         self.disc_ejected = False
         self.missing_since = None
 
-    def _restore(self, mpd, radio, policy, presence):
+    def _restore(self, mpd, radio, policy, presence, reason="disconnected"):
         # Called only while the selected CD queue is still ours. Never
         # overwrite another writer's intentional source selection.
+        # A confirmed disc eject releases the same ownership as unplugging;
+        # only a later real boot/disc-revision event may retake playback.
         saved_radio = self.prior_radio
         previous_transport = self.prior_transport
         self._end_ownership()
@@ -82,7 +84,7 @@ class AutoCdSource:
                 radio.pause(mpd)
             elif previous_transport == "stop":
                 radio.stop(mpd)
-            self.last_action = "cd_disconnected_returned_to_radio"
+            self.last_action = f"cd_{reason}_returned_to_radio"
             return
         bookmark = radio.playlist_resume.view()
         if bookmark["available"] and bookmark["snapshotId"]:
@@ -102,11 +104,11 @@ class AutoCdSource:
                                   previous_transport not in ("pause", "stop") else None)
             if previous_transport == "stop":
                 mpd.command("stop")
-            self.last_action = "cd_disconnected_restored_library"
+            self.last_action = f"cd_{reason}_restored_library"
         else:
             policy.explicit_transport(mpd)
             radio.release(mpd, clear=True)
-            self.last_action = "cd_disconnected_stopped"
+            self.last_action = f"cd_{reason}_stopped"
 
     def _play_new(self, mpd, radio, policy, source, token, preserve_previous):
         # One physical event can only claim the house once. If an MPD
@@ -196,6 +198,16 @@ class AutoCdSource:
                 return
             elif not self.ready(current):
                 self.missing_since = None
+                if current.get("status") == "no_disc":
+                    # A confirmed physical eject must not strand House Music
+                    # in an empty CD queue. Reuse the proven unplug restore,
+                    # preserving the original radio/library transport state.
+                    try:
+                        self._restore(mpd, radio, policy, presence, reason="ejected")
+                    except Exception as exc:
+                        self.last_error = str(exc)
+                        self.last_action = "cd_eject_restore_failed"
+                    return
                 if not self.disc_ejected:
                     radio.eject_cd(mpd)
                     self.disc_ejected = True
