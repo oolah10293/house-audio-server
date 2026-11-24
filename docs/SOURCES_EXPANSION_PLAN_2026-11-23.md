@@ -172,6 +172,59 @@ to modify firmware.** The user has now confirmed **line-level audio outputs**
 and shown the exact purple PCM1808 breakout listing. Wiring, coupling
 and mode straps remain subject to physical PCB verification.
 
+### Bench-build checklist — consolidated as discussed
+
+**Recorded design, not proven final wiring.** This checklist uses only
+parts already reported or simple hookup materials; it does **not** mean
+the owner has authorized any firmware changes or PCB rework.
+
+| Part | Qty | Status / purpose |
+| --- | --- | --- |
+| Seeed XIAO ESP32-S3 | 1 | Existing board; Wi-Fi capture and OTA |
+| Purple PCM1808 24-bit stereo I²S ADC module | 1 | Owner purchased six; use one for prototype |
+| USB-C power lead | 1 | Powers S3; S3 board provides USB 5 V and regulated 3.3 V to ADC, subject to supply verification |
+| Analog stereo line-level cable/connector | 1 | Stereo 3.5 mm **or** 2× RCA, not yet chosen; source ground shared |
+| Short hookup wires / breadboard or perfboard | As needed | Prototype wiring; keep clocks/data short |
+| External attenuator / DPDT switch | Optional | **Defer** until actual line-output levels and ADC input network are tested |
+| Replacement SMD resistors/capacitors | 0 planned | Owner does not want to buy or solder SMD replacements |
+
+**Preliminary full module hookup** (read the silkscreen on the actual board
+first; *not yet validated by a completed I²S hardware test*):
+
+| Module pad/label | Proposed connection | Notes |
+| --- | --- | --- |
+| RIN | Right line-level signal | Top edge |
+| LIN | Left line-level signal | Top edge |
+| Top-edge GND (if confirmed) | Audio source ground | Check continuity/marking before use |
+| SCK | XIAO D0 / GPIO1 | MCLK, target 12.288 MHz at 48 kHz |
+| BCK | XIAO D1 / GPIO2 | Target BCLK 3.072 MHz |
+| LRC | XIAO D3 / GPIO4 | LRCLK 48 kHz |
+| OUT | XIAO D4 / GPIO5 | PCM1808 serial data **into** S3 |
+| +5V | S3 USB-powered 5 V pin | Analog rail; check PCB and available current |
+| 3.3 / 3.3V | S3 3V3 pin | Digital rail; duplicate module 3.3 labels need continuity check, not two separate supplies |
+| GND | S3 GND | Common power and signal reference |
+| MD0 | Leave unconnected **provisionally** | TI PCM1808 defaults to low via internal pulldown: slave mode |
+| MD1 | Leave unconnected **provisionally** | TI defaults low via internal pulldown: slave mode |
+| FMY (PCB label; FMT on chip) | Leave unconnected **provisionally** | TI defaults low via internal pulldown: I²S format |
+
+**Hardware prerequisites:** Confirm the +5 V and 3.3 V labels are
+actual input rails and that the board has no conflicting ties or
+regulators; check slave/FMT strapping before first power-on. Verify
+that the selected Arduino ESP32-S3 I²S implementation can generate the
+MCLK signal on the proposed GPIO before treating that pin allocation
+as final. No extra dedicated level converters are planned for the
+PCM1808-to-S3 interface: both use a nominal 3.3 V digital domain.
+
+**Possible incorrect factory input filter:** If this exact PCB
+is confirmed to have the alleged 10 kΩ / 100 nF per-channel low-pass,
+the user prefers **not buying SMD replacement components**. A possible
+repair is to identify and remove the offending **shunt** filter
+capacitor on each channel while leaving the original series resistors.
+This is only a test idea, not a confirmed/authorized physical change.
+First inspect and verify the actual analog network; do not remove a
+coupling or bypass capacitor by mistake. This prospective repair may
+still affect the eventual input pad and noise/alias performance.
+
 ### Components and topology
 
 - Existing Seeed XIAO ESP32-S3 on USB 5 V power (initial firmware bootstrap
