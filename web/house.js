@@ -622,8 +622,9 @@ function drawInputs() {
       if (kind !== "cd") {
         const detail = (connected ? "Connected" : "Offline") +
           " · Playback not available yet";
-        row(kind === "line-in" ? "≋" : "◇", name, detail, () => {},
+        const placeholder = row(kind === "line-in" ? "≋" : "◇", name, detail, () => {},
           { disabled: true, iconClass: kind === "line-in" ? "line-in" : "" });
+        placeholder.className += " source-placeholder";
         continue;
       }
 
