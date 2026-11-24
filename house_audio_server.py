@@ -1343,7 +1343,7 @@ class RadioPlayback:
             self.status, self.error = "error", str(exc)
             raise
         self.intent, self.status = (("pause", "paused") if start_paused
-                                    else ("play", "connecting")
+                                    else ("play", "connecting"))
         if recovering:
             # Explicit station selection abandons the uncertain attempt but
             # keeps the original library bookmark, never the partial queue.
