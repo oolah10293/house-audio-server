@@ -31,7 +31,7 @@ do
     exit 1
   fi
 done
-if ! grep -Fq 'SERVICE_VERSION = "0.14.5"' house_audio_server.py ||
+if ! grep -Fq 'SERVICE_VERSION = "0.14.6"' house_audio_server.py ||
    ! grep -Fq 'data-view="inputs"' web/house.html ||
    ! grep -Fq 'id="default-playlist-control"' web/house.html ||
    ! grep -Fq 'id="main-panel"' web/house.html ||
@@ -146,7 +146,7 @@ for attempt in range(20):
             browser = response.read().decode("utf-8")
         with urlopen(base + "/house.js", timeout=2) as response:
             js = response.read().decode("utf-8")
-        if health.get("version") != "0.14.5":
+        if health.get("version") != "0.14.6":
             raise RuntimeError("Unexpected installed server version: " + str(health.get("version")))
         if health.get("status") != "ok":
             raise RuntimeError("House service dependencies/startup are not healthy yet")
@@ -158,7 +158,7 @@ for attempt in range(20):
             session = json.load(response)
         if "unmutedControllerCount" not in session.get("sessionPolicy", {}):
             raise RuntimeError("Updated session policy is missing")
-        print("Installed House Music 0.14.5; browser, service and session policy verified.")
+        print("Installed House Music 0.14.6; browser, service and session policy verified.")
         break
     except Exception as exc:
         last_error = exc
@@ -169,7 +169,7 @@ PY
 
 trap - 0
 echo
-echo "House Music server 0.14.5 installed."
+echo "House Music server 0.14.6 installed."
 echo "Open: http://192.168.1.12:8787/"
 echo "CD source gateway updated in its existing independent service on port 8768."
 echo "Rollback copy: $BACKUP_DIR"
