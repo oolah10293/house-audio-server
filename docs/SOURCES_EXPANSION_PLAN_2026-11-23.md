@@ -84,51 +84,61 @@ Integrate one additional device category at a time using the existing
 source identity/availability contract and type-specific playback handling.
 Do not assume every source follows CD track or ADC live-stream semantics.
 
-## Agreed ADC/CD coexistence rules (user specification, 2026-11-23)
+## Agreed ADC/CD takeover rules — latest event wins (corrected 2026-11-23)
 
-**Design specification only — not an implementation authorization.**
-The ADC node's physical "plug in" event means **powering on the S3**, not
-detecting an analog cable or incoming audio amplitude.
+**Design specification only — no Phase B implementation authorization.**
 
-- Powering on an ADC source makes it eligible for automatic selection even
-  when its analog audio is silent, provided no higher-priority new CD
-  event is taking over.
-- Powering on a CD node with a valid audio disc, or inserting a *new valid
-  audio disc*, takes over from the ADC whether the ADC signal is audible,
-  silent, playing, paused or otherwise selected.
-- While a CD is actively selected, an ADC powering on or reconnecting
-  should not steal playback from the CD.
-- If the CD disconnects and the ADC is still online, return to that ADC
-  rather than blindly restore the pre-ADC library/radio bookmark.
-- If the ADC disconnects while it owns playback and no other source has
-  claimed the session, restore the pre-ADC radio/library state where valid.
-- A user's manual source selection is honored and stale heartbeats or
-  reconnects never immediately reclaim it; genuinely new physical
-  insertion/boot events can still invoke their respective auto-takeover
-  rules. Do not repeatedly restart or oscillate the selected source.
-- If the ADC disconnects while the CD owns playback, keep the CD playing;
-  do not later restore a disconnected ADC.
-- Source restoration must be based on the *current* selected source and
-  valid recorded prior state so it never overwrites a newer manual choice.
+**There is NO fixed source-type priority.** The user's rule is:
+**whichever source most recently powers on takes over House Music, regardless
+of which source is currently playing. Inserting a CD is a fresh takeover event
+with exactly the same precedence as power-on.** Event order determines the
+winner, not whether the source is an ADC or CD player.
 
-The current `auto_cd.py` has a CD-only event owner and radio/library
-restoration mechanism; it does not yet implement ADC fallback. Extend
-source arbitration/restore coherently rather than running independent
-competing takeover loops. Existing CD eject logic remains unchanged
-until specifically discussed: ejection currently stops CD playback and
-waits for another disc, whereas **physical CD disconnect** triggers
-restoration.
+- **ADC powered on**: take over immediately, including if the ADC signal is
+  silent or the CD player is currently playing. "Plug in" means power to the
+  ADC S3, not audio-cable insertion or detected signal amplitude.
+- **CD player powered on**: claim source selection even if the ADC currently
+  owns playback. If there is no playable audio disc, the CD has no tracks to
+  play; inserting a playable CD later is another takeover event.
+- **CD inserted**: claim source selection and play the new audio disc when
+  valid, including if ADC/radio/library was selected more recently. If another
+  source powers on *after* the insertion, that new power-on wins.
+- **Manual source choice**: changes playback immediately. Subsequent genuine
+  power-on or CD-insertion events still take over; simply being present or
+  sending ordinary heartbeats does not constitute a new event.
+- **Silence is not an event**: a powered ADC remains selected despite no
+  analog signal. A new ordinary heartbeat must not repeatedly restart it.
+- **Temporary network interruptions and gateway restarts** must not
+  masquerade as actual new source power-on events. Track node boot identity
+  and new CD-medium identity to avoid spurious source switches.
+- **Disconnect and restoration** should affect playback only if the
+  disappearing node currently owns the session; do not overwrite an
+  intervening manual or automatic selection. The exact fallback policy,
+  including whether to restore the latest still-connected source or a saved
+  library/radio bookmark, remains to be worked out separately.
+- **Ejecting a disc** is not the same as inserting one. No change to the
+  existing CD ejection behavior is authorized by this specification.
 
-These are intended Phase B behaviors. No server, gateway, web code or
-S3 firmware implementation is authorized here.
+Examples:
+1. ADC powers on → **ADC**; CD with disc powers on → **CD**; ADC is
+   power-cycled afterward → **ADC**.
+2. CD is playing → ADC powers on → **ADC**; new CD inserted → **CD**.
+3. ADC is silent but powered → CD powers on → **CD**; ADC remains online
+   and sends heartbeats → **CD stays selected**.
+
+Current `auto_cd.py` implements CD-only event ownership and restoration.
+Phase B must coordinate CD and ADC events through a single arbitration
+policy rather than independent competing auto-takeover loops. No server,
+gateway, web code or S3 firmware is changed by this documentation update.
 
 ## Open design decisions before adding a live input
 
-- Whether a line-in source is manually selected, automatically takes over
-  on signal/activity, or supports both. **Do not inherit CD's automatic
-  plug-in/disc behavior by default.**
-- What should happen when the ADC source goes silent, disconnects, or
-  returns, and when switching back to library, radio or CD.
+- **Decided:** ADC S3 power-on is a takeover event, even with silent
+  analog input. Source power-on and CD insertion use latest-event-wins
+  arbitration, with no permanent CD priority.
+- **Still open:** Precise disconnect/fallback/return policy, CD power-on
+  without playable media and the user-visible waiting state, and recovery
+  from an interrupted live stream without false new power-on events.
 - The audio format, stream transport, buffering/synchronization and desired
   latency; verify with a real ADC node before promising performance.
 - Whether selection should preserve/restore the interrupted source and
