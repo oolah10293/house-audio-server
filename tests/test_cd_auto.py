@@ -49,23 +49,30 @@ class AutoCdSourceTests(unittest.TestCase):
         self.assertEqual(self.mpd.commands, commands)
         self.assertEqual(self.radio.station["sourceId"], SOURCE["sourceId"])
 
-    def test_eject_stops_old_stream_and_new_disc_starts_without_losing_bookmark(self):
+    def test_eject_restores_original_library_and_new_disc_retakes_cleanly(self):
         self.tick()
-        token = self.radio.playlist_resume.token
+        old_token = self.radio.playlist_resume.token
         self.source.update(status="no_disc", tracks=[])
         self.tick()
-        self.assertEqual(self.mpd.paths, [])
-        self.assertEqual(self.mpd.values["transport"], "stop")
-        self.assertEqual(self.radio.playlist_resume.token, token)
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertEqual(self.mpd.values["transport"], "play")
+        self.assertEqual(self.mpd.values["songPosition"], 2)
+        self.assertEqual(self.mpd.values["elapsedSeconds"], 47.125)
+        self.assertIsNone(self.auto.active)
+        self.assertIsNone(self.radio.station)
+        self.assertEqual(self.auto.snapshot()["lastAction"], "cd_ejected_restored_library")
+        self.assertFalse(self.radio.playlist_resume.view()["available"])
+        old_commands = list(self.mpd.commands)
         for _ in range(3):
             self.tick()
-        self.assertEqual(self.mpd.paths, [])
+        self.assertEqual(self.mpd.commands, old_commands)  # no heartbeat retake
         self.source.update(status="ready", tracks=list(range(1, 9)), discRevision=2)
         self.tick()
         self.assertEqual(len(self.mpd.paths), 8)
         self.assertEqual(self.mpd.values["songPosition"], 0)
         self.assertEqual(self.mpd.values["transport"], "play")
-        self.assertEqual(self.radio.playlist_resume.token, token)
+        self.assertEqual(self.radio.playlist_resume.saved["tracks"], self.original)
+        self.assertNotEqual(self.radio.playlist_resume.token, old_token)
 
     def test_same_track_count_with_new_revision_is_still_new_disc(self):
         self.tick()
@@ -88,12 +95,16 @@ class AutoCdSourceTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.mpd.paths, self.original)
 
-    def test_ejected_then_unplugged_restores_original_library(self):
+    def test_ejected_then_unplugged_does_not_restore_twice(self):
         self.tick()
         self.source.update(status="no_disc", tracks=[])
         self.tick()
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertIsNone(self.auto.active)
+        commands = list(self.mpd.commands)
         self.source["available"] = False
         self.tick()
+        self.assertEqual(self.mpd.commands, commands)
         self.assertEqual(self.mpd.paths, self.original)
         self.assertIsNone(self.auto.active)
 
@@ -245,17 +256,61 @@ class AutoCdSourceTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.radio.station["kind"], "cd")
 
-    def test_eject_reports_no_disc_and_refuses_play(self):
+    def test_eject_releases_cd_controls_and_restores_library(self):
         self.tick()
         self.source.update(status="no_disc", tracks=[])
         self.tick()
         state = self.radio.snapshot(self.mpd.state())
-        self.assertEqual(state["status"], "no_disc")
-        self.assertIsNone(state["input"]["trackNumber"])
-        self.assertFalse(state["canSkip"])
-        with self.assertRaises(h.ApiError) as error:
-            self.radio.resume(self.mpd)
-        self.assertEqual(error.exception.code, "cd_no_disc")
+        self.assertEqual(state["type"], "library")
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertIsNone(self.auto.active)
+        self.assertIsNone(self.radio.station)
+
+    def test_eject_restores_previous_radio_without_retake_on_heartbeat(self):
+        station, _ = self.stations.add("https://radio.example/a", "Station A")
+        self.radio.select(self.mpd, station)
+        self.tick()
+        self.assertEqual(self.radio.station["kind"], "cd")
+        self.source.update(status="no_disc", tracks=[])
+        self.tick()
+        self.assertEqual(self.radio.station["id"], station["id"])
+        self.assertEqual(self.mpd.paths, [station["url"]])
+        self.assertEqual(self.auto.snapshot()["lastAction"], "cd_ejected_returned_to_radio")
+        for _ in range(3):
+            self.tick()
+        self.assertEqual(self.radio.station["id"], station["id"])
+        self.source.update(status="ready", tracks=[1, 2], discRevision=2)
+        self.tick()
+        self.assertEqual(self.radio.station["kind"], "cd")
+
+    def test_eject_restores_previous_library_paused_without_resuming(self):
+        self.mpd.apply("pause 1")
+        self.tick()
+        self.source.update(status="no_disc", tracks=[])
+        self.tick()
+        self.assertEqual(self.mpd.paths, self.original)
+        self.assertEqual(self.mpd.values["transport"], "pause")
+        self.assertEqual(self.mpd.values["elapsedSeconds"], 47.125)
+
+    def test_eject_with_no_prior_queue_releases_cd_and_stops(self):
+        self.mpd.apply("stop")
+        self.mpd.apply("clear")
+        self.tick()
+        self.source.update(status="no_disc", tracks=[])
+        self.tick()
+        self.assertIsNone(self.auto.active)
+        self.assertIsNone(self.radio.station)
+        self.assertEqual(self.mpd.paths, [])
+        self.assertEqual(self.mpd.values["transport"], "stop")
+        self.assertEqual(self.auto.snapshot()["lastAction"], "cd_ejected_stopped")
+
+    def test_other_transient_not_ready_keeps_existing_handling(self):
+        self.tick()
+        self.source.update(status="scanning", tracks=[])
+        self.tick()
+        self.assertIsNotNone(self.auto.active)
+        self.assertEqual(self.auto.snapshot()["lastAction"], "cd_ejected_waiting_for_disc")
+        self.assertEqual(self.mpd.paths, [])
 
     def test_previously_stopped_library_stays_stopped_when_unplugged(self):
         self.mpd.apply("stop")
