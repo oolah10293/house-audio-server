@@ -1,21 +1,21 @@
-HOUSE MUSIC SERVER v0.14.5 — RASPBERRY PI UPDATE
+HOUSE MUSIC SERVER v0.14.6 — RASPBERRY PI UPDATE
 ================================================
 
-Webpage update: move Default Playlist into the Library toolbar before Display;
-reorder the controls so Play Folder is last; add separate desktop scrollbars
-for navigation/content; show the playing Queue song at the top of its view;
-and place active speakers first. MPD shuffle, audio, and session rules remain
-unchanged.
+Sources Phase 1: the former CD Players sidebar entry is now Sources.
+The page shows actually registered CD, Analog/Line-in and Other devices.
+Select the Lite-On CD player to expand its original numbered track controls.
+Analog and other source types are discoverable but do NOT yet play audio.
+No ADC streaming, CD firmware, MPD playback or session rules were changed.
 
 This is the complete integrated server: browser controls, radio, Resume Playlist,
 CD input/automatic takeover, library sorting and subwoofer support are included.
 The existing physical CD no-speaker retention rule remains in effect.
 
 INSTALL FROM THIS ZIP
-  1. Copy HouseMusic_Server_v0.14.5_Pi.zip to the Pi.
+  1. Copy HouseMusic_Server_v0.14.6_Pi.zip to the Pi.
   2. In the directory containing the ZIP, run:
-       unzip HouseMusic_Server_v0.14.5_Pi.zip
-       cd HouseMusic_Server_v0.14.5
+       unzip HouseMusic_Server_v0.14.6_Pi.zip
+       cd HouseMusic_Server_v0.14.6
        sudo sh ./install-cd.sh
 
 The install-cd.sh filename is retained from the existing full-server installer.
@@ -35,13 +35,15 @@ REQUIREMENTS AND EFFECT
 
 VERIFY
   Success ends with:
-    Installed House Music 0.14.5; browser, service and session policy verified.
+    Installed House Music 0.14.6; browser, service and session policy verified.
   Open http://192.168.1.12:8787/ and check playback.
-  Check Library: Default Playlist / Display / Sort / Rescan / Filter / Play folder.
-  Verify independent navigation/content scrolling and fixed top status and player.
-  Check Queue opening at the current song without reordering playback.
-  Check Speakers with active entries before inactive ones.
-  The installer also checks healthy services and existing CD controls.
+  Open Sources (formerly CD Players). The Lite-On should appear in CD players.
+  Select Lite-On to expand numbered CD tracks and try a track; select it
+  again to collapse the tracks. Existing CD auto-takeover must still work.
+  Analog/Line-in and Other sections appear only when devices register.
+  These future device types should show "Playback not available yet", not Play.
+  Check Library, Queue, Speakers and current music playback as before.
+  The installer verifies services and that the new Sources UI was served.
   SOURCE_SHA.txt identifies the exact committed source included in this package.
   MANIFEST.json records each packaged source file's SHA-256.
 
