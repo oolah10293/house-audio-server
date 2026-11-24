@@ -27,7 +27,7 @@ class InstallerVerificationTests(unittest.TestCase):
         self.health = dict(version='0.14.6', status='ok')
         self.session = dict(sessionPolicy=dict(unmutedControllerCount=0))
         self.browser_js = 'function drawInputs() { const category = "source-category"; }'
-        self.browser = ('<div data-view="inputs">Sources</button></div>'
+        self.browser = ('<div data-view="inputs"> Sources</button></div>'
                         '<label id="default-playlist-control"></label>'
                         '<main id="main-panel"></main>')
 
@@ -82,7 +82,7 @@ class InstallerVerificationTests(unittest.TestCase):
 
     def test_rejects_missing_sources_layout(self):
         original_html, original_js = self.browser, self.browser_js
-        self.browser = original_html.replace('>Sources</button>', '>CD players</button>')
+        self.browser = original_html.replace('> Sources</button>', '> CD players</button>')
         with self.assertRaisesRegex(SystemExit, 'Sources page update is missing'):
             self.verify()
         self.browser = original_html
