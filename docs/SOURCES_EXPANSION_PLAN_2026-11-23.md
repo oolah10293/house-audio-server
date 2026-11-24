@@ -165,6 +165,84 @@ overflow/resynchronization strategy. Confirm via hardware measurement
 before treating 250 ms as final. No code, firmware, YAML, stream or server
 changes are authorized by this documentation.
 
+## ADC S3 prototype hardware — candidate design (2026-11-23)
+
+**Proposal for discussion, NOT a final wiring authorization or permission
+to modify firmware.** Hardware specification is still subject to the actual
+module's PCB/pin markings and the type/level of analog output being connected.
+
+### Components and topology
+
+- Existing Seeed XIAO ESP32-S3 on USB 5 V power (initial firmware bootstrap
+  by USB, subsequent updates by the established Pi-origin OTA method).
+- One low-cost **PCM1808 24-bit stereo analog-to-I²S breakout**. Prefer a
+  board with clearly labelled L/R inputs, SCK, BCK, LRC, OUT, MD0, MD1, FMT,
+  GND, 5V and 3.3V pins. Avoid confusing an I²S DAC with an ADC.
+- One stereo 3.5 mm input jack **or** two RCA input connectors; choose
+  according to the intended analog source. No amplifier or local speaker
+  output is required.
+- Keep the ADC clock/data conductors short; mount the ADC near the S3 and
+  keep sensitive analog leads away from the Wi-Fi antenna and fast clocks.
+
+**Proposed preliminary signal assignment** (Seeed XIAO S3 pin mapping;
+validate GPIO routing under the existing Arduino ESP32 2.0.14 build):
+
+| PCM1808 module label | XIAO S3 pin | Meaning |
+| --- | --- | --- |
+| SCK / SCKI | D0 = GPIO1 | S3 master clock output |
+| BCK | D1 = GPIO2 | S3 bit clock output |
+| LRC / LRCK | D3 = GPIO4 | S3 left/right clock output |
+| OUT / DOUT | D4 = GPIO5 | S3 I²S data input |
+| +5V | USB-supplied 5V | ADC analog power |
+| 3.3V | S3 3V3 | ADC digital power |
+| GND | S3 GND | Common digital/analog reference |
+
+Do not assume all breakout modules have the same onboard regulation,
+coupling, mode strapping, or clock generation. Check the selected module's
+actual connections before applying voltage. Configure PCM1808 in **slave
+I²S mode** (nominal MD1/MD0 low, FMT low, if the board exposes these pins
+and there is no conflicting onboard strap). ESP32-S3 provides all clocks:
+at 48 kHz sample rate, proposed SCKI/MCLK=12.288 MHz (256×fS),
+BCK=3.072 MHz (64×fS) and LRC=48 kHz. The PCM1808 outputs 24-bit
+samples in 32-bit I²S slots; conversion to the house stream's
+48 kHz/16-bit/stereo format can happen after I²S capture. Actual MCLK
+signal and bit timing need bench verification before assuming audio works.
+
+**Analog input:** PCM1808 full scale is about **3 Vp-p**, or
+**1.06 Vrms for a sine wave**. A typical ~2 Vrms modern line output
+can clip this ADC; provision for switchable approximately -6 dB
+stereo attenuation on the input, verified against the selected board's
+input network. Inspect AC-coupling capacitors on the chosen module before
+adding duplicates. Do not connect speaker/amplifier outputs directly to
+line-level ADC inputs; speaker-level capture needs a separately designed
+attenuator and ground/isolation review.
+
+**Buffer and power:** The existing 250 ms ring-buffer recommendation
+represents ~48 kB if converted to 16-bit stereo at 48 kHz; raw 32-bit
+capture would use ~96 kB for the same span. Keep DMA capture and Wi-Fi
+transmission independent. USB 5V supply with 3V3 derived by the S3 is
+the starting point; verify the particular ADC board's power consumption
+and pin voltage expectations before soldering.
+
+### Decisions and tests before implementation
+
+1. Confirm what analog signal is being connected: fixed line-out RCA,
+   headphone output, or a vintage radio's speaker-level signal.
+2. Pick the **exact** ADC module/PCB; verify its wiring, ground,
+   coupling, power rails and slave-mode clock strapping. Do not copy
+   a generic internet pinout without matching it to that board.
+3. Bench-measure 48 kHz stereo sample capture with a known signal,
+   correct channels, clipping level, noise floor and stable clocking.
+4. Only after hardware capture is proven, implement streaming, the agreed
+   250 ms ring buffer and latest-physical-event-wins source arbitration,
+   under separate explicit firmware/server implementation authorization.
+
+Technical references: TI PCM1808 product/datasheet,
+https://www.ti.com/product/PCM1808 ; Espressif ESP32-S3 I²S
+documentation, https://docs.espressif.com/projects/esp-idf/en/release-v4.4/esp32s3/api-reference/peripherals/i2s.html ;
+Seeed XIAO ESP32-S3 pin table,
+https://wiki.seeedstudio.com/xiao_esp32s3_pin_multiplexing/.
+
 ## Open design decisions before adding a live input
 
 - **Decided:** ADC S3 power-on is a takeover event, even with silent
