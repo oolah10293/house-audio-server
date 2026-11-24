@@ -226,6 +226,51 @@ transmission independent. USB 5V supply with 3V3 derived by the S3 is
 the starting point; verify the particular ADC board's power consumption
 and pin voltage expectations before soldering.
 
+### Proposed analog line-level attenuation (not yet built)
+
+**Two matched channels, 0 dB direct / nominal -6 dB option.**
+The PCM1808 silicon's full-scale analog sine input is 3 Vp-p
+(~1.06 Vrms), with nominal 60 kΩ input impedance (TI PCM1808 datasheet).
+A 2 Vrms line output could otherwise clip the ADC.
+
+For **each** stereo channel, provision a divider **before the module's
+AC-coupling capacitor**, after verifying the actual purple PCB routing:
+
+```text
+L or R line out --- 10 kΩ series ----+---- module LIN or RIN
+                                     |
+                                    12 kΩ
+                                     |
+                                signal GND
+```
+
+Nominally, 12 kΩ in parallel with 60 kΩ gives 10 kΩ, so the
+series 10 kΩ results in 0.50 gain (~-6.02 dB): a 2 Vrms
+line signal yields approximately 1 Vrms at the ADC. This is
+a **calculated starting point**, not a bench-measured attenuation for the
+specific breakout, whose input coupling/resistor network still needs
+inspection. Use 1% resistors and identical component values for L/R.
+
+**Bypass / switching:** Initially test direct 0 dB wiring on known
+low-level line outputs; if a source exceeds ADC full-scale, use the
+attenuator. Provide either two sets of reversible solder jumpers or
+a DPDT ON-ON selector to route both channels through the pad or
+around it. In the direct position, don't leave the shunt loading
+in place unless the source can reliably drive the extra ~12 kΩ load.
+No software gain reduction can recover a waveform clipped *before*
+the ADC.
+
+**Safety/electrical caveat:** The PCM1808 chip's input is internally
+biased; do **not** attach an external shunt-to-ground to a chip-side
+DC-biased input. Confirm that the breakout's LIN/RIN connection is on
+the **line/source side** of proper AC-coupling capacitors first.
+If not, adapt the input coupling/filter circuit per the TI datasheet
+before installing the divider. Ground the stereo source and module
+appropriately and do not use this line pad on speaker-level outputs.
+
+The attenuation selector, resistor layout and actual signal levels
+are proposals, not approved or implemented hardware/firmware changes.
+
 ### Decisions and tests before implementation
 
 1. **Confirmed by user, 2026-11-23:** this node is fed by ordinary
