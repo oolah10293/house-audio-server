@@ -31,7 +31,9 @@ def main():
              'house_audio_server.py', 'auto_cd.py', 'input_sources.py',
              'radio_history.py', 'radio_listening.py', 'radio_metadata.py',
              'radio_stations.py', 'state_file.py', 'subwoofers.py',
-             'docs/RELEASE_0.14.5.md', 'docs/WEBPAGE_UPDATE_PLAN_2026-11-23.md',
+             'docs/RELEASE_0.14.6.md', 'docs/RELEASE_0.14.5.md',
+             'docs/SOURCES_EXPANSION_PLAN_2026-11-23.md',
+             'docs/WEBPAGE_UPDATE_PLAN_2026-11-23.md',
              'docs/UNMUTED_SESSION_RETENTION.md',
              'docs/STARTUP_TIMING_AND_MPD_BATCHES.md']
     files.extend(git('ls-files', 'config', 'web', 'systemd', 'pi_input').splitlines())
