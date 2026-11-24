@@ -168,8 +168,9 @@ changes are authorized by this documentation.
 ## ADC S3 prototype hardware — candidate design (2026-11-23)
 
 **Proposal for discussion, NOT a final wiring authorization or permission
-to modify firmware.** Hardware specification is still subject to the actual
-module's PCB/pin markings and the type/level of analog output being connected.
+to modify firmware.** The user has now confirmed **line-level audio outputs**
+and shown the exact purple PCM1808 breakout listing. Wiring, coupling
+and mode straps remain subject to physical PCB verification.
 
 ### Components and topology
 
@@ -208,14 +209,15 @@ samples in 32-bit I²S slots; conversion to the house stream's
 48 kHz/16-bit/stereo format can happen after I²S capture. Actual MCLK
 signal and bit timing need bench verification before assuming audio works.
 
-**Analog input:** PCM1808 full scale is about **3 Vp-p**, or
-**1.06 Vrms for a sine wave**. A typical ~2 Vrms modern line output
-can clip this ADC; provision for switchable approximately -6 dB
-stereo attenuation on the input, verified against the selected board's
-input network. Inspect AC-coupling capacitors on the chosen module before
-adding duplicates. Do not connect speaker/amplifier outputs directly to
-line-level ADC inputs; speaker-level capture needs a separately designed
-attenuator and ground/isolation review.
+**Analog input — line level only, confirmed:** PCM1808 full
+scale is **3 Vp-p**, or about **1.06 Vrms for a sine wave** (TI data sheet,
+https://www.ti.com/product/PCM1808). A typical ~2 Vrms modern line
+output would clip it, so prototype with provision for approximately
+-6 dB or greater **stereo attenuation**, chosen after checking output
+level and the actual board's input impedance. Some vintage/consumer
+line-outs may be lower and can connect directly if within full scale.
+Inspect the PCB's input coupling and DC bias before adding components.
+No speaker-level capture or cable-insertion detector is planned.
 
 **Buffer and power:** The existing 250 ms ring-buffer recommendation
 represents ~48 kB if converted to 16-bit stereo at 48 kHz; raw 32-bit
@@ -226,11 +228,19 @@ and pin voltage expectations before soldering.
 
 ### Decisions and tests before implementation
 
-1. Confirm what analog signal is being connected: fixed line-out RCA,
-   headphone output, or a vintage radio's speaker-level signal.
-2. Pick the **exact** ADC module/PCB; verify its wiring, ground,
-   coupling, power rails and slave-mode clock strapping. Do not copy
-   a generic internet pinout without matching it to that board.
+1. **Confirmed by user, 2026-11-23:** this node is fed by ordinary
+   **line-level outputs**, not amplifier/speaker outputs. Do not design
+   a speaker-level frontend or assume cable-insertion detection.
+2. **Module identified by user image:** purple PCM1808 24-bit stereo ADC
+   breakout from an Amazon listing for a six-piece pack (purchased
+   October 28, 2026, according to the screenshot). Visible PCB top
+   terminals are **RIN** and **LIN**. Right edge, top-to-bottom:
+   **BCK, OUT, LRC, SCK, GND, 3.3**. Left edge: apparently **FMY**
+   (likely intended **FMT**, needs verification), **MD1, MD0, GND,
+   3.3, +5V**. The 3.3 pins appear duplicated; test continuity.
+   Verify power rails and mode strapping on the physical board before
+   connecting. The TI silicon requires separate nominal 5 V analog
+   and 3.3 V digital rails; do not assume a regulator on this module.
 3. Bench-measure 48 kHz stereo sample capture with a known signal,
    correct channels, clipping level, noise floor and stable clocking.
 4. Only after hardware capture is proven, implement streaming, the agreed
