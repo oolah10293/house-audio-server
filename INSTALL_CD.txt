@@ -1,21 +1,27 @@
-HOUSE MUSIC SERVER v0.14.6 — RASPBERRY PI UPDATE
+HOUSE MUSIC SERVER v0.14.7 — RASPBERRY PI UPDATE
 ================================================
+
+CD-eject restoration fix: ejecting a disc with the LiteOn still powered now
+releases CD playback ownership and restores the previous radio or library
+queue/position/play-pause state, the same as powering off the CD node.
+An inserted new disc can still take over. Ordinary heartbeats cannot.
+No ESP32 firmware, ADC work, MPD binaries, or Snapcast changes are included.
 
 Sources Phase 1: the former CD Players sidebar entry is now Sources.
 The page shows actually registered CD, Analog/Line-in and Other devices.
 Select the Lite-On CD player to expand its original numbered track controls.
 Analog and other source types are discoverable but do NOT yet play audio.
-No ADC streaming, CD firmware, MPD playback or session rules were changed.
+The prior v0.14.6 Sources UI remains unchanged in this update.
 
 This is the complete integrated server: browser controls, radio, Resume Playlist,
 CD input/automatic takeover, library sorting and subwoofer support are included.
 The existing physical CD no-speaker retention rule remains in effect.
 
 INSTALL FROM THIS ZIP
-  1. Copy HouseMusic_Server_v0.14.6_Pi.zip to the Pi.
+  1. Copy HouseMusic_Server_v0.14.7_Pi.zip to the Pi.
   2. In the directory containing the ZIP, run:
-       unzip HouseMusic_Server_v0.14.6_Pi.zip
-       cd HouseMusic_Server_v0.14.6
+       unzip HouseMusic_Server_v0.14.7_Pi.zip
+       cd HouseMusic_Server_v0.14.7
        sudo sh ./install-cd.sh
 
 The install-cd.sh filename is retained from the existing full-server installer.
@@ -35,7 +41,7 @@ REQUIREMENTS AND EFFECT
 
 VERIFY
   Success ends with:
-    Installed House Music 0.14.6; browser, service and session policy verified.
+    Installed House Music 0.14.7; browser, service and session policy verified.
   Open http://192.168.1.12:8787/ and check playback.
   Open Sources (formerly CD Players). The Lite-On should appear in CD players.
   Select Lite-On to expand numbered CD tracks and try a track; select it
