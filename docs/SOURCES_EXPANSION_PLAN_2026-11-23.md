@@ -226,6 +226,49 @@ transmission independent. USB 5V supply with 3V3 derived by the S3 is
 the starting point; verify the particular ADC board's power consumption
 and pin voltage expectations before soldering.
 
+### IMPORTANT: possible defective factory input RC filter on purple PCM1808 boards
+
+**New evidence and engineering review (2026-11-23; board itself NOT tested).**
+The user provided a review alleging that low-cost purple PCM1808 breakouts
+contain a **10 kΩ input series resistor and 100 nF shunt capacitor** per
+channel, forming an unintended ~159 Hz low-pass. The RC calculation is
+correct for that topology: `1/(2π × 10,000 Ω × 100 nF) ≈ 159 Hz`.
+An ideal single-pole response would attenuate ~1 kHz by 16 dB and 20 kHz
+by 42 dB. Independent hobbyist reports describe visually similar boards
+with a mistaken 100 nF component, loss of treble, and restoration after
+filter repair:
+https://www.reddit.com/r/diyaudio/comments/1rgl530/warning_about_fake_pcm1808_adc_chips_on_modules/
+https://www.reddit.com/r/diyelectronics/comments/1rl8s9t/pcm1808_modules_from_china_the_drama_continues/
+A separate report describes the same input-capacitor fault:
+https://www.diyaudio.com/community/threads/esp32-s3-touchscreen-parametric-eq-2-way-crossover-project-guition-jc4827w543c.439631/
+
+**CAUTION:** These reports **do not prove** the components installed on
+the user's exact purchased boards or the circuit connection. Inspect
+the physical PCB and identify the two channel-specific RC paths before
+soldering, shorting or removing SMD parts. Do not confuse input filter
+capacitors with power-supply decouplers or large electrolytic AC-couplers.
+
+**Proposed fix if confirmed:** Replace each channel's faulty filter with
+~1 kΩ series resistance and ~1 nF shunt capacitance (calculated ~159 kHz
+corner), consistent with TI's typical suggested external filter range
+(100 Ω/10 nF to 1 kΩ/1 nF). The review's alternative
+1 kΩ/3.3 nF has a ~48 kHz corner and an ideal ~0.69 dB drop at 20 kHz;
+1 kΩ/1 nF has ~0.07 dB drop at 20 kHz. Avoid a blanket short/bypass
+of the filter without considering EMI/aliasing. The PCM1808 also has
+internal filtering. See TI: https://www.ti.com/product/PCM1808
+
+**Impact on previously proposed attenuation:** The 10 kΩ/12 kΩ
+external stereo pad below is only a preliminary calculation that assumed
+the breakout's internal input network was benign. Its source impedance
+could interact with the repaired or defective filter and cause additional
+high-frequency attenuation; do not install it as-is until the actual
+PCB network is verified and the *combined* response/loading is checked.
+No software gain or digital EQ can recreate treble attenuated before
+the ADC. Address/measure the filter before finalizing attenuation.
+
+**Status:** research/design note only; no actual board testing,
+SMD rework, firmware, server or PCB layout modification authorized.
+
 ### Proposed analog line-level attenuation (not yet built)
 
 **Two matched channels, 0 dB direct / nominal -6 dB option.**
