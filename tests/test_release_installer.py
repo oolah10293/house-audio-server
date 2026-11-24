@@ -24,7 +24,7 @@ class InstallerVerificationTests(unittest.TestCase):
         (self.root / 'live-gateway/gateway.py').write_text('gateway bytes\n')
         self.check = self.check.replace('/opt/house-audio-server', str(self.root / 'installed'))
         self.check = self.check.replace('/home/ads-suck/gateway.py', str(self.root / 'live-gateway/gateway.py'))
-        self.health = dict(version='0.14.5', status='ok')
+        self.health = dict(version='0.14.6', status='ok')
         self.session = dict(sessionPolicy=dict(unmutedControllerCount=0))
         self.browser = ('<div data-view="inputs"></div>'
                         '<label id="default-playlist-control"></label>'
@@ -59,7 +59,7 @@ class InstallerVerificationTests(unittest.TestCase):
 
     def test_rejects_old_version_or_degraded_dependencies(self):
         for health in (dict(version='0.14.2-cd1', status='ok'),
-                       dict(version='0.14.5', status='degraded')):
+                       dict(version='0.14.6', status='degraded')):
             with self.subTest(health=health):
                 self.health = health
                 with self.assertRaisesRegex(SystemExit, 'Installed server validation failed'):
