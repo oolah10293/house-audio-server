@@ -77,3 +77,18 @@ h1{margin:0;font-size:34px;font-weight:720;letter-spacing:-.03em;line-height:1.1
 @media(max-width:760px){
   .items .item.playing{scroll-margin-top:8px}
 }
+
+/* Discovered Sources share the existing item styling. CD track rows are
+   expanded only for the selected CD, with no playback control for other kinds. */
+.source-category{background:#191e25;color:var(--accent);font-weight:750;letter-spacing:.07em;text-transform:uppercase;font-size:11px}
+.source-device{background:var(--surface2)}
+.source-placeholder .item-main:disabled{opacity:.85}
+.item-icon.line-in{background:#26363a;color:#9fc9d0}
+.source-track{padding-left:48px;background:#191e25}
+.source-track.playing{padding-left:45px}
+.source-track-hint{padding-left:65px}
+@media(max-width:760px){
+  .source-track{padding-left:29px}
+  .source-track.playing{padding-left:26px}
+  .source-track-hint{padding-left:33px}
+}
