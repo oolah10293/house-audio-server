@@ -45,13 +45,24 @@ for confirmed ejects. The server-only fix requires no ESP32 changes.
 The unplug hardware check is verified by owner report; the new
 eject-to-restore behavior and post-eject reinsertion await field testing.
 
+## 2026-11-24 revised CD-eject policy — specification only, not implemented
+
+**This is the owner's latest decision and supersedes the v0.14.7 eject-restoration transport behavior described above and in its historical release notes.** Confirmed disc removal must never automatically resume playback of the pre-CD source.
+
+1. **At least one session-retaining House Music node remains connected:** release CD ownership, restore the prior library playlist (queue, exact track and playback position, modes) or radio source, and leave the restored program **paused**, regardless of whether it was playing before CD takeover. Wait for an explicit Play command; eject alone does not play it.
+2. **No session-retaining House Music nodes remain connected at eject:** release CD ownership, clear the current session/queue and any stale resume state, and enter **fresh idle**. Do not preserve a session that a later node could inadvertently resume.
+3. **A passive audio node subsequently powers on after fresh idle:** start a new session from the currently configured default folder, using a **new shuffle** (and existing Repeat All rules). A controller merely reconnecting is not an automatic fresh-session start, per `SESSION_BEHAVIOR.md`.
+4. **The LiteOn remains powered with no disc:** routine heartbeats and the old disc token must not reclaim playback. A genuinely new disc insertion may still take over as a new source event.
+
+**Status:** This is an agreed requirement, **not** permission to change server, gateway, ESP32 firmware, configuration, or operational settings. The committed v0.14.7 source has not been updated to follow the revised rule. Hardware validation of this revised policy is pending. No implementation authorization has been given for this additional change.
+
 ## Agreed behavior
 
 | Physical action / control | Server behavior |
 | --- | --- |
 | Plug in XIAO/Lite-On with playable CD | After Pi gateway sees a valid boot session + disc revision, save current HOUSE library session or radio station; select ordered CD queue; play track 1 |
 | Routine five-second ESP heartbeats | Do nothing; keep current track and transport; never restart track 1 |
-| Eject CD with XIAO still connected (from server v0.14.7) | Release CD ownership and restore previous library queue/position or radio/transport just as for disconnect; leave ESP powered and ready for another true disc-insertion event |
+| Eject CD with XIAO still connected (**new requirement; not implemented in v0.14.7**) | With session-retaining nodes: restore prior library/radio but **pause** pending explicit Play. With none: **clear session, fresh idle**. The next passive-node startup begins the default folder with a new shuffle. The ESP remains ready for a genuine new disc insertion |
 | Insert a new CD | Start new disc at track 1, preserve **original** pre-CD source/bookmark, never bookmark another CD |
 | Power off/unplug CD player | Wait for gateway source liveness timeout (currently 18s from last heartbeat), then restore the prior radio or library and its saved position/modes; restore earlier stopped/paused state when applicable |
 | Manually select radio, library, or Resume Playlist while CD is plugged in | Manual selection wins. Ignore further heartbeats or return of the same disc; **only an actual new disc revision or a new boot session** can trigger takeover again |
