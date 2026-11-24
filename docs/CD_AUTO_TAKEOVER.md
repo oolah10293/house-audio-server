@@ -22,13 +22,36 @@ test, not delivered as a new package. Source and field-test detail follow
 chronologically in the older investigation notes. Future builds, packaging
 and releases require explicit authorization.
 
+## 2026-11-24 authorized server correction (v0.14.7)
+
+Owner reported a live v0.14.6 failure: `GET /state` showed
+`source.type=cd`, `status=no_disc`, `sessionPolicy.cdAuto.active=true`,
+`lastAction=cd_ejected_waiting_for_disc`, while MPD had stopped with an
+empty queue. Powering off the LiteOn S3 restored normal playback on the
+physical Pi (owner verified). Owner explicitly authorized an update to
+correct this condition.
+
+The new server behavior treats a **confirmed** `status=no_disc` on the
+currently automatically owned CD as a release/restore event: reuse the
+existing proven disconnect restoration, preserving earlier library
+position/options or radio/transport as available. A mere transient
+nonready status still follows its preexisting handling; gateway
+outage/brief missing registration and heartbeats are not ejections.
+After restoration, heartbeats or the same disc token cannot reclaim
+the stream; a genuine disc-revision/boot event can take over.
+
+The old rule to remain on an empty CD queue is intentionally superseded
+for confirmed ejects. The server-only fix requires no ESP32 changes.
+The unplug hardware check is verified by owner report; the new
+eject-to-restore behavior and post-eject reinsertion await field testing.
+
 ## Agreed behavior
 
 | Physical action / control | Server behavior |
 | --- | --- |
 | Plug in XIAO/Lite-On with playable CD | After Pi gateway sees a valid boot session + disc revision, save current HOUSE library session or radio station; select ordered CD queue; play track 1 |
 | Routine five-second ESP heartbeats | Do nothing; keep current track and transport; never restart track 1 |
-| Eject CD with XIAO still connected | Stop CD, clear stale MPD WAV queue, preserve the original library bookmark or prior radio |
+| Eject CD with XIAO still connected (from server v0.14.7) | Release CD ownership and restore previous library queue/position or radio/transport just as for disconnect; leave ESP powered and ready for another true disc-insertion event |
 | Insert a new CD | Start new disc at track 1, preserve **original** pre-CD source/bookmark, never bookmark another CD |
 | Power off/unplug CD player | Wait for gateway source liveness timeout (currently 18s from last heartbeat), then restore the prior radio or library and its saved position/modes; restore earlier stopped/paused state when applicable |
 | Manually select radio, library, or Resume Playlist while CD is plugged in | Manual selection wins. Ignore further heartbeats or return of the same disc; **only an actual new disc revision or a new boot session** can trigger takeover again |

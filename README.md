@@ -2,7 +2,9 @@
 
 ## Authoritative development baseline — main
 
-Current integrated source is **0.14.6**, including the CD gateway, automatic CD takeover, retention/restore, the browser controller and per-subwoofer fallback. Start new development from `main`. See [main baseline consolidation](docs/MAIN_BASELINE_2026-11-20.md) and [CD behavior](docs/CD_AUTO_TAKEOVER.md). Source consolidation does not establish the exact live Pi file hashes or authorize a new installation. Older release descriptions below are historical.
+Current integrated source is **0.14.7**, including the CD gateway, automatic CD takeover, the confirmed-eject restoration fix, retention/restore, the browser controller and per-subwoofer fallback. Start new development from `main`. See [main baseline consolidation](docs/MAIN_BASELINE_2026-11-20.md) and [CD behavior](docs/CD_AUTO_TAKEOVER.md). Source consolidation does not establish the exact live Pi file hashes or authorize a new installation. Older release descriptions below are historical.
+
+**2026-11-24 authorized CD-eject restoration:** v0.14.7 changes only House Music server's automatic CD ownership on confirmed `no_disc`: release the empty CD state and restore the prior radio/library like a physical disconnect. New disc events still take over; heartbeats do not. Source tests and [release notes](docs/RELEASE_0.14.7.md). Pi field verification pending; no ESP32 firmware changes.
 
 **2026-11-23 Sources Phase 1:** v0.14.6 renames CD Players to Sources, groups actually registered devices, and expands the existing CD track controls when the device is selected. Line-in and Other are discoverable but not playable yet. No ADC streaming, gateway, firmware or MPD/session changes. See [Sources plan/checkpoint](docs/SOURCES_EXPANSION_PLAN_2026-11-23.md) and [v0.14.6 release](docs/RELEASE_0.14.6.md). Physical installation/acceptance pending.
 

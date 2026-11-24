@@ -34,8 +34,8 @@ jobs:
       - name: Upload Pi package and checksum
         uses: actions/upload-artifact@v4
         with:
-          name: HouseMusic_Server_v0.14.6_Pi
+          name: HouseMusic_Server_v0.14.7_Pi
           path: |
-            dist/HouseMusic_Server_v0.14.6_Pi.zip
-            dist/HouseMusic_Server_v0.14.6_Pi.zip.sha256
+            dist/HouseMusic_Server_v0.14.7_Pi.zip
+            dist/HouseMusic_Server_v0.14.7_Pi.zip.sha256
           if-no-files-found: error
