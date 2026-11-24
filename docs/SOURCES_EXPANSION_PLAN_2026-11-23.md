@@ -131,6 +131,40 @@ Phase B must coordinate CD and ADC events through a single arbitration
 policy rather than independent competing auto-takeover loops. No server,
 gateway, web code or S3 firmware is changed by this documentation update.
 
+## ADC node capture and transmission buffer (design recommendation, 2026-11-23)
+
+**Record of discussion, not implementation authorization.** Include a circular
+PCM ring buffer on the ESP32-S3 between I²S/DMA ADC capture and its Wi-Fi
+streaming task. Capture should run independently of network writes; short
+Wi-Fi stalls should not block sampling.
+
+- **Initial suggested target:** 250 ms worth of samples, adjustable in
+  firmware source for tuning after real-hardware tests. Consider 500 ms
+  capacity if measurements justify it; avoid adding intentional latency
+  simply to fill the entire buffer.
+- **Illustrative sizing only:** 48,000 samples/sec × stereo × 16 bits per
+  sample = 192,000 bytes/sec: 100 ms = 19,200 B; 250 ms = 48,000 B;
+  500 ms = 96,000 B; one second = 192,000 B. Exact stream representation,
+  ADC format, available heap and Wi-Fi performance remain to be verified.
+- Use the S3 I²S DMA capture path and a separate transport task. Buffer
+  occupancy, underruns/overruns, dropped sample counts and reconnects
+  should be observable for troubleshooting.
+- On overflow, don't allow an endlessly growing stream delay. Discard
+  stale audio and resynchronize to the live edge rather than continuing
+  to play increasingly old samples. The exact drop/resync and framing
+  approach must be designed and tested to avoid corrupting stream format.
+- A buffer can smooth transient Wi-Fi pauses but cannot fix sustained
+  throughput below capture rate, and cannot eliminate latency introduced
+  by the Pi, MPD or Snapcast.
+- Keep the node's latest-power-on takeover semantics independent of
+  whether the analog input is silent or buffered audio exists.
+
+**Still unresolved:** ADC sample width/format, end-to-end transport,
+effective buffered latency, memory utilization, and frame-aligned
+overflow/resynchronization strategy. Confirm via hardware measurement
+before treating 250 ms as final. No code, firmware, YAML, stream or server
+changes are authorized by this documentation.
+
 ## Open design decisions before adding a live input
 
 - **Decided:** ADC S3 power-on is a takeover event, even with silent
@@ -139,8 +173,10 @@ gateway, web code or S3 firmware is changed by this documentation update.
 - **Still open:** Precise disconnect/fallback/return policy, CD power-on
   without playable media and the user-visible waiting state, and recovery
   from an interrupted live stream without false new power-on events.
-- The audio format, stream transport, buffering/synchronization and desired
-  latency; verify with a real ADC node before promising performance.
+- **Proposed starting point:** S3 I²S DMA capture plus a 250 ms PCM
+  circular transmission buffer, configurable in source; verify the actual
+  latency, stream framing and network resilience on hardware. Audio format,
+  transport and overflow/resync strategy are still open.
 - Whether selection should preserve/restore the interrupted source and
   playback position, and how to handle multiple concurrently registered
   sources.
