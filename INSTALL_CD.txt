@@ -1,11 +1,15 @@
-HOUSE MUSIC SERVER v0.14.7 — RASPBERRY PI UPDATE
+HOUSE MUSIC SERVER v0.14.8 — RASPBERRY PI UPDATE
 ================================================
 
-CD-eject restoration fix: ejecting a disc with the LiteOn still powered now
-releases CD playback ownership and restores the previous radio or library
-queue/position/play-pause state, the same as powering off the CD node.
-An inserted new disc can still take over. Ordinary heartbeats cannot.
-No ESP32 firmware, ADC work, MPD binaries, or Snapcast changes are included.
+CD-eject restoration policy: when the LiteOn reports confirmed no_disc, the
+previous library/position or radio is restored WITHOUT automatic playback
+when at least one session-retaining node remains connected. Press Play to
+resume it. With no retaining nodes, CD eject clears the old session; the
+next passive node starts the configured default folder with a fresh shuffle.
+Inserting a new disc still takes over and plays track 1. Ordinary CD
+heartbeats do not reclaim playback; multiple disc cycles keep the original
+pre-CD bookmark. Normal CD-player power-off restoration remains unchanged.
+No ESP32 firmware, ADC stream, MPD binary or Snapcast changes are included.
 
 Sources Phase 1: the former CD Players sidebar entry is now Sources.
 The page shows actually registered CD, Analog/Line-in and Other devices.
@@ -18,10 +22,10 @@ CD input/automatic takeover, library sorting and subwoofer support are included.
 The existing physical CD no-speaker retention rule remains in effect.
 
 INSTALL FROM THIS ZIP
-  1. Copy HouseMusic_Server_v0.14.7_Pi.zip to the Pi.
+  1. Copy HouseMusic_Server_v0.14.8_Pi.zip to the Pi.
   2. In the directory containing the ZIP, run:
-       unzip HouseMusic_Server_v0.14.7_Pi.zip
-       cd HouseMusic_Server_v0.14.7
+       unzip HouseMusic_Server_v0.14.8_Pi.zip
+       cd HouseMusic_Server_v0.14.8
        sudo sh ./install-cd.sh
 
 The install-cd.sh filename is retained from the existing full-server installer.
@@ -41,7 +45,7 @@ REQUIREMENTS AND EFFECT
 
 VERIFY
   Success ends with:
-    Installed House Music 0.14.7; browser, service and session policy verified.
+    Installed House Music 0.14.8; browser, service and session policy verified.
   Open http://192.168.1.12:8787/ and check playback.
   Open Sources (formerly CD Players). The Lite-On should appear in CD players.
   Select Lite-On to expand numbered CD tracks and try a track; select it
@@ -49,6 +53,11 @@ VERIFY
   Analog/Line-in and Other sections appear only when devices register.
   These future device types should show "Playback not available yet", not Play.
   Check Library, Queue, Speakers and current music playback as before.
+  With a connected speaker, eject a CD and verify the prior music is
+  restored PAUSED. Press Play to resume. Insert another CD and confirm
+  automatic track-one takeover, then eject again and confirm paused return.
+  With no session-retaining nodes, eject and confirm idle/empty session;
+  power on a passive speaker to confirm a fresh default-folder shuffle.
   The installer verifies services and that the new Sources UI was served.
   SOURCE_SHA.txt identifies the exact committed source included in this package.
   MANIFEST.json records each packaged source file's SHA-256.
