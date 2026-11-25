@@ -17,7 +17,7 @@
 ## Verification and field acceptance
 
 - Server change [PR #29](https://github.com/oolah10293/house-audio-server/pull/29), [GitHub Actions 45514245458](https://github.com/oolah10293/house-audio-server/actions/runs/45514245458): **PASS**, 234 Python tests plus syntax, installer shell, and browser tests.
-- v0.14.8 release branch updates only the version identifier, installer/check guards, release documentation and packaging manifest / artifact name. Its final GitHub CI status should be checked against the exact merge/packaging commit.
+- v0.14.8 release [PR #30](https://github.com/oolah10293/house-audio-server/pull/30), merged as [c6e80dba](https://github.com/oolah10293/house-audio-server/commit/c6e80dba40dac32e19bb29867676d163bea5ecaa), updates only the version identifier, installer/check guards, release documentation, packaging manifest inputs and artifact name. [GitHub CI 45515231767](https://github.com/oolah10293/house-audio-server/actions/runs/45515231767) **PASS**: 234 Python tests and installer/browser checks. This verifies the release source; the separate gated ZIP workflow has **not** been dispatched or claimed complete.
 - **Not yet physically verified:** Pi installation, real CD eject/insert, retaining paused radio/library after eject, no-node fresh start, and restoring after repeated discs.
 
 ## Pi installation and rollback
