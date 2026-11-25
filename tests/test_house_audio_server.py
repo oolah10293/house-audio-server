@@ -379,13 +379,16 @@ class SessionPolicyTests(unittest.TestCase):
         shuffle.assert_called_once()
 
     def test_last_paused_passive_renderer_departure_clears_queue(self):
-        monitor, mpd, policy, shuffle = self.make_policy(transport="pause")
+        monitor, mpd, policy, shuffle = self.make_policy()
         previous_queue = list(mpd.queue_files)
         policy._tick()
+        # A passive speaker arriving to an already-paused baseline resumes it.
+        # Simulate a deliberate pause while the speaker is still connected.
+        mpd.command("pause 1")
         self.assertEqual(mpd.queue_files, previous_queue)
         monitor.present = 0
         policy._tick()
-        self.assertEqual(mpd.commands, ["clear"])
+        self.assertEqual(mpd.commands, ["pause 1", "clear"])
         self.assertEqual(mpd.queue_files, [])
         self.assertEqual(mpd.state_data["queueLength"], 0)
         self.assertEqual(mpd.state_data["transport"], "stop")
