@@ -350,7 +350,9 @@ class SessionPolicyTests(unittest.TestCase):
                     self.assertFalse(policy.snapshot()["pendingFinalStop"])
                     self.assertEqual(policy.snapshot()["lastAction"],
                                      "final_track_completed_session_idle")
-                    self.assertEqual(mpd.commands[-3:], ["stop", "single 0", "repeat 1"])
+                    self.assertEqual(mpd.commands[-4:], ["stop", "clear", "single 0", "repeat 1"])
+                    self.assertEqual(mpd.queue_files, [])
+                    self.assertEqual(mpd.state_data["queueLength"], 0)
                     shuffle.assert_not_called()
                     # A later startup consumes the current setting, not the old CD queue.
                     policy.default_folder = folder
@@ -358,6 +360,66 @@ class SessionPolicyTests(unittest.TestCase):
                     policy._tick()
                     self.assert_default_session(mpd, folder)
                     shuffle.assert_called_once()
+
+    def test_completed_drain_old_queue_cannot_restart_via_play(self):
+        monitor, mpd, policy, shuffle = self.make_policy()
+        self.begin_drain(monitor, policy)
+        self.complete_boundary(mpd)
+        policy._tick()
+        self.assertEqual(mpd.queue_files, [])
+        self.assertEqual(mpd.state_data["queueLength"], 0)
+        self.assertEqual(mpd.state_data["transport"], "stop")
+        mpd.command("play")  # A direct API /play must not restart an ended session.
+        self.assertEqual(mpd.state_data["transport"], "stop")
+        self.assertEqual(mpd.queue_files, [])
+        shuffle.assert_not_called()
+        monitor.present = 1
+        policy._tick()
+        self.assert_default_session(mpd, "MP3s")
+        shuffle.assert_called_once()
+
+    def test_last_paused_passive_renderer_departure_clears_queue(self):
+        monitor, mpd, policy, shuffle = self.make_policy()
+        previous_queue = list(mpd.queue_files)
+        policy._tick()
+        # A passive speaker arriving to an already-paused baseline resumes it.
+        # Simulate a deliberate pause while the speaker is still connected.
+        mpd.command("pause 1")
+        self.assertEqual(mpd.queue_files, previous_queue)
+        monitor.present = 0
+        policy._tick()
+        self.assertEqual(mpd.commands, ["pause 1", "clear"])
+        self.assertEqual(mpd.queue_files, [])
+        self.assertEqual(mpd.state_data["queueLength"], 0)
+        self.assertEqual(mpd.state_data["transport"], "stop")
+        self.assertEqual(policy.snapshot()["lastAction"],
+                         "last_session_participant_left_session_idle")
+        mpd.command("play")
+        self.assertEqual(mpd.state_data["transport"], "stop")
+        monitor.present = 1
+        policy._tick()
+        self.assert_default_session(mpd, "MP3s")
+        shuffle.assert_called_once()
+
+    def test_completed_drain_clear_failure_retries_before_finalizing(self):
+        monitor, mpd, policy, shuffle = self.make_policy()
+        self.begin_drain(monitor, policy)
+        self.complete_boundary(mpd)
+        real_command = mpd.command
+        def fail_clear(command):
+            if command == "clear":
+                raise OSError("MPD clear not acknowledged")
+            return real_command(command)
+        with patch.object(mpd, "command", side_effect=fail_clear):
+            policy._tick()
+        self.assertTrue(policy.snapshot()["pendingFinalStop"])
+        self.assertNotEqual(mpd.queue_files, [])
+        policy._tick()
+        self.assertFalse(policy.snapshot()["pendingFinalStop"])
+        self.assertEqual(mpd.queue_files, [])
+        self.assertEqual(policy.snapshot()["lastAction"],
+                         "final_track_completed_session_idle")
+        shuffle.assert_not_called()
 
     def test_return_first_observed_after_boundary_starts_fresh(self):
         for transport in ("pause", "stop"):

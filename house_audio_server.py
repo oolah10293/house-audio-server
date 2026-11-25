@@ -1898,6 +1898,9 @@ class PassiveSessionPolicy:
         # options. A later arrival (including after a service restart) must take
         # the fresh-default path, not resume yesterday's controller-selected queue.
         mpd.command("stop")
+        # Fresh idle has no playable old queue. Clear before marking the drain
+        # completed so a failed write can be retried on the next policy tick.
+        mpd.command("clear")
         self._restore_options(mpd, "final_track_completed_session_idle")
         if self.radio is not None:
             self.radio.playlist_resume.clear()
@@ -1939,7 +1942,9 @@ class PassiveSessionPolicy:
             auto_paused = None
         if auto_paused is not None:
             if presence["presentCount"] == 0:
-                mpd.command("stop")
+                # MPD clear also stops transport; one acknowledged write
+                # atomically ends the paused session and discards its queue.
+                mpd.command("clear")
                 if self.radio is not None:
                     self.radio.playlist_resume.clear()
                 with self._lock:
@@ -2051,10 +2056,11 @@ class PassiveSessionPolicy:
                 state = mpd.state()
                 if state.get("transport") == "play":
                     self._begin_final_stop(mpd, state)
-                elif state.get("transport") == "pause" and controller_session:
-                    # Manual Pause is also held only by session participants.
-                    # Muted heartbeats must not preserve it indefinitely.
-                    mpd.command("stop")
+                elif state.get("transport") == "pause":
+                    # A departed last speaker or unmuted controller cannot
+                    # leave a playable queue behind after the session ends.
+                    # An initial zero-presence baseline is handled separately.
+                    mpd.command("clear")
                     if self.radio is not None:
                         self.radio.playlist_resume.clear()
                     self._record("last_session_participant_left_session_idle")

@@ -196,8 +196,11 @@ class AutoCdSourceTests(unittest.TestCase):
         self.assertEqual(self.mpd.values["transport"], "pause")
         self.source["available"] = False
         self.tick()
-        self.assertEqual(self.mpd.paths, self.original)
+        # Muted-only control does not retain a completed library session.
+        # The unplug path still restores first; session cleanup then clears it.
+        self.assertEqual(self.mpd.paths, [])
         self.assertEqual(self.mpd.values["transport"], "stop")
+        self.assertFalse(self.radio.playlist_resume.view()["available"])
         self.assertFalse(self.policy.snapshot()["autoPaused"])
         self.assertEqual(self.policy.snapshot()["controllerCount"], 1)
         self.assertEqual(self.policy.snapshot()["presentCount"], 0)

@@ -171,6 +171,7 @@ class ControllerPolicyTests(ControllerFixture):
                 self.heartbeat(lease, muted=True)
                 self.policy._tick()
                 self.assertEqual(self.mpd.state_data["transport"], "stop")
+                self.assertEqual(self.mpd.queue_files, [])
                 self.assertFalse(self.policy.snapshot()["autoPaused"])
                 self.assertFalse(self.policy.snapshot()["pendingFinalStop"])
                 self.assertEqual(self.policy.snapshot()["controllerCount"], 1)
@@ -183,7 +184,8 @@ class ControllerPolicyTests(ControllerFixture):
         self.attach()
         self.mpd.state_data["transport"] = "pause"
         self.policy._tick()
-        self.assertEqual(self.mpd.commands, ["stop"])
+        self.assertEqual(self.mpd.commands, ["clear"])
+        self.assertEqual(self.mpd.queue_files, [])
 
     def test_unmuted_paused_phone_holds_session_with_background_heartbeats(self):
         for ready in (False, True):
@@ -261,6 +263,7 @@ class ControllerPolicyTests(ControllerFixture):
         self.mpd.state_data["transport"] = "pause"
         self.policy._tick()
         self.assertEqual(self.mpd.state_data["transport"], "stop")
+        self.assertEqual(self.mpd.queue_files, [])
         self.assertFalse(self.policy.snapshot()["pendingFinalStop"])
         self.assertTrue(self.mpd.state_data["repeat"])
         self.assertEqual(self.mpd.state_data["elapsedSeconds"], 90.5)
@@ -273,6 +276,44 @@ class ControllerPolicyTests(ControllerFixture):
         self.assertEqual(self.mpd.state_data["transport"], "pause")
         self.policy._tick()
         self.assertEqual(self.mpd.state_data["transport"], "stop")
+
+    def test_unmuted_controller_last_pause_end_cannot_restart_old_queue(self):
+        lease = self.attach(muted=False)
+        self.mpd.state_data["transport"] = "pause"
+        self.policy._tick()
+        old_queue = list(self.mpd.queue_files)
+        self.assertTrue(old_queue)
+        self.detach(lease)
+        self.policy._tick()
+        self.assertEqual(self.mpd.commands, ["clear"])
+        self.assertEqual(self.mpd.state_data["transport"], "stop")
+        self.assertEqual(self.mpd.queue_files, [])
+        self.mpd.command("play")
+        self.assertEqual(self.mpd.state_data["transport"], "stop")
+        self.monitor.set("radio")
+        self.policy._tick()
+        self.assertEqual(self.mpd.queue_files,
+                         list(reversed(self.mpd.library["MP3s"])))
+
+    def test_failed_paused_end_clear_retries_when_only_muted_phone_remains(self):
+        lease = self.attach(muted=False)
+        self.mpd.state_data["transport"] = "pause"
+        self.policy._tick()
+        self.heartbeat(lease, muted=True)
+        original_command = self.mpd.command
+        def fail_clear(command):
+            if command == "clear":
+                raise OSError("MPD queue clear failed")
+            return original_command(command)
+        with patch.object(self.mpd, "command", side_effect=fail_clear):
+            self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "pause")
+        self.assertTrue(self.mpd.queue_files)
+        self.policy._tick()
+        self.assertEqual(self.mpd.state_data["transport"], "stop")
+        self.assertEqual(self.mpd.queue_files, [])
+        self.assertEqual(self.policy.snapshot()["lastAction"],
+                         "last_session_participant_left_session_idle")
 
     def test_controller_only_fresh_idle_never_starts_even_unmuted(self):
         for muted in (True, False):
@@ -345,7 +386,8 @@ class ControllerPolicyTests(ControllerFixture):
         lease = self.pause_for_unavailable_phone()
         self.detach(lease)
         self.policy._tick()
-        self.assertEqual(self.mpd.commands, ["pause 1", "stop"])
+        self.assertEqual(self.mpd.commands, ["pause 1", "clear"])
+        self.assertEqual(self.mpd.queue_files, [])
         self.assertFalse(self.policy.snapshot()["autoPaused"])
         self.assertFalse(self.policy.snapshot()["pendingFinalStop"])
         self.assertEqual(self.mpd.state_data["elapsedSeconds"], 90.5)
