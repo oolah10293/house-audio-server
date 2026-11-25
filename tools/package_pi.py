@@ -31,7 +31,7 @@ def main():
              'house_audio_server.py', 'auto_cd.py', 'input_sources.py',
              'radio_history.py', 'radio_listening.py', 'radio_metadata.py',
              'radio_stations.py', 'state_file.py', 'subwoofers.py',
-             'docs/RELEASE_0.14.7.md', 'docs/RELEASE_0.14.6.md', 'docs/RELEASE_0.14.5.md',
+             'docs/RELEASE_0.14.8.md', 'docs/RELEASE_0.14.7.md', 'docs/RELEASE_0.14.6.md', 'docs/RELEASE_0.14.5.md',
              'docs/SOURCES_EXPANSION_PLAN_2026-11-23.md',
              'docs/WEBPAGE_UPDATE_PLAN_2026-11-23.md',
              'docs/UNMUTED_SESSION_RETENTION.md',
